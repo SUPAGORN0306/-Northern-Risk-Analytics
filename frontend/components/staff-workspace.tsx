@@ -1564,8 +1564,8 @@ function PolicyOverviewPage({
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   {selected
                     ? lang === "th"
-                      ? `จังหวัด${selected.name_th} · คัดกรองเฉพาะข่าวที่มีข้อความอ้างอิงตรงต้นฉบับ`
-                      : `${selected.name_en} · Filtered for verbatim source quotes`
+                      ? `จังหวัด${selected.name_th}`
+                      : selected.name_en
                     : ""}
                 </p>
               </div>

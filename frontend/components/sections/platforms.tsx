@@ -1125,25 +1125,33 @@ export function RiskOutlook({
           </motion.div>
         </div>
 
-        {/* Verified Field News Strip */}
-        {newsItems.length > 0 && (
+        {/* Provincial News Strip Synced with Selected Province on Map */}
+        {((detail?.verified_news?.length ?? 0) > 0 || newsItems.length > 0) && (
           <div className="mt-5 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
             <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Newspaper aria-hidden="true" className="size-4 text-foreground" />
                 <h3 className="font-display text-sm font-semibold text-foreground sm:text-base">
-                  {lang === "th"
-                    ? "ข่าวเศรษฐกิจและเหตุการณ์ภาคเหนือที่ผ่านการตรวจสอบแหล่งที่มา"
-                    : "Verified Northern Economic & Event News"}
+                  {selectedItem
+                    ? lang === "th"
+                      ? `ข่าวเศรษฐกิจและเหตุการณ์ล่าสุด: จังหวัด${selectedItem.name_th}`
+                      : `Latest Economic & Local News: ${selectedItem.name_en}`
+                    : lang === "th"
+                      ? "ข่าวเศรษฐกิจและเหตุการณ์ล่าสุด"
+                      : "Latest Economic & Local News"}
                 </h3>
               </div>
-              <span className="text-[11px] text-muted-foreground">
-                {lang === "th" ? "คัดกรองเฉพาะข้อความตรงแหล่งข่าวต้นฉบับ" : "100% verbatim source grounded"}
-              </span>
+              {selectedItem && (
+                <span className="rounded-full bg-secondary px-3 py-1 text-[11px] font-medium text-foreground">
+                  {lang === "th"
+                    ? `จังหวัด${selectedItem.name_th}`
+                    : selectedItem.name_en}
+                </span>
+              )}
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              {newsItems.slice(0, 3).map((item, idx) => (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {(detail?.verified_news?.length ? detail.verified_news : newsItems).slice(0, 4).map((item, idx) => (
                 <a
                   key={item.event_id ?? idx}
                   href={item.source_url}
@@ -1154,7 +1162,13 @@ export function RiskOutlook({
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
                       <span className="rounded-full bg-background px-2.5 py-0.5 font-medium text-foreground">
-                        {lang === "th" ? item.name_th || item.province_code : item.name_en || item.province_code}
+                        {selectedItem
+                          ? lang === "th"
+                            ? selectedItem.name_th
+                            : selectedItem.name_en
+                          : lang === "th"
+                            ? item.name_th || item.province_code
+                            : item.name_en || item.province_code}
                       </span>
                       <span className="text-muted-foreground">
                         {translateShockType(item.shock_type, lang)} · {item.event_date}
@@ -1165,7 +1179,7 @@ export function RiskOutlook({
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span className="truncate">{item.source_name || "Official News"}</span>
+                    <span className="truncate">{item.source_name || item.event_date}</span>
                     <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
                   </div>
                 </a>
