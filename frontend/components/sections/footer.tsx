@@ -4,6 +4,7 @@ import { motion, useInView } from "motion/react"
 import { Activity, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
 import { useRef } from "react"
+import { StaffLoginButton } from "@/components/staff-login-dialog"
 import { useAppState } from "@/lib/i18n"
 
 export function Footer() {
@@ -14,12 +15,12 @@ export function Footer() {
   const footerLinks =
     lang === "th"
       ? [
-          { label: "แผนที่ 17 จังหวัด", href: "#risk-outlook" },
-          { label: "ประเมินภาระหนี้และมาตรการ", href: "#relief-assistant" },
+          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
+          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
         ]
       : [
-          { label: "17 Province Map", href: "#risk-outlook" },
-          { label: "Resilience & Programs", href: "#relief-assistant" },
+          { label: "Provincial Outlook", href: "#risk-outlook" },
+          { label: "Check Debt & Relief", href: "#relief-assistant" },
         ]
 
   return (
@@ -56,9 +57,13 @@ export function Footer() {
             </Link>
           ))}
           <Link href="#relief-assistant" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-            {lang === "th" ? "ประเมินภาระหนี้" : "Check Resilience"}
+            {lang === "th" ? "คำนวณค่างวด" : "Calculate Payment"}
             <ArrowUpRight aria-hidden="true" className="size-3.5" />
           </Link>
+          <StaffLoginButton
+            label={lang === "th" ? "ระบบงานเจ้าหน้าที่" : "Staff Portal"}
+            className="inline-flex items-center text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+          />
         </nav>
       </div>
       <div className="border-t border-border px-5 py-4 text-center text-[11px] text-muted-foreground sm:px-8">

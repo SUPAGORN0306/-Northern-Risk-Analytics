@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -689,16 +690,95 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
     }
 
 
+def _clean_policy_page_text(raw: str) -> str:
+    """Reflow hard PDF line wraps and strip stray page number headers while keeping headings intact."""
+    from src.extract.bot_pdf_loader import normalize_thai_pdf_text
+
+    text = normalize_thai_pdf_text(raw)
+    raw_lines = [ln.strip() for ln in text.split("\n")]
+
+    # Drop standalone page number lines at the very top or bottom of a page
+    while raw_lines and (not raw_lines[0] or re.fullmatch(r"[-–—\s]*\d{1,3}[-–—\s]*", raw_lines[0])):
+        raw_lines.pop(0)
+    while raw_lines and (not raw_lines[-1] or re.fullmatch(r"[-–—\s]*\d{1,3}[-–—\s]*", raw_lines[-1])):
+        raw_lines.pop()
+
+    heading_re = re.compile(r"^(\d+(\.\d+)*\s+|\(\d+\)\s+|[-•▪]\s+|ข้อ\s+\d+|หมวด\s+|ส่วนที่\s+|หลักเกณฑ์$|สรุปสาระสำคัญ)")
+    out_paragraphs: list[str] = []
+    curr = ""
+
+    for ln in raw_lines:
+        if not ln:
+            if curr:
+                out_paragraphs.append(curr.strip())
+                curr = ""
+            continue
+        if heading_re.match(ln):
+            if curr:
+                out_paragraphs.append(curr.strip())
+            curr = ln
+        else:
+            if not curr:
+                curr = ln
+            elif len(curr) < 42 and heading_re.match(curr) and not curr.endswith((")", "”", "\"")):
+                # Join short split heading line such as "(1) การพัฒนาผลิตภัณฑ์" + "สินเชื่อ"
+                curr = f"{curr}{ln}" if ("\u0e00" <= curr[-1] <= "\u0e7f" and "\u0e00" <= ln[0] <= "\u0e7f") else f"{curr} {ln}"
+            else:
+                # Join wrapped body lines smoothly
+                sep = "" if (len(curr) > 55 and "\u0e00" <= curr[-1] <= "\u0e7f" and "\u0e00" <= ln[0] <= "\u0e7f" and not curr.endswith((" ", ")", "”"))) else " "
+                curr = f"{curr}{sep}{ln}"
+
+    if curr:
+        out_paragraphs.append(curr.strip())
+
+    return "\n\n".join(p for p in out_paragraphs if p)
+
+
 @app.get("/api/policy-page")
 def get_policy_page(
     doc_title: str = Query(..., min_length=2),
     page_num: int = Query(..., ge=1, le=500),
 ) -> dict[str, Any]:
-    """Return full verbatim extracted page text and metadata for an official policy PDF page."""
-    cache_key = f"policy_page_{doc_title.strip()}_{page_num}"
+    """Return full intact page text from bronze.bot_docs_raw without overlapping chunk splits."""
+    cache_key = f"policy_page_v2_{doc_title.strip()}_{page_num}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
+
+    bronze_rows = fetch_all(
+        """
+        SELECT
+            doc_title,
+            doc_url,
+            page_num,
+            raw_text,
+            (
+                SELECT count(DISTINCT b2.page_num)
+                FROM bronze.bot_docs_raw b2
+                WHERE b2.doc_title = bronze.bot_docs_raw.doc_title
+            ) AS total_pages
+        FROM bronze.bot_docs_raw
+        WHERE doc_title = :title AND page_num = :pnum
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        {"title": doc_title.strip(), "pnum": int(page_num)},
+    )
+
+    if bronze_rows:
+        r0 = bronze_rows[0]
+        cleaned_full = _clean_policy_page_text(str(r0.get("raw_text") or ""))
+        paragraphs = [p.strip() for p in cleaned_full.split("\n\n") if p.strip()]
+        payload = {
+            "doc_title": str(r0["doc_title"]),
+            "doc_url": str(r0.get("doc_url") or ""),
+            "page_num": int(r0["page_num"]),
+            "total_pages": int(r0.get("total_pages") or 1),
+            "chunks": paragraphs,
+            "full_text": cleaned_full,
+        }
+        _cache_set(cache_key, payload, ttl=600.0)
+        return payload
 
     rows = fetch_all(
         """
@@ -721,9 +801,9 @@ def get_policy_page(
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Official document page not found")
 
-    paragraphs: list[str] = []
+    paragraphs = []
     for r in rows:
-        txt = str(r.get("chunk_text") or "").strip()
+        txt = _clean_policy_page_text(str(r.get("chunk_text") or ""))
         if txt and txt not in paragraphs:
             paragraphs.append(txt)
 

@@ -79,7 +79,7 @@ export function shortCalendarMonth(calMonth: number, lang: Lang): string {
 export function translateClusterLabel(label: string, lang: Lang): string {
   if (lang === "en") return label
   const map: Record<string, string> = {
-    "International Tourism Hub": "เมืองท่องเที่ยวหลัก รายได้สูงแต่พึ่งพิงฤดูกาล",
+    "International Tourism Hub": "เศรษฐกิจพึ่งพาท่องเที่ยว ช่วงโลว์ซีซันรายได้อาจสะดุด",
     "High Debt Chronic Haze Belt": "ภาระหนี้ธุรกิจสูงและเผชิญฝุ่นสะสม",
     "Secondary Domestic Tourism Corridor": "เมืองท่องเที่ยวรอง ฐานะการเงินปานกลาง",
     "Elevated Debt Domestic Basin": "ลุ่มน้ำภาคเหนือตอนล่าง กระแสเงินสดตึงตัว",

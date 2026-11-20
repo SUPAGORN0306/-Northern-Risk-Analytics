@@ -268,7 +268,8 @@ export function ProvinceHistoryChart({
             tickLine={false}
             axisLine={false}
             tick={{ fontSize: 10 }}
-            interval={months <= 12 ? 1 : 3}
+            interval="preserveStartEnd"
+            minTickGap={32}
           />
           <YAxis
             yAxisId="left"

@@ -12,12 +12,12 @@ export function Header() {
   const navigation =
     lang === "th"
       ? [
-          { label: "แผนที่ 17 จังหวัด", href: "#risk-outlook" },
-          { label: "ประเมินหนี้และมาตรการ", href: "#relief-assistant" },
+          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
+          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
         ]
       : [
-          { label: "17 Province Map", href: "#risk-outlook" },
-          { label: "Resilience & Programs", href: "#relief-assistant" },
+          { label: "Provincial Outlook", href: "#risk-outlook" },
+          { label: "Check Debt & Relief", href: "#relief-assistant" },
         ]
 
   return (
@@ -85,7 +85,7 @@ export function Header() {
             href="#relief-assistant"
             className="whitespace-nowrap rounded-full bg-foreground px-3.5 py-2 text-xs font-medium text-background transition-opacity hover:opacity-85 sm:px-5 sm:text-sm"
           >
-            {lang === "th" ? "ประเมินภาระหนี้" : "Check Debt"}
+            {lang === "th" ? "คำนวณค่างวด" : "Calculate Payment"}
           </a>
         </div>
       </div>

@@ -403,7 +403,7 @@ export function RiskOutlook({
       ref={ref}
       id="risk-outlook"
       aria-labelledby="risk-outlook-heading"
-      className="scroll-target bg-secondary/45 px-4 py-16 sm:px-8 md:py-20"
+      className="scroll-target scroll-mt-28 bg-secondary/45 px-4 py-16 sm:px-8 md:py-20"
     >
       <div className="mx-auto max-w-6xl">
         <motion.div
@@ -510,10 +510,10 @@ export function RiskOutlook({
         )}
 
         {error && (
-          <div className="mb-5 rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-xs text-destructive">
+          <div className="mb-5 rounded-2xl border border-amber-600/30 bg-amber-500/10 px-5 py-3.5 text-xs text-amber-950">
             {lang === "th"
-              ? `ไม่สามารถเชื่อมต่อข้อมูลสดจากเซิร์ฟเวอร์ได้ (${error})`
-              : `Unable to load live backend data (${error}).`}
+              ? "กำลังเชื่อมต่อข้อมูลจากเซิร์ฟเวอร์ กรุณารอสักครู่หรือกดรีเฟรชหน้าเว็บหากเพิ่งเปิดใช้งานครั้งแรก"
+              : "Connecting to live backend service. Please refresh in a moment if the server is waking up."}
           </div>
         )}
 
@@ -673,7 +673,7 @@ export function RiskOutlook({
                       tone="neutral"
                     />
                     <CompareBarTile
-                      label={lang === "th" ? "หนี้ธุรกิจต่อรายได้ปี" : "SME Debt / Annual Income"}
+                      label={lang === "th" ? "ภาระหนี้เทียบกับรายได้ทั้งปี" : "Debt / Annual Income"}
                       valueText={
                         selectedItem.debt_to_annual_income_sme != null
                           ? lang === "th"
@@ -903,7 +903,14 @@ export function RiskOutlook({
                         <ResponsiveContainer width="100%" height="100%">
                           <ComposedChart data={trendChartData} margin={{ top: 8, right: 6, left: -16, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="hsl(var(--border))" />
-                            <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval={2} />
+                            <XAxis
+                              dataKey="label"
+                              tick={{ fontSize: 10 }}
+                              tickLine={false}
+                              axisLine={false}
+                              interval="preserveStartEnd"
+                              minTickGap={32}
+                            />
                             <YAxis
                               yAxisId="occ"
                               domain={[0, 100]}

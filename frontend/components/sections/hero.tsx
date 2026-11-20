@@ -3,7 +3,6 @@
 import Image from "next/image"
 import { motion } from "motion/react"
 import { ArrowDown, Activity, ShieldCheck, AlertTriangle } from "lucide-react"
-import { StaffLoginButton } from "@/components/staff-login-dialog"
 import type { RiskOutlookResponse } from "@/lib/api"
 import { formatThaiMonth, useAppState } from "@/lib/i18n"
 
@@ -49,7 +48,7 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/40 to-black/65" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.3)_100%)]" />
 
-        <div className="relative z-10 flex min-h-[500px] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[540px] sm:px-10">
+        <div className="relative z-10 flex min-h-[500px] flex-col items-center justify-center px-5 pb-12 pt-16 text-center sm:min-h-[540px] sm:px-10 sm:pt-20">
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
@@ -59,8 +58,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             <Activity aria-hidden="true" className="size-3.5 text-white/80" />
             <span className="text-xs font-medium tracking-wide text-white/85">
               {lang === "th"
-                ? "17 จังหวัดภาคเหนือ · ข้อมูลเศรษฐกิจและการเงินจากแหล่งทางการ"
-                : "17 Northern Provinces · Official Open Economic & Finance Data"}
+                ? "ครอบคลุม 17 จังหวัดภาคเหนือ · ข้อมูลอัปเดตจากหน่วยงานรัฐและ ธปท."
+                : "17 Northern Provinces · Official Data from Government & BOT"}
             </span>
           </motion.div>
 
@@ -72,8 +71,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
           >
             <span className="text-balance">
               {lang === "th"
-                ? "อ่านชีพจรเศรษฐกิจภาคเหนือ วางแผนหนี้และการเงินอย่างแม่นยำ"
-                : "Northern Economic Pulse. Clear Financial Resilience."}
+                ? "เช็กสถานการณ์ใกล้ตัว และหาทางออกแก้หนี้ได้ใน 1 นาที"
+                : "Check Local Conditions & Find Debt Relief in 1 Minute."}
             </span>
           </motion.h1>
 
@@ -84,8 +83,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             className="mt-4 max-w-2xl text-sm leading-7 text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.65)] sm:text-base"
           >
             {lang === "th"
-              ? "สำรวจภาวะท่องเที่ยวและฐานะการเงินผู้ประกอบการรายจังหวัด พร้อมเครื่องมือประเมินภาระหนี้และจำลองค่างวดตามเกณฑ์โครงการทางการ"
-              : "Explore provincial tourism and SME debt resilience across Northern Thailand, paired with instant DSR screening and official installment simulation."}
+              ? "ดูแนวโน้มค่าครองชีพ ภัยพิบัติ ในจังหวัดของคุณ พร้อมคำนวณค่างวดใหม่และพิมพ์ใบสรุปไปคุยกับธนาคารได้ทันที"
+              : "Track local living costs and hazard alerts in your province, calculate restructured payments, and print a 1-page bank summary instantly."}
           </motion.p>
 
           <motion.div
@@ -98,19 +97,15 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
               href="#risk-outlook"
               className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black shadow-md transition-transform hover:scale-[1.02]"
             >
-              {lang === "th" ? "เปิดแผนที่ 17 จังหวัด" : "Explore 17 Province Map"}
+              {lang === "th" ? "เช็กสถานการณ์จังหวัดของคุณ" : "Check Your Province"}
               <ArrowDown aria-hidden="true" className="size-4" />
             </a>
             <a
               href="#relief-assistant"
               className="inline-flex items-center rounded-full border border-white/45 bg-black/35 px-6 py-2.5 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
             >
-              {lang === "th" ? "ประเมินหนี้และจำลองค่างวด" : "Check Debt & Simulate Payments"}
+              {lang === "th" ? "คำนวณค่างวดและหาทางลดหนี้" : "Calculate Payment & Relief"}
             </a>
-            <StaffLoginButton
-              label={lang === "th" ? "ระบบงานเจ้าหน้าที่" : "Staff Portal"}
-              className="inline-flex items-center rounded-full border border-white/40 bg-black/30 px-5 py-2.5 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
-            />
           </motion.div>
 
           {/* Live Regional Pulse Strip */}
@@ -123,7 +118,11 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             <HeroKpi
               label={lang === "th" ? "อัตราเข้าพักเฉลี่ยภาคเหนือ" : "Regional Avg Occupancy"}
               value={summary ? `${summary.avg_occupancy_pct.toFixed(1)}%` : "…"}
-              sub={latestLabel ? (lang === "th" ? `ข้อมูลเดือน ${latestLabel}` : `Data ${latestLabel}`) : ""}
+              sub={
+                lang === "th"
+                  ? `การท่องเที่ยวและค้าขายยังทรงตัว${latestLabel ? ` (${latestLabel})` : ""}`
+                  : `Tourism & local trade steady${latestLabel ? ` (${latestLabel})` : ""}`
+              }
             />
             <HeroKpi
               label={lang === "th" ? "รายได้ท่องเที่ยวทั้งภาค" : "Monthly Service Revenue"}
@@ -134,26 +133,28 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
                     : `${(summary.total_monthly_revenue_mthb / 1000).toFixed(2)}B THB`
                   : "…"
               }
-              sub={lang === "th" ? "บาทต่อเดือน (17 จังหวัด)" : "Per month across 17 provinces"}
+              sub={lang === "th" ? "เม็ดเงินหมุนเวียนใน 17 จังหวัดต่อเดือน" : "Monthly cashflow across 17 provinces"}
             />
             <HeroKpi
-              label={lang === "th" ? "เงินเฟ้อไทย / ราคาน้ำมันโลก" : "Thailand CPI / Brent Oil"}
+              label={lang === "th" ? "ค่าครองชีพ / ราคาน้ำมัน" : "Living Cost / Fuel Price"}
               value={
                 summary && summary.th_cpi_yoy_pct != null
-                  ? `${summary.th_cpi_yoy_pct >= 0 ? "+" : ""}${summary.th_cpi_yoy_pct.toFixed(2)}%`
+                  ? `${summary.th_cpi_yoy_pct >= 0 ? "+" : ""}${summary.th_cpi_yoy_pct.toFixed(2)}%${
+                      summary.oil_brent_yoy_pct != null
+                        ? ` / ${summary.oil_brent_yoy_pct > 0 ? "+" : ""}${summary.oil_brent_yoy_pct.toFixed(0)}%`
+                        : ""
+                    }`
                   : "…"
               }
               sub={
-                summary
-                  ? lang === "th"
-                    ? `เงินเฟ้อ ${cpiLabel} · น้ำมันโลก ${summary.oil_brent_yoy_pct != null ? `${summary.oil_brent_yoy_pct > 0 ? "+" : ""}${summary.oil_brent_yoy_pct.toFixed(0)}%` : ""}`
-                    : `CPI ${cpiLabel} · Brent ${summary.oil_brent_yoy_pct != null ? `${summary.oil_brent_yoy_pct > 0 ? "+" : ""}${summary.oil_brent_yoy_pct.toFixed(0)}%` : "N/A"}`
-                  : ""
+                lang === "th"
+                  ? "ต้นทุนค่าเดินทางและราคาสินค้าสูงขึ้น"
+                  : `Higher transport & goods cost (${cpiLabel})`
               }
             />
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-md">
-              <p className="text-[11px] text-white/75">
-                {lang === "th" ? "ฝุ่น น้ำท่วม และมลพิษทางน้ำ" : "Multi Hazard & Water Alert"}
+            <div className="rounded-2xl border border-amber-300/35 bg-white/15 px-4 py-3 backdrop-blur-md">
+              <p className="text-[11px] font-medium text-white/85">
+                {lang === "th" ? "ภัยพิบัติและมลพิษ" : "Hazard & Pollution Watch"}
               </p>
               <div className="mt-1 flex items-center gap-2">
                 {summary?.has_active_external_shock ? (
@@ -174,11 +175,11 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
                   </>
                 )}
               </div>
-              <p className="mt-0.5 text-[10px] text-white/75">
+              <p className="mt-0.5 text-[10px] font-medium text-amber-100/95">
                 {summary?.has_active_external_shock
                   ? lang === "th"
-                    ? `${hasWaterAlert ? "พบข่าวมลพิษทางน้ำ: " : "จังหวัดเฝ้าระวัง: "}${alertProvinceNames.join(", ")}`
-                    : `${hasWaterAlert ? "Water pollution alert: " : "Alert: "}${alertProvinceNames.join(", ")}`
+                    ? `เฝ้าระวัง: ${alertProvinceNames.join(", ")}`
+                    : `Watchlist: ${alertProvinceNames.join(", ")}`
                   : lang === "th"
                     ? "ไม่พบจังหวัดที่ฝุ่น ฝน หรือมลพิษเกินเกณฑ์"
                     : "No active haze, flood, or water alert"}

@@ -295,7 +295,7 @@ export function CTA() {
         className="fixed bottom-5 right-4 z-50 inline-flex h-12 items-center gap-2 rounded-full bg-foreground px-5 text-sm font-medium text-background shadow-xl transition-transform hover:scale-[1.02] sm:right-6"
       >
         <MessageCircle aria-hidden="true" className="size-4" />
-        {lang === "th" ? "ผู้ช่วยข้อมูลมาตรการ" : "Policy Assistant"}
+        {lang === "th" ? "ถาม-ตอบเรื่องแก้หนี้ / สิทธิช่วยเหลือ" : "Ask Debt & Relief Q&A"}
       </button>
     </>
   )
