@@ -49,6 +49,9 @@ export type LoanComparisonResult = {
   monthlyLiquiditySaved: number
   year2BalanceReductionExtra: number
   totalInterestSaved: number
+  grossWaivedInterest?: number
+  payoffMonthOrig?: number | null
+  payoffMonthPol?: number | null
   horizonYears: number
   overLimit2M: boolean
   overAge70: boolean
@@ -187,8 +190,23 @@ export function buildLoanComparison(params: {
   } = params
   if (monthlyDebt <= 0 && totalPrincipalInput <= 0) return null
 
-  const principal = totalPrincipalInput > 0 ? totalPrincipalInput : Math.round(monthlyDebt * 48)
-  if (principal <= 0) return null
+const defaultRatePct =
+  status === "overdue_120_plus" ? 18.0
+  : status === "overdue_31_120" ? 8.0
+  : status === "persistent" ? 25.0
+  : status === "disaster" ? 8.5
+  : isSme ? 9.5
+  : 10.5
+
+const rEst = defaultRatePct / 100 / 12
+const estMonths = 48
+const estimatedPrincipal =
+  rEst > 0
+    ? Math.round(monthlyDebt * ((1 - Math.pow(1 + rEst, -estMonths)) / rEst))
+    : Math.round(monthlyDebt * estMonths)
+
+const principal = totalPrincipalInput > 0 ? totalPrincipalInput : estimatedPrincipal
+if (principal <= 0) return null
 
   const userMonths =
     customHorizonYears && customHorizonYears > 0
@@ -307,6 +325,9 @@ export function buildLoanComparison(params: {
   let balPol = principal
   let intOrigTotal = 0
   let intPolTotal = 0
+  let grossWaivedInterest = 0
+  let payoffMonthOrig: number | null = null
+  let payoffMonthPol: number | null = null
   let y2OrigBal = principal
   let y2PolBal = principal
 
@@ -324,6 +345,9 @@ export function buildLoanComparison(params: {
   const totalYears = Math.max(1, Math.ceil(horizonMonths / 12))
   const khunsooRates = [0.5, 0.7, 0.9, 1.0, 1.0]
 
+  let yrStartOrigBal = principal
+  let yrStartPolBal = principal
+
   for (let m = 1; m <= horizonMonths; m++) {
     const yrIndex = Math.ceil(m / 12) - 1
 
@@ -337,9 +361,12 @@ export function buildLoanComparison(params: {
           : Math.max(origMonthlyPay, interestO + 1)
       const prinCutO = Math.max(0, payO - interestO)
       balOrig = Math.max(0, balOrig - prinCutO)
+      if (balOrig <= 0 && payoffMonthOrig === null) {
+        payoffMonthOrig = m
+      }
     }
 
-    // Scheduled policy installment for this year (fixes khunsoo year 5 and disaster_defer year 1 ordering)
+    // Scheduled policy installment for this year
     let scheduledYearPolPay = policyY1Pay
     if (mode === "khunsoo") {
       const rate = khunsooRates[Math.min(yrIndex, 3)]
@@ -357,6 +384,7 @@ export function buildLoanComparison(params: {
     if (balPol > 0) {
       if (mode === "sme_3reduce") {
         if (m <= 24) {
+          grossWaivedInterest += balPol * (origRate / 100 / 12)
           currentPolPay = policyY1Pay
           balPol = Math.max(0, balPol - currentPolPay)
         } else {
@@ -368,6 +396,7 @@ export function buildLoanComparison(params: {
         }
       } else if (mode === "khunsoo") {
         if (m <= 36) {
+          grossWaivedInterest += balPol * origR
           currentPolPay = scheduledYearPolPay
           balPol = Math.max(0, balPol - currentPolPay)
         } else {
@@ -408,6 +437,9 @@ export function buildLoanComparison(params: {
         currentPolPay = policyY1Pay
         balPol = Math.max(0, balPol - Math.max(0, currentPolPay - interestP))
       }
+      if (balPol <= 0 && payoffMonthPol === null) {
+        payoffMonthPol = m
+      }
     }
 
     if (m === 24) {
@@ -417,14 +449,18 @@ export function buildLoanComparison(params: {
 
     if (m % 12 === 0 || m === horizonMonths) {
       const yr = Math.ceil(m / 12)
+      const curOrigPay = yrStartOrigBal > 0 ? Math.round(origMonthlyPay) : 0
+      const curPolPay = yrStartPolBal > 0 ? Math.round(scheduledYearPolPay) : 0
       points.push({
         yearLabel: lang === "th" ? `ปีที่ ${yr}` : `Yr ${yr}`,
         yearNum: yr,
         originalBalance: Math.round(balOrig),
         policyBalance: Math.round(balPol),
-        originalPayment: Math.round(origMonthlyPay),
-        policyPayment: Math.round(scheduledYearPolPay),
+        originalPayment: curOrigPay,
+        policyPayment: curPolPay,
       })
+      yrStartOrigBal = balOrig
+      yrStartPolBal = balPol
     }
   }
 
@@ -447,6 +483,9 @@ export function buildLoanComparison(params: {
     monthlyLiquiditySaved: Math.round(origMonthlyPay - policyY1Pay),
     year2BalanceReductionExtra: Math.max(0, Math.round(y2OrigBal - y2PolBal)),
     totalInterestSaved: Math.max(0, Math.round(intOrigTotal - intPolTotal)),
+    grossWaivedInterest: Math.round(grossWaivedInterest),
+    payoffMonthOrig,
+    payoffMonthPol,
     horizonYears: totalYears,
     overLimit2M,
     overAge70,
@@ -752,7 +791,7 @@ export function buildFinancialDossierHtml(params: {
     comparison
       ? `
   <h2>${lang === "th" ? `2. ตารางเปรียบเทียบค่างวดและยอดหนี้คงเหลือ (${comparison.policyTitleTh})` : `2. Proposed Repayment Schedule (${comparison.policyTitleEn})`}</h2>
-  <div style="font-size:9.5px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)} · ดอกเบี้ยประหยัดรวมประมาณ ${fmt(comparison.totalInterestSaved)}` : `Principal ${fmt(comparison.principalUsed)} · Est. Interest Saved ${fmt(comparison.totalInterestSaved)}`})</div>
+  <div style="font-size:9.5px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)} · ประหยัดดอกเบี้ยจ่ายจริงเทียบสัญญาเดิม ${fmt(comparison.totalInterestSaved)}${comparison.grossWaivedInterest ? ` · มูลค่าดอกเบี้ยยกเว้น ${fmt(comparison.grossWaivedInterest)}` : ""}${comparison.payoffMonthPol ? ` · ปิดจบหนี้ใน ${Math.ceil(comparison.payoffMonthPol / 12)} ปี` : ""}` : `Principal ${fmt(comparison.principalUsed)} · Est. Interest Saved ${fmt(comparison.totalInterestSaved)}`})</div>
   <table>
     <thead>
       <tr>
