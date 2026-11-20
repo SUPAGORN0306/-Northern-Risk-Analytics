@@ -1596,28 +1596,69 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         </div>
                       )}
 
-                      <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
-                        <SimBox
-                          label={lang === "th" ? "ค่างวดใหม่ (ปีที่ 1)" : "Proposed Yr 1 Payment"}
-                          value={`${loanComparison.policyYear1Payment.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`}
-                          accent
-                        />
-                        <SimBox
-                          label={lang === "th" ? "เงินสดเหลือเพิ่มในมือ/เดือน" : "Monthly Cash Relief"}
-                          value={
-                            loanComparison.monthlyLiquiditySaved > 0
-                              ? `+${loanComparison.monthlyLiquiditySaved.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`
-                              : lang === "th"
-                                ? "หักเงินต้นเร็วขึ้น"
-                                : "Faster Paydown"
-                          }
-                        />
-                        <SimBox
-                          label={lang === "th" ? "ดอกเบี้ยประหยัดรวม (ประมาณ)" : "Est. Interest Saved"}
-                          value={`${loanComparison.totalInterestSaved.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`}
-                          accent
-                        />
-                      </div>
+{(() => {
+                        const isDisaster = loanComparison.mode === "disaster_defer"
+                        const gMonths = loanComparison.graceMonths ?? deferMonths
+                        const activePayment = isDisaster
+                          ? (loanComparison.policyGracePayment ?? loanComparison.policyYear1Payment)
+                          : loanComparison.policyYear1Payment
+                        const activeRelief = Math.max(0, loanComparison.originalMonthlyPayment - activePayment)
+
+                        return (
+                          <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+                            <SimBox
+                              label={
+                                lang === "th"
+                                  ? isDisaster
+                                    ? `ค่างวดช่วงพักต้น (${gMonths} เดือนแรก)`
+                                    : "ค่างวดใหม่ (ปีที่ 1)"
+                                  : isDisaster
+                                    ? `Grace Period Payment (${gMonths}m)`
+                                    : "Proposed Yr 1 Payment"
+                              }
+                              value={`${activePayment.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`}
+                              accent
+                            />
+                            <SimBox
+                              label={
+                                lang === "th"
+                                  ? isDisaster
+                                    ? `เงินสดเหลือเพิ่มช่วงพักต้น (${gMonths} เดือนแรก)`
+                                    : "เงินสดเหลือเพิ่มในมือ/เดือน"
+                                  : isDisaster
+                                    ? `Grace Period Cash Relief (${gMonths}m)`
+                                    : "Monthly Cash Relief"
+                              }
+                              value={
+                                activeRelief > 0
+                                  ? `+${activeRelief.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`
+                                  : lang === "th"
+                                    ? "หักเงินต้นเร็วขึ้น"
+                                    : "Faster Paydown"
+                              }
+                            />
+                            <SimBox
+                              label={
+                                lang === "th"
+                                  ? loanComparison.totalInterestSaved <= 0
+                                    ? "วัตถุประสงค์หลักของมาตรการ"
+                                    : "ดอกเบี้ยประหยัดรวม (ประมาณ)"
+                                  : loanComparison.totalInterestSaved <= 0
+                                    ? "Primary Relief Purpose"
+                                    : "Est. Interest Saved"
+                              }
+                              value={
+                                loanComparison.totalInterestSaved <= 0
+                                  ? lang === "th"
+                                    ? "เน้นพักเงินสดชั่วคราว"
+                                    : "Temporary Cash Relief"
+                                  : `${loanComparison.totalInterestSaved.toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`
+                              }
+                              accent
+                            />
+                          </div>
+                        )
+                      })()}
 
                       {/* Side by Side Monthly Payment Bar Chart against Affordable Operating Profit Line */}
                       <div className="mt-4">
@@ -1706,24 +1747,42 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         </div>
 
                         {/* Clear Plain Thai Explanation of What the User Gains from this Simulation */}
-                        <div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
+<div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
                           <p className="font-semibold text-teal-900">
                             {lang === "th"
                               ? `สิ่งที่${beneficiaryNounTh}ได้รับจากแผนปรับโครงสร้างนี้:`
                               : "Key Benefit of This Restructuring Plan:"}
                           </p>
-                          <p className="mt-1 text-muted-foreground">
-                            {lang === "th"
-                              ? diagnostic.netMonthlyCashflow < 0
-                                ? `1. แก้ปัญหาเงินสดติดลบรายเดือน: เดิมมีเงินเหลือหลังหักค่าใช้จ่าย ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน แต่ต้องจ่ายค่างวดเดิม ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน (ทำให้เงินขาดมือ ${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} บาททุกเดือน) เมื่อลดค่างวดปีแรกเหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน จะทำให้จ่ายหนี้ไหวและพลิกกลับมามีเงินเหลือ ${Math.round(diagnostic.operatingCashflow - loanComparison.policyYear1Payment).toLocaleString()} บาท/เดือน`
-                                : `1. เพิ่มสภาพคล่องหมุนเวียนทันที: ลดภาระค่างวดปีแรกจาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท เหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน ทำให้มีเงินสดเหลือในมือเพิ่มขึ้น +${loanComparison.monthlyLiquiditySaved.toLocaleString()} บาท/เดือน สำหรับสำรองรับ${lowSeasonPhraseTh}`
-                              : `Reduces Year 1 monthly installment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${loanComparison.policyYear1Payment.toLocaleString()} THB/mo, freeing +${loanComparison.monthlyLiquiditySaved.toLocaleString()} THB/mo in working capital.`}
-                          </p>
-                          <p className="mt-0.5 text-muted-foreground">
-                            {lang === "th"
-                              ? `2. ลดภาระดอกเบี้ยระยะยาว: ตลอดแผนช่วยประหยัดดอกเบี้ยรวมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท (จากเงินต้นตั้งต้น ${loanComparison.principalUsed.toLocaleString()} บาท)`
-                              : `Saves approximately ${loanComparison.totalInterestSaved.toLocaleString()} THB in cumulative interest over the plan horizon.`}
-                          </p>
+                          {(() => {
+                            const isDisaster = loanComparison.mode === "disaster_defer"
+                            const gMonths = loanComparison.graceMonths ?? deferMonths
+                            const activePayment = isDisaster
+                              ? (loanComparison.policyGracePayment ?? loanComparison.policyYear1Payment)
+                              : loanComparison.policyYear1Payment
+                            const activeRelief = Math.max(0, loanComparison.originalMonthlyPayment - activePayment)
+                            const periodLabelTh = isDisaster ? `ช่วงพักเงินต้น ${gMonths} เดือนแรก` : "ปีแรก"
+
+                            return (
+                              <>
+                                <p className="mt-1 text-muted-foreground">
+                                  {lang === "th"
+                                    ? diagnostic.netMonthlyCashflow < 0
+                                      ? `1. แก้ปัญหาเงินสดติดลบรายเดือน: เดิมมีเงินเหลือหลังหักค่าใช้จ่าย ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน แต่ต้องจ่ายค่างวดเดิม ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน (ทำให้เงินขาดมือ ${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} บาททุกเดือน) เมื่อลดค่างวด${periodLabelTh}เหลือ ${activePayment.toLocaleString()} บาท/เดือน จะทำให้จ่ายหนี้ไหวและพลิกกลับมามีเงินเหลือ ${Math.round(diagnostic.operatingCashflow - activePayment).toLocaleString()} บาท/เดือน`
+                                      : `1. เพิ่มสภาพคล่องหมุนเวียนทันที: ลดภาระค่างวด${periodLabelTh}จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท เหลือ ${activePayment.toLocaleString()} บาท/เดือน ทำให้มีเงินสดเหลือในมือเพิ่มขึ้น +${activeRelief.toLocaleString()} บาท/เดือน สำหรับสำรองรับ${lowSeasonPhraseTh}`
+                                    : `Reduces ${isDisaster ? `first ${gMonths}-month grace period` : "Year 1"} monthly installment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${activePayment.toLocaleString()} THB/mo, freeing +${activeRelief.toLocaleString()} THB/mo in working capital.`}
+                                </p>
+                                <p className="mt-0.5 text-muted-foreground">
+                                  {loanComparison.totalInterestSaved <= 0
+                                    ? lang === "th"
+                                      ? "2. ข้อเท็จจริงด้านดอกเบี้ยและการผ่อนชำระ: มาตรการนี้เป็นการชะลอภาระเงินสดฉุกเฉินชั่วคราว ดอกเบี้ยยังคงคำนวณตามสัญญาปกติ จึงไม่ได้ลดยอดดอกเบี้ยรวม (0 บาท) แต่มุ่งเน้นรักษาสภาพคล่องเพื่อฟื้นฟูกิจการ และป้องกันการเกิดหนี้เสีย (NPL) ในช่วงวิกฤต"
+                                      : "2. Interest & Cashflow Reality: This measure provides temporary emergency liquidity relief. Interest continues as contractual without cumulative interest reduction (0 THB saved), focusing on preventing default and protecting working capital during recovery."
+                                    : lang === "th"
+                                      ? `2. ลดภาระดอกเบี้ยระยะยาว: ตลอดแผนช่วยประหยัดดอกเบี้ยรวมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท (จากเงินต้นตั้งต้น ${loanComparison.principalUsed.toLocaleString()} บาท)`
+                                      : `2. Saves approximately ${loanComparison.totalInterestSaved.toLocaleString()} THB in cumulative interest over the plan horizon.`}
+                                </p>
+                              </>
+                            )
+                          })()}
                           {debtStatus === "disaster" && (
                             <p className="mt-1 font-medium text-amber-900">
                               {lang === "th"

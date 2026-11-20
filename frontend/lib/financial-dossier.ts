@@ -50,6 +50,8 @@ export type LoanComparisonResult = {
   year2BalanceReductionExtra: number
   totalInterestSaved: number
   grossWaivedInterest?: number
+  policyGracePayment?: number
+  graceMonths?: number
   payoffMonthOrig?: number | null
   payoffMonthPol?: number | null
   horizonYears: number
@@ -282,9 +284,10 @@ if (principal <= 0) return null
   const origMonthlyPay = monthlyDebt > 0 ? monthlyDebt : Math.round(calcAnnuityPayment(principal, origRate, horizonMonths))
   const origR = origRate / 100 / 12
 
-  let policyY1Pay = origMonthlyPay
+let policyY1Pay = origMonthlyPay
   let policyY2Pay = origMonthlyPay
   let policyY3Pay = origMonthlyPay
+  let gracePay: number | undefined = undefined
   let clinicRatePct = 4
 
   if (mode === "debt_clinic") {
@@ -304,7 +307,9 @@ if (principal <= 0) return null
     policyY3Pay = pay
   } else if (mode === "disaster_defer") {
     const interestOnly = Math.round(principal * (origRate / 100 / 12))
-    policyY1Pay = interestOnly
+    gracePay = interestOnly
+    const clampedDefer = Math.min(12, Math.max(0, deferMonths))
+    policyY1Pay = Math.round((interestOnly * clampedDefer + origMonthlyPay * (12 - clampedDefer)) / 12)
     policyY2Pay = origMonthlyPay
     policyY3Pay = origMonthlyPay
   } else if (mode === "sme_3reduce") {
@@ -422,7 +427,7 @@ if (principal <= 0) return null
         if (m <= deferMonths) {
           const interestP = balPol * (origRate / 100 / 12)
           intPolTotal += interestP
-          currentPolPay = policyY1Pay
+          currentPolPay = gracePay ?? policyY1Pay
         } else {
           const rAfter = Math.max(5.5, origRate - 1.5) / 100 / 12
           const interestP = balPol * rAfter
@@ -484,6 +489,8 @@ if (principal <= 0) return null
     year2BalanceReductionExtra: Math.max(0, Math.round(y2OrigBal - y2PolBal)),
     totalInterestSaved: Math.max(0, Math.round(intOrigTotal - intPolTotal)),
     grossWaivedInterest: Math.round(grossWaivedInterest),
+    policyGracePayment: gracePay,
+    graceMonths: mode === "disaster_defer" ? deferMonths : undefined,  
     payoffMonthOrig,
     payoffMonthPol,
     horizonYears: totalYears,
