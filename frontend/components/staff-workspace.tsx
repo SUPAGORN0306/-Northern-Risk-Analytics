@@ -626,6 +626,209 @@ function PolicyOverviewPage({
   )
   const totalAvailableMonths = monitor?.panel_months || detail?.monthly_series.length || 0
 
+  const [provinceSearch, setProvinceSearch] = useState("")
+  const [showAllWatchlist, setShowAllWatchlist] = useState(false)
+  const [distMetric, setDistMetric] = useState<"margin" | "debt" | "occupancy">("margin")
+
+  // Rank all 17 provinces by composite vulnerability priority score
+  const rankedProvinces = useMemo(() => {
+    const scored = provinces.map((p) => {
+      const margin = p.expense_to_income_pct_sme != null ? Math.max(0, 100 - p.expense_to_income_pct_sme) : 22
+      const debt = p.debt_to_annual_income_sme ?? 0.57
+      const tightMarginPenalty = Math.max(0, (30 - margin) * 2.2)
+      const debtPenalty = Math.min(100, debt * 65)
+      const priorityScore =
+        0.38 * (p.exposure_score ?? 50) +
+        0.32 * (p.shock_intensity ?? 40) +
+        0.15 * tightMarginPenalty +
+        0.15 * debtPenalty
+      return {
+        ...p,
+        cash_margin_pct: margin,
+        sme_debt_ratio: debt,
+        priority_score: priorityScore,
+      }
+    })
+    scored.sort((a, b) => b.priority_score - a.priority_score)
+    return scored.map((item, idx) => ({
+      ...item,
+      priority_rank: idx + 1,
+    }))
+  }, [provinces])
+
+  const selectedRanked = useMemo(
+    () => rankedProvinces.find((p) => p.province_code === selectedCode) ?? rankedProvinces[0] ?? null,
+    [rankedProvinces, selectedCode],
+  )
+
+  const filteredWatchlist = useMemo(() => {
+    const q = provinceSearch.trim().toLowerCase()
+    if (q) {
+      return rankedProvinces.filter(
+        (p) =>
+          p.name_th.toLowerCase().includes(q) ||
+          p.name_en.toLowerCase().includes(q) ||
+          p.province_code.toLowerCase().includes(q),
+      )
+    }
+    if (showAllWatchlist) return rankedProvinces
+    const topFive = rankedProvinces.slice(0, 5)
+    if (selectedRanked && !topFive.some((p) => p.province_code === selectedRanked.province_code)) {
+      return [...topFive, selectedRanked]
+    }
+    return topFive
+  }, [rankedProvinces, provinceSearch, showAllWatchlist, selectedRanked])
+
+  // Compute 17 province distribution statistics for the 3 selectable indicators
+  const distributionStats = useMemo(() => {
+    if (!rankedProvinces.length) return null
+
+    const rows = rankedProvinces.map((p) => {
+      const val =
+        distMetric === "margin"
+          ? p.cash_margin_pct
+          : distMetric === "debt"
+            ? p.sme_debt_ratio
+            : p.avg_occupancy_rate
+      return {
+        ...p,
+        metricValue: val,
+      }
+    })
+
+    // Sort from highest policy concern to lowest concern
+    rows.sort((a, b) => {
+      if (distMetric === "margin") return a.metricValue - b.metricValue
+      if (distMetric === "debt") return b.metricValue - a.metricValue
+      return b.metricValue - a.metricValue
+    })
+
+    const vals = rows.map((r) => r.metricValue)
+    const sortedAsc = [...vals].sort((a, b) => a - b)
+    const mean = vals.reduce((acc, v) => acc + v, 0) / vals.length
+    const mid = Math.floor(sortedAsc.length / 2)
+    const median =
+      sortedAsc.length % 2 !== 0
+        ? sortedAsc[mid]
+        : (sortedAsc[mid - 1] + sortedAsc[mid]) / 2
+
+    const minRow = [...rows].sort((a, b) => a.metricValue - b.metricValue)[0]
+    const maxRow = [...rows].sort((a, b) => b.metricValue - a.metricValue)[0]
+    const maxScale =
+      distMetric === "margin"
+        ? Math.max(40, maxRow.metricValue * 1.1)
+        : distMetric === "debt"
+          ? Math.max(1.2, maxRow.metricValue * 1.1)
+          : 100
+
+    let zoneHighRisk = 0
+    let zoneModerate = 0
+    let zoneHealthy = 0
+
+    const enrichedRows = rows.map((r, i) => {
+      let zone: "risk" | "watch" | "healthy" = "watch"
+      if (distMetric === "margin") {
+        if (r.metricValue < 19) {
+          zone = "risk"
+          zoneHighRisk++
+        } else if (r.metricValue <= 24) {
+          zone = "watch"
+          zoneModerate++
+        } else {
+          zone = "healthy"
+          zoneHealthy++
+        }
+      } else if (distMetric === "debt") {
+        if (r.metricValue >= 0.65) {
+          zone = "risk"
+          zoneHighRisk++
+        } else if (r.metricValue >= 0.45) {
+          zone = "watch"
+          zoneModerate++
+        } else {
+          zone = "healthy"
+          zoneHealthy++
+        }
+      } else {
+        if (r.metricValue < 52) {
+          zone = "risk"
+          zoneHighRisk++
+        } else if (r.metricValue <= 66) {
+          zone = "watch"
+          zoneModerate++
+        } else {
+          zone = "healthy"
+          zoneHealthy++
+        }
+      }
+      return {
+        ...r,
+        distRank: i + 1,
+        zone,
+        diffFromMean: r.metricValue - mean,
+      }
+    })
+
+    return {
+      rows: enrichedRows,
+      mean,
+      median,
+      minRow,
+      maxRow,
+      maxScale,
+      zoneHighRisk,
+      zoneModerate,
+      zoneHealthy,
+      total: rows.length,
+    }
+  }, [rankedProvinces, distMetric])
+
+  const formatDistVal = (v: number) => {
+    if (distMetric === "margin") return `${v.toFixed(1)}%`
+    if (distMetric === "debt") return lang === "th" ? `${v.toFixed(2)} เท่า` : `${v.toFixed(2)}x`
+    return `${v.toFixed(1)}%`
+  }
+
+  // Group summary statistics across the 4 structural clusters for the left executive column
+  const clusterSummaries = useMemo(() => {
+    const groups = new Map<
+      number,
+      {
+        cluster_id: number
+        cluster_label: string
+        items: typeof rankedProvinces
+      }
+    >()
+    for (const p of rankedProvinces) {
+      const existing = groups.get(p.cluster_id)
+      if (existing) {
+        existing.items.push(p)
+      } else {
+        groups.set(p.cluster_id, {
+          cluster_id: p.cluster_id,
+          cluster_label: p.cluster_label,
+          items: [p],
+        })
+      }
+    }
+    return Array.from(groups.values())
+      .sort((a, b) => a.cluster_id - b.cluster_id)
+      .map((g) => {
+        const avgMargin =
+          g.items.reduce((acc, item) => acc + item.cash_margin_pct, 0) / Math.max(1, g.items.length)
+        const avgDebt =
+          g.items.reduce((acc, item) => acc + item.sme_debt_ratio, 0) / Math.max(1, g.items.length)
+        const avgOcc =
+          g.items.reduce((acc, item) => acc + item.avg_occupancy_rate, 0) / Math.max(1, g.items.length)
+        return {
+          ...g,
+          avgMargin,
+          avgDebt,
+          avgOcc,
+        }
+      })
+  }, [rankedProvinces])
+
   return (
     <>
       <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -638,12 +841,33 @@ function PolicyOverviewPage({
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             {lang === "th"
-              ? "สรุปกลุ่มความเสี่ยงเชิงโครงสร้าง แนวโน้มรายจังหวัด และสัญญาณข่าวภาคสนามล่าสุด พร้อมเชื่อมต่อไปยังหน้าจำลองความเสี่ยงและจัดกลุ่มจังหวัด"
-              : "Concise executive view of structural risk groups, provincial monthly trends, and verified field signals."}
+              ? "วิเคราะห์การกระจายตัวของสภาพคล่องและภาระหนี้ทั้ง 17 จังหวัด จัดอันดับจังหวัดเฝ้าระวังสูงสุด พร้อมตัวกรองเจาะลึกรายจังหวัด"
+              : "Regional distribution of liquidity and debt across 17 provinces, top priority watchlist, and direct provincial filter."}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Direct Province Filter Selector */}
+          <div className="inline-flex h-10 items-center gap-2 rounded-full border border-foreground/25 bg-background px-3.5 text-xs">
+            <span className="font-medium text-muted-foreground">
+              {lang === "th" ? "ตัวกรองจังหวัด" : "Province"}
+            </span>
+            <select
+              aria-label={lang === "th" ? "เลือกจังหวัดที่ต้องการเจาะลึก" : "Select province to inspect"}
+              value={selectedCode}
+              onChange={(e) => onSelectCode(e.target.value)}
+              className="bg-transparent font-semibold text-foreground outline-none"
+            >
+              {rankedProvinces.map((p) => (
+                <option key={p.province_code} value={p.province_code}>
+                  {lang === "th"
+                    ? `อันดับ #${p.priority_rank} ${p.name_th}`
+                    : `#${p.priority_rank} ${p.name_en}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <select
             aria-label="Chart horizon"
             value={months}
@@ -691,75 +915,580 @@ function PolicyOverviewPage({
         </div>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(280px,30fr)_minmax(0,70fr)]">
-        {/* Left Sidebar 17 Provinces */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(310px,33fr)_minmax(0,67fr)] lg:items-stretch">
+        {/* Left Sidebar Active Provincial Focus + Top 5 Priority Watchlist + 4 Group Summary + Demand Signals */}
         <aside className="flex flex-col gap-4">
-          {selected && (
+          {selectedRanked && (
             <div className="rounded-2xl border border-border bg-secondary/45 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                {`${formatGroupTag(selected.cluster_id, lang)} · ${translateClusterLabel(selected.cluster_label, lang)}`}
+              <div className="flex items-center justify-between gap-2">
+                <span className="rounded-full bg-foreground px-2.5 py-0.5 text-[10px] font-semibold text-background">
+                  {lang === "th"
+                    ? `อันดับเฝ้าระวัง #${selectedRanked.priority_rank} จาก 17 จังหวัด`
+                    : `Watchlist Rank #${selectedRanked.priority_rank} of 17`}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  {formatGroupTag(selectedRanked.cluster_id, lang)}
+                </span>
+              </div>
+              <p className="mt-2 text-base font-semibold text-foreground">
+                {lang === "th" ? selectedRanked.name_th : selectedRanked.name_en}
               </p>
-              <p className="mt-1.5 text-sm font-semibold text-foreground">
-                {lang === "th" ? selected.name_th : selected.name_en}
+              <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+                {translateClusterLabel(selectedRanked.cluster_label, lang)}
               </p>
-              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                {translateClusterGuidance(selected.cluster_id, lang)}
+
+              <div className="mt-3 grid grid-cols-3 gap-1.5">
+                <div className="rounded-xl border border-border bg-background px-2.5 py-2">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "เงินเหลือ" : "Margin"}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                    {selectedRanked.cash_margin_pct.toFixed(0)}%
+                  </span>
+                </div>
+                <div className="rounded-xl border border-border bg-background px-2.5 py-2">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "หนี้ต่อรายได้ปี" : "Debt/Inc"}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                    {lang === "th"
+                      ? `${selectedRanked.sme_debt_ratio.toFixed(2)} เท่า`
+                      : `${selectedRanked.sme_debt_ratio.toFixed(2)}x`}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-border bg-background px-2.5 py-2">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "อัตราเข้าพัก" : "Occupancy"}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                    {selectedRanked.avg_occupancy_rate.toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                {translateClusterGuidance(selectedRanked.cluster_id, lang)}
               </p>
             </div>
           )}
 
           <section className="overflow-hidden rounded-2xl border border-border bg-card">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
+            <div className="border-b border-border px-4 py-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold">
+                    {lang === "th"
+                      ? showAllWatchlist || provinceSearch.trim()
+                        ? "จัดอันดับความเปราะบางทั้ง 17 จังหวัด"
+                        : "5 อันดับจังหวัดเฝ้าระวังสูงสุด"
+                      : showAllWatchlist || provinceSearch.trim()
+                        ? "All 17 Provinces by Vulnerability Rank"
+                        : "Top 5 Priority Watchlist"}
+                  </h2>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {lang === "th"
+                      ? "เรียงตามคะแนนความเปราะบาง ภาระหนี้ และแรงกดดันภัยพิบัติ"
+                      : "Ranked by debt exposure, cash margin, and external shock"}
+                  </p>
+                </div>
+                <span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-semibold text-foreground">
+                  {showAllWatchlist || provinceSearch.trim()
+                    ? `${filteredWatchlist.length}/${provinces.length}`
+                    : lang === "th"
+                      ? "5 อันดับแรก"
+                      : "Top 5"}
+                </span>
+              </div>
+
+              <div className="mt-2.5">
+                <input
+                  type="search"
+                  value={provinceSearch}
+                  onChange={(e) => setProvinceSearch(e.target.value)}
+                  placeholder={lang === "th" ? "ค้นหาชื่อจังหวัดเพื่อกรองดูทันที…" : "Filter province by name…"}
+                  className="h-8 w-full rounded-xl border border-input bg-background px-3 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground"
+                />
+              </div>
+            </div>
+
+            <ul className="divide-y divide-border/50 p-2">
+              {filteredWatchlist.map((p) => {
+                const isSelected = selectedCode === p.province_code
+                const isTopThree = p.priority_rank <= 3
+                return (
+                  <li key={p.province_code}>
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => onSelectCode(p.province_code)}
+                      className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                        isSelected
+                          ? "bg-foreground text-background"
+                          : "text-foreground hover:bg-secondary/70"
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        <span
+                          className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tabular-nums ${
+                            isSelected
+                              ? "bg-background/20 text-background"
+                              : isTopThree
+                                ? "bg-amber-500/15 text-amber-700"
+                                : "bg-secondary text-muted-foreground"
+                          }`}
+                        >
+                          #{p.priority_rank}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-semibold">
+                            {lang === "th" ? p.name_th : p.name_en}
+                          </span>
+                          <span
+                            className={`block truncate text-[10px] ${
+                              isSelected ? "text-background/80" : "text-muted-foreground"
+                            }`}
+                          >
+                            {lang === "th"
+                              ? `เงินเหลือ ${p.cash_margin_pct.toFixed(0)}% · หนี้ ${p.sme_debt_ratio.toFixed(2)} เท่า`
+                              : `Margin ${p.cash_margin_pct.toFixed(0)}% · Debt ${p.sme_debt_ratio.toFixed(2)}x`}
+                          </span>
+                        </span>
+                      </span>
+                      <span
+                        className={`shrink-0 text-right text-[10px] tabular-nums ${
+                          isSelected ? "text-background/90" : "text-muted-foreground"
+                        }`}
+                      >
+                        <span className="block font-medium">
+                          {lang === "th" ? `เข้าพัก ${p.avg_occupancy_rate.toFixed(0)}%` : `Occ ${p.avg_occupancy_rate.toFixed(0)}%`}
+                        </span>
+                        <span className="block text-[9px]">
+                          {lang === "th" ? `แรงกดดัน ${p.shock_intensity.toFixed(0)}` : `Shock ${p.shock_intensity.toFixed(0)}`}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+
+            {!provinceSearch.trim() && provinces.length > 5 && (
+              <div className="border-t border-border p-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAllWatchlist((prev) => !prev)}
+                  className="w-full rounded-xl bg-secondary/70 px-3 py-2 text-center text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                >
+                  {showAllWatchlist
+                    ? lang === "th"
+                      ? "ย่อเหลือ 5 อันดับจังหวัดเฝ้าระวังสูงสุด"
+                      : "Show Top 5 Priority Watchlist Only"
+                    : lang === "th"
+                      ? `ดูครบทั้ง ${provinces.length} จังหวัด (ซ่อนอยู่ ${provinces.length - 5} จังหวัด)`
+                      : `Show All ${provinces.length} Provinces`}
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* 4 Group Structural Risk Breakdown Card to enrich Left Column */}
+          <section className="rounded-2xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold">
-                  {lang === "th" ? "รายชื่อ 17 จังหวัดภาคเหนือ" : "17 Northern Provinces"}
+                  {lang === "th"
+                    ? "สรุปโครงสร้างความเสี่ยง 4 กลุ่มจังหวัด"
+                    : "4 Group Structural Risk Summary"}
                 </h2>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {lang === "th"
-                    ? "คลิกเพื่อดูแนวโน้มและข่าว · ด้านขวาคืออัตราเข้าพักเฉลี่ย"
-                    : "Select province · Right value is mean occupancy rate"}
+                    ? "ค่าเฉลี่ยสภาพคล่องและรายชื่อจังหวัดในแต่ละกลุ่ม"
+                    : "Group averages and clickable province chips"}
                 </p>
               </div>
-              <span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
-                {provinces.length}
-              </span>
+              <Layers aria-hidden="true" className="size-4 text-muted-foreground" />
             </div>
-            <ul className="max-h-[540px] overflow-y-auto p-2">
-              {provinces.map((p) => (
-                <li key={p.province_code}>
-                  <button
-                    type="button"
-                    aria-pressed={selectedCode === p.province_code}
-                    onClick={() => onSelectCode(p.province_code)}
-                    className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
-                      selectedCode === p.province_code
-                        ? "bg-secondary text-foreground"
-                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
+
+            <div className="space-y-2.5">
+              {clusterSummaries.map((g) => (
+                <div
+                  key={g.cluster_id}
+                  className="rounded-xl border border-border/80 bg-secondary/25 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-foreground">
                       <span
-                        className={`size-2 shrink-0 rounded-full ${CLUSTER_DOT_CLASS[p.cluster_id] || "bg-slate-400"}`}
-                        aria-hidden="true"
+                        className={`size-2 shrink-0 rounded-full ${CLUSTER_DOT_CLASS[g.cluster_id] || "bg-slate-400"}`}
                       />
-                      <span className="truncate text-xs font-medium">
-                        {lang === "th" ? p.name_th : p.name_en}
-                      </span>
+                      {formatGroupTag(g.cluster_id, lang)} · {translateClusterLabel(g.cluster_label, lang)}
                     </span>
-                    <span className="shrink-0 text-[10px] tabular-nums">
-                      {lang === "th"
-                        ? `${formatGroupTag(p.cluster_id, lang)} · เข้าพักเฉลี่ย ${p.avg_occupancy_rate.toFixed(0)}%`
-                        : `${formatGroupTag(p.cluster_id, lang)} · Occ ${p.avg_occupancy_rate.toFixed(0)}%`}
+                    <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {lang === "th" ? `${g.items.length} จังหวัด` : `${g.items.length} prov`}
                     </span>
-                  </button>
-                </li>
+                  </div>
+
+                  <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">
+                    {lang === "th"
+                      ? `เงินเหลือเฉลี่ย ${g.avgMargin.toFixed(0)}% · หนี้เฉลี่ย ${g.avgDebt.toFixed(2)} เท่า · เข้าพัก ${g.avgOcc.toFixed(0)}%`
+                      : `Avg margin ${g.avgMargin.toFixed(0)}% · Debt ${g.avgDebt.toFixed(2)}x · Occ ${g.avgOcc.toFixed(0)}%`}
+                  </p>
+
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {g.items.map((p) => {
+                      const active = p.province_code === selectedCode
+                      return (
+                        <button
+                          key={p.province_code}
+                          type="button"
+                          onClick={() => onSelectCode(p.province_code)}
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                            active
+                              ? "border-foreground bg-foreground text-background"
+                              : "border-border bg-background text-foreground hover:bg-secondary"
+                          }`}
+                        >
+                          {lang === "th" ? p.name_th : p.name_en}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
+          </section>
+
+          {/* Anonymized Public Demand Signals Card stretched to align bottom with Right Column */}
+          <section className="flex flex-1 flex-col justify-between rounded-2xl border border-border bg-card p-4">
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">
+                    {lang === "th" ? "สัญญาณความต้องการช่วยเหลือสะสม (ไม่ระบุตัวตน)" : "Anonymized Public Demand Signals"}
+                  </h2>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {lang === "th"
+                      ? `ยอดประเมินสะสม ${demand?.total_checks ?? 0} ครั้ง (สรุประดับจังหวัด ไม่มีข้อมูลส่วนบุคคล)`
+                      : `${demand?.total_checks ?? 0} aggregate checks (provincial totals with zero personal data)`}
+                  </p>
+                </div>
+                <Gauge aria-hidden="true" className="size-4 text-muted-foreground" />
+              </div>
+
+              {demand && demand.by_province_and_band.length > 0 ? (
+                <div className="mt-3.5 space-y-2.5">
+                  {demand.by_province_and_band.slice(0, 6).map((row, i) => {
+                    const pct = Math.min(100, Math.round((row.query_count / Math.max(demand.total_checks, 1)) * 100))
+                    return (
+                      <div key={i}>
+                        <div className="mb-1 flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">
+                            {provNameMap.get(row.province_code) || row.province_code} · {translateDsrBand(row.dsr_band, lang)}
+                          </span>
+                          <span className="font-medium tabular-nums text-foreground">{row.query_count}</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                          <div className="h-full rounded-full bg-foreground/75" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  {lang === "th"
+                    ? "ยังไม่มีสถิติการกดประเมินจากหน้าสาธารณะ เมื่อประชาชนใช้งานหน้าประเมินภาระหนี้ สถิติรวมระดับจังหวัดจะแสดงที่นี่อัตโนมัติ"
+                    : "No public checks logged yet. Aggregate provincial demand bands appear automatically as citizens run checks."}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-border/70 bg-secondary/30 px-3 py-2 text-[10px] leading-4 text-muted-foreground">
+              {lang === "th"
+                ? "ข้อมูลสถิติความต้องการความช่วยเหลือรวบรวมเฉพาะรหัสจังหวัดและระดับภาระหนี้ ไม่มีการจัดเก็บชื่อหรือเลขบัญชี"
+                : "Aggregated strictly by province code and debt service band with zero personal identifiers stored."}
+            </div>
           </section>
         </aside>
 
         {/* Right Streamlined Executive Pane */}
         <div className="flex min-w-0 flex-col gap-4">
+          {/* Option 3 Multi Metric 17 Province Regional Distribution Panel */}
+          {distributionStats && (
+            <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                    {lang === "th"
+                      ? "การกระจายตัวและความเหลื่อมล้ำระดับภูมิภาค 17 จังหวัด"
+                      : "17 Province Regional Dispersion & Inequality"}
+                  </p>
+                  <h2 className="mt-1 font-display text-lg font-semibold">
+                    {distMetric === "margin"
+                      ? lang === "th"
+                        ? "การกระจายตัวของสัดส่วนเงินเหลือหลังหักรายจ่าย (%)"
+                        : "Distribution of SME Post Expense Cash Margin (%)"
+                      : distMetric === "debt"
+                        ? lang === "th"
+                          ? "การกระจายตัวของภาระหนี้ธุรกิจต่อรายได้ปี (เท่า)"
+                          : "Distribution of SME Debt to Annual Income Ratio (x)"
+                        : lang === "th"
+                          ? "การกระจายตัวของอัตราการเข้าพักเฉลี่ยรายจังหวัด (%)"
+                          : "Distribution of Provincial Mean Occupancy Rate (%)"}
+                  </h2>
+                </div>
+
+                {/* Single Line Non Wrapping 3 Metric Switcher Tabs */}
+                <div
+                  role="tablist"
+                  aria-label={lang === "th" ? "เลือกตัวชี้วัดเพื่อดูการกระจายตัว" : "Select distribution metric"}
+                  className="inline-flex shrink-0 flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-border bg-secondary/50 p-1"
+                >
+                  {(
+                    [
+                      {
+                        id: "margin",
+                        label: lang === "th" ? "เงินเหลือหลังหักรายจ่าย (%)" : "Cash Margin (%)",
+                      },
+                      {
+                        id: "debt",
+                        label: lang === "th" ? "หนี้ต่อรายได้ปี (เท่า)" : "SME Debt (x)",
+                      },
+                      {
+                        id: "occupancy",
+                        label: lang === "th" ? "อัตราเข้าพักเฉลี่ย (%)" : "Occupancy (%)",
+                      },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={distMetric === tab.id}
+                      onClick={() => setDistMetric(tab.id)}
+                      className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[11px] font-medium transition-colors ${
+                        distMetric === tab.id
+                          ? "bg-foreground text-background"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4 Summary Distribution Statistics Cards */}
+              <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <div className="rounded-xl border border-border bg-secondary/35 px-3 py-2.5">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "ค่าต่ำสุดในภาคเหนือ" : "Regional Minimum"}
+                  </span>
+                  <span className="mt-0.5 block text-sm font-semibold tabular-nums text-foreground">
+                    {formatDistVal(distributionStats.minRow.metricValue)}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                    {lang === "th" ? distributionStats.minRow.name_th : distributionStats.minRow.name_en}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border bg-secondary/35 px-3 py-2.5">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "ค่ามัธยฐาน 17 จังหวัด" : "Regional Median"}
+                  </span>
+                  <span className="mt-0.5 block text-sm font-semibold tabular-nums text-foreground">
+                    {formatDistVal(distributionStats.median)}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "จุดกึ่งกลางของการกระจายตัว" : "50th percentile benchmark"}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border bg-secondary/35 px-3 py-2.5">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "ค่าเฉลี่ยภาคเหนือ" : "Regional Mean"}
+                  </span>
+                  <span className="mt-0.5 block text-sm font-semibold tabular-nums text-foreground">
+                    {formatDistVal(distributionStats.mean)}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "เส้นอ้างอิงเทียบรายจังหวัด" : "Reference line across 17 provinces"}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border bg-secondary/35 px-3 py-2.5">
+                  <span className="block text-[10px] text-muted-foreground">
+                    {lang === "th" ? "ค่าสูงสุดในภาคเหนือ" : "Regional Maximum"}
+                  </span>
+                  <span className="mt-0.5 block text-sm font-semibold tabular-nums text-foreground">
+                    {formatDistVal(distributionStats.maxRow.metricValue)}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                    {lang === "th" ? distributionStats.maxRow.name_th : distributionStats.maxRow.name_en}
+                  </span>
+                </div>
+              </div>
+
+              {/* Stacked 3 Zone Proportion Breakdown Bar */}
+              <div className="mt-4 rounded-xl border border-border bg-secondary/20 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="font-medium text-foreground">
+                    {lang === "th"
+                      ? "สัดส่วนการกระจายตัวของ 17 จังหวัดตามเกณฑ์ความเปราะบาง"
+                      : "17 Province Breakdown by Risk Zone"}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-rose-600" />
+                      {distMetric === "margin"
+                        ? lang === "th"
+                          ? `เงินเหลือตึงตัว (<19%) ${distributionStats.zoneHighRisk} จังหวัด`
+                          : `Tight (<19%) ${distributionStats.zoneHighRisk}`
+                        : distMetric === "debt"
+                          ? lang === "th"
+                            ? `ภาระหนี้สูง (>=0.65 เท่า) ${distributionStats.zoneHighRisk} จังหวัด`
+                            : `High Debt (>=0.65x) ${distributionStats.zoneHighRisk}`
+                          : lang === "th"
+                            ? `เข้าพักชะลอตัว (<52%) ${distributionStats.zoneHighRisk} จังหวัด`
+                            : `Low Occ (<52%) ${distributionStats.zoneHighRisk}`}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-amber-500" />
+                      {distMetric === "margin"
+                        ? lang === "th"
+                          ? `ปานกลาง (19 ถึง 24%) ${distributionStats.zoneModerate} จังหวัด`
+                          : `Moderate (19 to 24%) ${distributionStats.zoneModerate}`
+                        : distMetric === "debt"
+                          ? lang === "th"
+                            ? `ปานกลาง (0.45 ถึง 0.65 เท่า) ${distributionStats.zoneModerate} จังหวัด`
+                            : `Moderate (0.45 to 0.65x) ${distributionStats.zoneModerate}`
+                          : lang === "th"
+                            ? `ท่องเที่ยวรอง (52 ถึง 66%) ${distributionStats.zoneModerate} จังหวัด`
+                            : `Secondary (52 to 66%) ${distributionStats.zoneModerate}`}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-teal-600" />
+                      {distMetric === "margin"
+                        ? lang === "th"
+                          ? `คล่องตัว (>24%) ${distributionStats.zoneHealthy} จังหวัด`
+                          : `Healthy (>24%) ${distributionStats.zoneHealthy}`
+                        : distMetric === "debt"
+                          ? lang === "th"
+                            ? `ภาระหนี้ต่ำ (<0.45 เท่า) ${distributionStats.zoneHealthy} จังหวัด`
+                            : `Low Debt (<0.45x) ${distributionStats.zoneHealthy}`
+                          : lang === "th"
+                            ? `ท่องเที่ยวหลัก (>66%) ${distributionStats.zoneHealthy} จังหวัด`
+                            : `Primary (>66%) ${distributionStats.zoneHealthy}`}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-secondary">
+                  {distributionStats.zoneHighRisk > 0 && (
+                    <div
+                      className="h-full bg-rose-600 transition-all"
+                      style={{ width: `${(distributionStats.zoneHighRisk / distributionStats.total) * 100}%` }}
+                    />
+                  )}
+                  {distributionStats.zoneModerate > 0 && (
+                    <div
+                      className="h-full bg-amber-500 transition-all"
+                      style={{ width: `${(distributionStats.zoneModerate / distributionStats.total) * 100}%` }}
+                    />
+                  )}
+                  {distributionStats.zoneHealthy > 0 && (
+                    <div
+                      className="h-full bg-teal-600 transition-all"
+                      style={{ width: `${(distributionStats.zoneHealthy / distributionStats.total) * 100}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* 17 Province Interactive Horizontal Distribution Bars in Compact 3 Column Grid */}
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>
+                    {lang === "th"
+                      ? "คลิกที่แท่งจังหวัดใดก็ได้เพื่อกรองดูข้อมูลแนวโน้มและข่าวของจังหวัดนั้น"
+                      : "Click any province bar to filter monthly series and news below"}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                    <span className="inline-block h-3 w-0.5 bg-foreground" />
+                    {lang === "th"
+                      ? `ขีดตั้งคือค่าเฉลี่ยภาคเหนือ (${formatDistVal(distributionStats.mean)})`
+                      : `Vertical tick is regional mean (${formatDistVal(distributionStats.mean)})`}
+                  </span>
+                </div>
+
+                <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {distributionStats.rows.map((r) => {
+                    const isSelected = r.province_code === selectedCode
+                    const pct = Math.min(100, Math.max(4, (r.metricValue / distributionStats.maxScale) * 100))
+                    const meanPct = Math.min(
+                      100,
+                      Math.max(0, (distributionStats.mean / distributionStats.maxScale) * 100),
+                    )
+                    const barColor =
+                      r.zone === "risk"
+                        ? "bg-rose-600"
+                        : r.zone === "watch"
+                          ? "bg-amber-500"
+                          : "bg-teal-600"
+
+                    return (
+                      <button
+                        key={r.province_code}
+                        type="button"
+                        onClick={() => onSelectCode(r.province_code)}
+                        className={`group flex flex-col gap-1 rounded-xl border px-3 py-2 text-left transition-all ${
+                          isSelected
+                            ? "border-foreground bg-secondary/80 ring-1 ring-foreground"
+                            : "border-border/70 bg-background hover:border-foreground/40 hover:bg-secondary/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 text-xs">
+                          <span className="flex min-w-0 items-center gap-1">
+                            <span className="w-4 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                              {r.distRank}.
+                            </span>
+                            <span className="truncate font-semibold text-foreground">
+                              {lang === "th" ? r.name_th : r.name_en}
+                            </span>
+                            {isSelected && (
+                              <span className="rounded-full bg-foreground px-1.5 py-0.2 text-[9px] font-semibold text-background">
+                                {lang === "th" ? "เลือกอยู่" : "Active"}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-foreground">
+                            {formatDistVal(r.metricValue)}
+                            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                              ({r.diffFromMean >= 0 ? "+" : ""}
+                              {distMetric === "debt"
+                                ? r.diffFromMean.toFixed(2)
+                                : `${r.diffFromMean.toFixed(1)}%`})
+                            </span>
+                          </span>
+                        </div>
+
+                        <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className={`h-full rounded-full transition-all ${barColor}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                          <div
+                            aria-hidden="true"
+                            className="absolute top-0 h-full w-0.5 bg-foreground/85"
+                            style={{ left: `${meanPct}%` }}
+                          />
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -826,104 +1555,59 @@ function PolicyOverviewPage({
             )}
           </section>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-display text-base font-semibold">
-                    {lang === "th" ? "ข่าวเศรษฐกิจและเหตุการณ์ล่าสุดของจังหวัด" : "Verified Regional News"}
-                  </h2>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {selected
-                      ? lang === "th"
-                        ? `จังหวัด${selected.name_th} · คัดกรองเฉพาะข่าวที่มีข้อความอ้างอิงตรงต้นฉบับ`
-                        : `${selected.name_en} · Filtered for verbatim source quotes`
-                      : ""}
-                  </p>
-                </div>
-                <ShieldCheck aria-hidden="true" className="size-4 text-muted-foreground" />
-              </div>
-
-              {!detail ? (
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {lang === "th" ? "กำลังดึงข่าวล่าสุดของจังหวัดนี้…" : "Loading verified provincial news…"}
+          <section className="flex flex-1 flex-col justify-between rounded-2xl border border-border bg-card p-4 sm:p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-base font-semibold">
+                  {lang === "th" ? "ข่าวเศรษฐกิจและเหตุการณ์ล่าสุดของจังหวัด" : "Verified Regional News"}
+                </h2>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {selected
+                    ? lang === "th"
+                      ? `จังหวัด${selected.name_th} · คัดกรองเฉพาะข่าวที่มีข้อความอ้างอิงตรงต้นฉบับ`
+                      : `${selected.name_en} · Filtered for verbatim source quotes`
+                    : ""}
                 </p>
-              ) : detail.verified_news.length ? (
-                <ul className="mt-4 flex flex-col gap-2.5">
-                  {detail.verified_news.slice(0, 4).map((n, idx) => (
-                    <li key={idx}>
-                      <a
-                        href={n.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-start justify-between gap-3 rounded-xl border border-border px-3 py-2.5 transition-colors hover:bg-secondary"
-                      >
-                        <span className="min-w-0">
-                          <span className="block text-[10px] text-muted-foreground">
-                            {n.event_date} · {translateShockType(n.shock_type, lang)} ·{" "}
-                            {lang === "th" ? `ความรุนแรง ${n.severity_score}/5` : `Sev ${n.severity_score}/5`}
-                          </span>
-                          <span className="mt-1 block line-clamp-2 text-xs font-medium text-foreground">
-                            {n.evidence_quote || n.title}
-                          </span>
+              </div>
+              <ShieldCheck aria-hidden="true" className="size-4 text-muted-foreground" />
+            </div>
+
+            {!detail ? (
+              <p className="mt-4 text-xs text-muted-foreground">
+                {lang === "th" ? "กำลังดึงข่าวล่าสุดของจังหวัดนี้…" : "Loading verified provincial news…"}
+              </p>
+            ) : detail.verified_news.length ? (
+              <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
+                {detail.verified_news.slice(0, 4).map((n, idx) => (
+                  <li key={idx}>
+                    <a
+                      href={n.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex h-full items-start justify-between gap-3 rounded-xl border border-border px-3.5 py-3 transition-colors hover:bg-secondary"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-[10px] text-muted-foreground">
+                          {n.event_date} · {translateShockType(n.shock_type, lang)} ·{" "}
+                          {lang === "th" ? `ความรุนแรง ${n.severity_score}/5` : `Sev ${n.severity_score}/5`}
                         </span>
-                        <ExternalLink aria-hidden="true" className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {lang === "th"
-                    ? "ไม่พบข่าวเหตุการณ์ในจังหวัดนี้ในช่วงเวลาล่าสุด (สามารถกดดึงข้อมูลล่าสุดเพื่ออัปเดตข่าวใหม่ได้)"
-                    : "No recent verified events for this province (click Sync Live Data to refresh)."}
-                </p>
-              )}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-display text-base font-semibold">
-                    {lang === "th" ? "สัญญาณความต้องการช่วยเหลือสะสม (ไม่ระบุตัวตน)" : "Anonymized Public Demand Signals"}
-                  </h2>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {lang === "th"
-                      ? `ยอดประเมินสะสม ${demand?.total_checks ?? 0} ครั้ง (สรุประดับจังหวัด ไม่มีข้อมูลส่วนบุคคล)`
-                      : `${demand?.total_checks ?? 0} aggregate checks (provincial totals with zero personal data)`}
-                  </p>
-                </div>
-                <Gauge aria-hidden="true" className="size-4 text-muted-foreground" />
-              </div>
-
-              {demand && demand.by_province_and_band.length > 0 ? (
-                <div className="mt-4 space-y-3">
-                  {demand.by_province_and_band.slice(0, 5).map((row, i) => {
-                    const pct = Math.min(100, Math.round((row.query_count / Math.max(demand.total_checks, 1)) * 100))
-                    return (
-                      <div key={i}>
-                        <div className="mb-1 flex items-center justify-between text-[11px]">
-                          <span className="text-muted-foreground">
-                            {provNameMap.get(row.province_code) || row.province_code} · {translateDsrBand(row.dsr_band, lang)}
-                          </span>
-                          <span className="font-medium tabular-nums text-foreground">{row.query_count}</span>
-                        </div>
-                        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-                          <div className="h-full rounded-full bg-foreground/75" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <p className="mt-4 text-xs leading-5 text-muted-foreground">
-                  {lang === "th"
-                    ? "ยังไม่มีสถิติการกดประเมินจากหน้าสาธารณะ เมื่อประชาชนใช้งานหน้าประเมินภาระหนี้ สถิติรวมระดับจังหวัดจะแสดงที่นี่อัตโนมัติ"
-                    : "No public checks logged yet. Aggregate provincial demand bands appear automatically as citizens run checks."}
-                </p>
-              )}
-            </section>
-          </div>
+                        <span className="mt-1 block line-clamp-2 text-xs font-medium text-foreground">
+                          {n.evidence_quote || n.title}
+                        </span>
+                      </span>
+                      <ExternalLink aria-hidden="true" className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-4 text-xs text-muted-foreground">
+                {lang === "th"
+                  ? "ไม่พบข่าวเหตุการณ์ในจังหวัดนี้ในช่วงเวลาล่าสุด (สามารถกดดึงข้อมูลล่าสุดเพื่ออัปเดตข่าวใหม่ได้)"
+                  : "No recent verified events for this province (click Sync Live Data to refresh)."}
+              </p>
+            )}
+          </section>
         </div>
       </div>
     </>

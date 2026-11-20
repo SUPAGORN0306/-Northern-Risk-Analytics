@@ -201,7 +201,7 @@ export function RiskOutlook({
       .map((c) => shortCalendarMonth(c.cal_month, lang))
       .join(", ")
 
-    // Check actual threshold exceedances (PM2.5 >= 37.5 ug/m3 and Heavy Rainfall >= 180 mm)
+    // Check actual threshold exceedances for PM2.5 above 37.5 ug/m3 and heavy rainfall above 180 mm
     const hazeExceed = cal
       .filter((c) => (c.avg_pm25_mean ?? 0) >= 37.5)
       .sort((a, b) => (b.avg_pm25_mean ?? 0) - (a.avg_pm25_mean ?? 0))
