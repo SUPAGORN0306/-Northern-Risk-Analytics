@@ -1,0 +1,104 @@
+# 17 official Northern Thailand provinces
+provinces:
+  - code: CM
+    name_th: เชียงใหม่
+    name_en: Chiang Mai
+    subregion: Upper North
+    lat: 18.7883
+    lon: 98.9853
+  - code: CR
+    name_th: เชียงราย
+    name_en: Chiang Rai
+    subregion: Upper North
+    lat: 19.9105
+    lon: 99.8406
+  - code: LP
+    name_th: ลำปาง
+    name_en: Lampang
+    subregion: Upper North
+    lat: 18.2888
+    lon: 99.4909
+  - code: LN
+    name_th: ลำพูน
+    name_en: Lamphun
+    subregion: Upper North
+    lat: 18.5745
+    lon: 99.0087
+  - code: MH
+    name_th: แม่ฮ่องสอน
+    name_en: Mae Hong Son
+    subregion: Upper North
+    lat: 19.3020
+    lon: 97.9654
+  - code: NN
+    name_th: น่าน
+    name_en: Nan
+    subregion: Upper North
+    lat: 18.7756
+    lon: 100.7730
+  - code: PY
+    name_th: พะเยา
+    name_en: Phayao
+    subregion: Upper North
+    lat: 19.1665
+    lon: 99.9019
+  - code: PR
+    name_th: แพร่
+    name_en: Phrae
+    subregion: Upper North
+    lat: 18.1446
+    lon: 100.1403
+  - code: UT
+    name_th: อุตรดิตถ์
+    name_en: Uttaradit
+    subregion: Upper North
+    lat: 17.6201
+    lon: 100.0993
+  - code: TK
+    name_th: ตาก
+    name_en: Tak
+    subregion: Lower North
+    lat: 16.8840
+    lon: 99.1259
+  - code: ST
+    name_th: สุโขทัย
+    name_en: Sukhothai
+    subregion: Lower North
+    lat: 17.0056
+    lon: 99.8264
+  - code: PL
+    name_th: พิษณุโลก
+    name_en: Phitsanulok
+    subregion: Lower North
+    lat: 16.8211
+    lon: 100.2659
+  - code: PC
+    name_th: พิจิตร
+    name_en: Phichit
+    subregion: Lower North
+    lat: 16.4429
+    lon: 100.3488
+  - code: PB
+    name_th: เพชรบูรณ์
+    name_en: Phetchabun
+    subregion: Lower North
+    lat: 16.4190
+    lon: 101.1591
+  - code: KP
+    name_th: กำแพงเพชร
+    name_en: Kamphaeng Phet
+    subregion: Lower North
+    lat: 16.4828
+    lon: 99.5227
+  - code: NS
+    name_th: นครสวรรค์
+    name_en: Nakhon Sawan
+    subregion: Lower North
+    lat: 15.7047
+    lon: 100.1372
+  - code: UN
+    name_th: อุทัยธานี
+    name_en: Uthai Thani
+    subregion: Lower North
+    lat: 15.3835
+    lon: 100.0246

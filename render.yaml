@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: northern-risk-analytics-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.1-flash-lite
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:3000
+      - key: STAFF_AUTH_SECRET
+        generateValue: true
+      - key: STAFF_DEMO_USERNAME
+        value: analyst
+      - key: STAFF_DEMO_PASSWORD
+        sync: false

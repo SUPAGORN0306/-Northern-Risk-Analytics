@@ -1,0 +1,63 @@
+name: Daily Northern Thailand ELT Pipeline
+
+on:
+  schedule:
+    # Run daily at 06 00 ICT (23 00 UTC)
+    - cron: "0 23 * * *"
+    # Run monthly full Gold rebuild on the first day of each month at 07 00 ICT (00 00 UTC)
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "ELT execution mode (daily or full)"
+        required: true
+        default: "daily"
+        type: choice
+        options:
+          - daily
+          - full
+
+concurrency:
+  group: northern-risk-elt
+  cancel-in-progress: false
+
+jobs:
+  run-medallion-elt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "backend/requirements.txt"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run deterministic pytest guardrail suite
+        working-directory: backend
+        run: pytest -q tests/test_guardrails.py
+
+      - name: Execute scheduled Medallion ELT batch
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_EXTRACTION_MODEL: "gemini-3.1-flash-lite"
+        run: |
+          MODE="daily"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          elif [ "${{ github.event.schedule }}" = "0 0 1 * *" ]; then
+            MODE="full"
+          fi
+          echo "Running ELT pipeline in mode ${MODE}"
+          python run_pipeline.py --mode "${MODE}" --news-limit 80

@@ -1,0 +1,18 @@
+{
+  "name": "NorthRisk Analytics",
+  "short_name": "NorthRisk",
+  "description": "Regional risk signals and relief guidance for Northern Thailand.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#09090b",
+  "orientation": "portrait-primary",
+  "categories": ["government", "information"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

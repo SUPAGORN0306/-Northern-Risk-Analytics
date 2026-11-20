@@ -1,0 +1,91 @@
+# External data source endpoints and extraction parameters
+air4thai:
+  endpoint_url: "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
+  timeout_sec: 20
+
+open_meteo:
+  air_quality_url: "https://air-quality-api.open-meteo.com/v1/air-quality"
+  weather_url: "https://archive-api.open-meteo.com/v1/archive"
+  lookback_months: 36
+  heavy_rain_threshold_mm: 35.0
+  max_workers: 4
+  timeout_sec: 30
+
+news:
+  google_rss_base: "https://news.google.com/rss/search"
+  max_items_per_query: 8
+  max_workers: 8
+  queries:
+    - "จังหวัดเชียงใหม่ (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR PM2.5 OR โรงแรม)"
+    - "จังหวัดเชียงราย (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR แม่น้ำกก OR สารหนู)"
+    - "จังหวัดแม่ฮ่องสอน (ท่องเที่ยว OR เศรษฐกิจ OR ฝุ่น OR น้ำท่วม OR ปาย)"
+    - "จังหวัดน่าน (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR โรงแรม)"
+    - "จังหวัดลำปาง (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR โรงแรม)"
+    - "จังหวัดลำพูน (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR ธุรกิจ)"
+    - "จังหวัดพะเยา (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR กว๊านพะเยา)"
+    - "จังหวัดแพร่ (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR แม่น้ำยม OR ฝุ่น)"
+    - "จังหวัดอุตรดิตถ์ (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR ธุรกิจ)"
+    - "จังหวัดตาก (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR แม่สอด OR ฝุ่น)"
+    - "จังหวัดสุโขทัย (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR แม่น้ำยม OR โรงแรม)"
+    - "จังหวัดพิษณุโลก (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR โรงแรม)"
+    - "จังหวัดพิจิตร (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR ธุรกิจ)"
+    - "จังหวัดเพชรบูรณ์ (ท่องเที่ยว OR เศรษฐกิจ OR เขาค้อ OR น้ำท่วม OR โรงแรม)"
+    - "จังหวัดกำแพงเพชร (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR ธุรกิจ)"
+    - "จังหวัดนครสวรรค์ (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR โรงแรม)"
+    - "จังหวัดอุทัยธานี (ท่องเที่ยว OR เศรษฐกิจ OR น้ำท่วม OR ฝุ่น OR โรงแรม)"
+    - "แม่น้ำกก แม่น้ำสาย สารหนู โลหะหนัก เชียงราย เชียงใหม่"
+    - "เศรษฐกิจภาคเหนือ ธนาคารแห่งประเทศไทย ภาคบริการ หนี้"
+
+mots:
+  monthly_2568r_url: "https://www.mots.go.th/images/v2022_11aeb83a-6afc-4c36-82aa-6ce48b273d4c.xlsx"
+  monthly_2569_url: "https://www.mots.go.th/images/v2022_740a373d-1f68-4f33-b1e8-5f7c8fa82051.xlsx"
+  timeout_sec: 30
+
+nso:
+  household_finance_csv_url: "https://catalogapi.nso.go.th/api/index?table=SFD_SPB0801&format=csv"
+  timeout_sec: 30
+
+macro_controls:
+  bis_th_cpi_yoy_url: "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_LONG_CPI/1.0/M.TH.771?startPeriod=2023-01&format=csv"
+  bis_th_cpi_idx_url: "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_LONG_CPI/1.0/M.TH.628?startPeriod=2023-01&format=csv"
+  fred_base_url: "https://fred.stlouisfed.org/graph/fredgraph.csv"
+  fred_series:
+    usdthb: "DEXTHUS"
+    oil_brent: "DCOILBRENTEU"
+    oil_dubai: "POILDUBUSDM"
+    th_reer: "RBTHBIS"
+    thai_rice_usd: "PRICENPQUSDM"
+  timeout_sec: 25
+  max_workers: 4
+
+official_pdfs:
+  timeout_sec: 35
+  docs:
+    - doc_id: "northern_economy_2569_q3"
+      doc_title: "รายงานภาวะเศรษฐกิจและการเงินภาคเหนือ ไตรมาส 3 ปี 2569 (ธปท. สภน.)"
+      category: "regional_economy"
+      url: "https://www.bot.or.th/content/dam/bot/documents/th/thai-economy/regional-economy/northern/quarterly-press-new/2569/Northern_2569Q3_Slide-2.pdf"
+    - doc_id: "northern_economy_2569_q1"
+      doc_title: "รายงานภาวะเศรษฐกิจและการเงินภาคเหนือ ไตรมาส 1 ปี 2569 (ธปท. สภน.)"
+      category: "regional_economy"
+      url: "https://www.bot.or.th/content/dam/bot/documents/th/thai-economy/regional-economy/northern/quarterly-press-new/2569/Northern_2569Q1_Slide.pdf"
+    - doc_id: "responsible_lending_2568"
+      doc_title: "ประกาศหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบและเป็นธรรม 2568 (Responsible Lending)"
+      category: "debt_and_financial_resilience"
+      url: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf"
+    - doc_id: "debt_doctor_8steps_clinic"
+      doc_title: "คู่มือความรู้หมอหนี้ 8 ขั้นตอนแก้หนี้และคลินิกแก้หนี้ (ธปท.)"
+      category: "debt_and_financial_resilience"
+      url: "https://www.bot.or.th/content/dam/bot/satang-stories/l2/6.%208%20%E0%B8%82%E0%B8%B1%E0%B9%89%E0%B8%99%E0%B8%95%E0%B8%AD%E0%B8%99%E0%B9%81%E0%B8%81%E0%B9%89%E0%B8%AB%E0%B8%99%E0%B8%B5%E0%B9%89%20%E0%B8%82%E0%B8%B1%E0%B9%89%E0%B8%99%E0%B8%95%E0%B8%AD%E0%B8%99%E0%B8%97%E0%B8%B5%E0%B9%88%206-8.pdf"
+    - doc_id: "khunsoo_raochuay_2567"
+      doc_title: "โครงการคุณสู้ เราช่วย ปิดหนี้ได้ไว ไปต่อได้เร็ว (ธปท.)"
+      category: "debt_and_financial_resilience"
+      url: "https://www.bot.or.th/content/dam/bot/documents/th/research-and-publications-pdf/articles-and-publications/articles/download/2024/article-2024dec24.pdf"
+    - doc_id: "disaster_relief_2568"
+      doc_title: "หนังสือเวียนมาตรการช่วยเหลือลูกหนี้ผู้ประสบภัยพิบัติ 2568 (ธปท.)"
+      category: "debt_and_financial_resilience"
+      url: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680065.pdf"
+    - doc_id: "debt_relief_measures_2569"
+      doc_title: "เอกสารรู้ก่อน รอดก่อน แนวทางแก้หนี้และคลินิกแก้หนี้ 2569 (ธปท.)"
+      category: "debt_and_financial_resilience"
+      url: "https://www.bot.or.th/content/dam/bot/documents/th/thai-economy/regional-economy/northeastern/File-download/press-training-at-sakonnakorn/Debt%20Relief%20Measures.pdf"

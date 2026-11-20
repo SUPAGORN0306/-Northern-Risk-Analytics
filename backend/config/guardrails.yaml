@@ -1,0 +1,24 @@
+# Guardrails configuration
+llm:
+  temperature: 0.0
+  max_output_tokens: 1024
+  min_extraction_confidence: 0.65
+
+rag:
+  top_k: 5
+  min_similarity_threshold: 0.68
+  # Vector weight for hybrid search
+  hybrid_alpha: 0.78
+  refusal_message_th: "ไม่พบข้อมูลเงื่อนไขดังกล่าวในเอกสารอ้างอิงที่มีอยู่ในระบบ กรุณาตรวจสอบเพิ่มเติมผ่านช่องทางอย่างเป็นทางการของธนาคารแห่งประเทศไทย (สายด่วน 1213) หรือสถาบันการเงินของท่าน"
+  refusal_message_en: "No supporting criteria were found in the indexed official documents. Please verify directly through official Bank of Thailand channels (Hotline 1213) or your financial institution."
+
+air4thai:
+  # Thailand PCD elevated and critical PM2.5 thresholds
+  pm25_elevated_threshold: 37.5
+  pm25_critical_threshold: 75.0
+  invalid_sentinel: -1.0
+
+rate_limits:
+  relief_check: "20/minute"
+  chat: "15/minute"
+  refresh: "3/hour"
