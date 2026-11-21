@@ -1,13 +1,33 @@
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import { motion } from "motion/react"
 import Link from "next/link"
 import { Activity } from "lucide-react"
-import { StaffLoginButton } from "@/components/staff-login-dialog"
 import { useAppState } from "@/lib/i18n"
 
 export function Header() {
   const { lang, setLang } = useAppState()
+  const [navHidden, setNavHidden] = useState(false)
+  const lastY = useRef(0)
+
+  useEffect(() => {
+    lastY.current = window.scrollY
+    const onScroll = () => {
+      const y = window.scrollY
+      const mobile = window.matchMedia("(max-width: 767px)").matches
+      if (!mobile) {
+        setNavHidden(false)
+        lastY.current = y
+        return
+      }
+      if (y > lastY.current + 8 && y > 40) setNavHidden(true)
+      else if (y < lastY.current - 8 || y < 16) setNavHidden(false)
+      lastY.current = y
+    }
+    window.addEventListener("scroll", onScroll, { passive: true })
+    return () => window.removeEventListener("scroll", onScroll)
+  }, [])
 
   const navigation =
     lang === "th"
@@ -37,7 +57,9 @@ export function Header() {
 
         <nav
           aria-label="Main navigation"
-          className="col-span-2 row-start-2 flex items-center justify-center gap-6 md:col-span-1 md:col-start-2 md:row-start-1 md:gap-8"
+          className={`col-span-2 row-start-2 items-center justify-center gap-6 md:col-span-1 md:col-start-2 md:row-start-1 md:flex md:gap-8 ${
+            navHidden ? "hidden" : "flex"
+          }`}
         >
           {navigation.map((item) => (
             <a
@@ -54,7 +76,9 @@ export function Header() {
           <div
             role="group"
             aria-label="Language switcher"
-            className="inline-flex items-center rounded-full border border-border bg-secondary/70 p-0.5 text-[11px] font-medium"
+            className={`items-center rounded-full border border-border bg-secondary/70 p-0.5 text-[11px] font-medium md:inline-flex ${
+              navHidden ? "hidden" : "inline-flex"
+            }`}
           >
             <button
               type="button"
@@ -77,10 +101,6 @@ export function Header() {
               EN
             </button>
           </div>
-          <StaffLoginButton
-            label={lang === "th" ? "เจ้าหน้าที่" : "Staff"}
-            className="hidden rounded-full px-2.5 py-2 text-xs font-medium text-foreground transition-colors hover:text-muted-foreground sm:inline-flex sm:text-sm"
-          />
           <a
             href="#relief-assistant"
             className="whitespace-nowrap rounded-full bg-foreground px-3.5 py-2 text-xs font-medium text-background transition-opacity hover:opacity-85 sm:px-5 sm:text-sm"

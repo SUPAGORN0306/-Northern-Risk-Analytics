@@ -291,11 +291,14 @@ export function CTA() {
         type="button"
         aria-expanded={isOpen}
         aria-controls="relief-assistant-chat"
+        aria-label={lang === "th" ? "ถาม-ตอบเรื่องแก้หนี้ / สิทธิช่วยเหลือ" : "Ask Debt & Relief Q&A"}
         onClick={() => setIsOpen((curr) => !curr)}
-        className="fixed bottom-5 right-4 z-50 inline-flex h-12 items-center gap-2 rounded-full bg-foreground px-5 text-sm font-medium text-background shadow-xl transition-transform hover:scale-[1.02] sm:right-6"
+        className="fixed bottom-5 right-4 z-50 inline-flex size-[52px] items-center justify-center rounded-full bg-foreground text-background shadow-xl transition-transform hover:scale-[1.02] md:h-12 md:w-auto md:gap-2 md:px-5 md:text-sm md:font-medium sm:right-6"
       >
-        <MessageCircle aria-hidden="true" className="size-4" />
-        {lang === "th" ? "ถาม-ตอบเรื่องแก้หนี้ / สิทธิช่วยเหลือ" : "Ask Debt & Relief Q&A"}
+        <MessageCircle aria-hidden="true" className="size-5 md:size-4" />
+        <span className="hidden md:inline">
+          {lang === "th" ? "ถาม-ตอบเรื่องแก้หนี้ / สิทธิช่วยเหลือ" : "Ask Debt & Relief Q&A"}
+        </span>
       </button>
     </>
   )

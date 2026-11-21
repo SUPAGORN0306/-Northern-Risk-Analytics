@@ -41,8 +41,8 @@ function PublicExperience() {
       <Header />
       <main>
         <Hero outlook={outlook} />
-        <RiskOutlook outlook={outlook} loading={loading} error={error} />
         <Pricing provinces={outlook?.provinces ?? []} />
+        <RiskOutlook outlook={outlook} loading={loading} error={error} />
       </main>
       <CTA />
       <Footer />

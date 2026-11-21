@@ -60,16 +60,18 @@ export function Footer() {
             {lang === "th" ? "คำนวณค่างวด" : "Calculate Payment"}
             <ArrowUpRight aria-hidden="true" className="size-3.5" />
           </Link>
-          <StaffLoginButton
-            label={lang === "th" ? "ระบบงานเจ้าหน้าที่" : "Staff Portal"}
-            className="inline-flex items-center text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-          />
         </nav>
       </div>
-      <div className="border-t border-border px-5 py-4 text-center text-[11px] text-muted-foreground sm:px-8">
-        {lang === "th"
-          ? "เพื่อการสนับสนุนข้อมูลและการวางแผนทางการเงินเบื้องต้น เงื่อนไขจริงเป็นไปตามประกาศของหน่วยงานและสถาบันการเงิน"
-          : "Decision support from open official datasets. Final program eligibility rests with responsible institutions."}
+      <div className="border-t border-border px-5 pb-24 pt-4 text-center sm:px-8">
+        <p className="text-sm leading-6 text-[#4B5563]">
+          {lang === "th"
+            ? "เพื่อการสนับสนุนข้อมูลและการวางแผนทางการเงินเบื้องต้น เงื่อนไขจริงเป็นไปตามประกาศของหน่วยงานและสถาบันการเงิน"
+            : "Decision support from open official datasets. Final program eligibility rests with responsible institutions."}
+        </p>
+        <StaffLoginButton
+          label={lang === "th" ? "เข้าสู่ระบบเจ้าหน้าที่" : "Staff sign in"}
+          className="mt-3 inline-flex min-h-11 items-center text-sm text-[#4B5563] underline-offset-4 transition-colors hover:text-foreground hover:underline"
+        />
       </div>
     </motion.footer>
   )

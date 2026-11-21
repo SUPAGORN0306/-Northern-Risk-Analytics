@@ -79,12 +79,12 @@ export function shortCalendarMonth(calMonth: number, lang: Lang): string {
 export function translateClusterLabel(label: string, lang: Lang): string {
   if (lang === "en") return label
   const map: Record<string, string> = {
-    "International Tourism Hub": "เศรษฐกิจพึ่งพาท่องเที่ยว ช่วงโลว์ซีซันรายได้อาจสะดุด",
-    "High Debt Chronic Haze Belt": "ภาระหนี้ธุรกิจสูงและเผชิญฝุ่นสะสม",
-    "Secondary Domestic Tourism Corridor": "เมืองท่องเที่ยวรอง ฐานะการเงินปานกลาง",
-    "Elevated Debt Domestic Basin": "ลุ่มน้ำภาคเหนือตอนล่าง กระแสเงินสดตึงตัว",
+    "International Tourism Hub": "ศูนย์กลางท่องเที่ยวหลักภาคเหนือ (ตลาดต่างชาติ)",
+    "High Debt Chronic Haze Belt": "กลุ่มจังหวัดภาคเหนือที่มีภาระหนี้สูงและเผชิญฝุ่นควันเรื้อรัง",
+    "Secondary Domestic Tourism Corridor": "เส้นทางท่องเที่ยวรองภาคเหนือ (ตลาดในประเทศ)",
+    "Elevated Debt Domestic Basin": "กลุ่มจังหวัดลุ่มน้ำภาคเหนือที่มีหนี้ค่อนข้างสูงและพึ่งพาตลาดในประเทศ",
   }
-  return map[label] || label
+  return map[label] ?? "กลุ่มโครงสร้างเศรษฐกิจจังหวัดภาคเหนือ"
 }
 
 export function translateQuarantineReason(reason: string, lang: Lang): string {
@@ -96,10 +96,10 @@ export function translateQuarantineReason(reason: string, lang: Lang): string {
     return "ข้อมูลข่าวไม่ครบโครงสร้างมาตรฐานหรือไม่มีข้อความอ้างอิงตรงต้นฉบับ"
   }
   if (reason.includes("Outside 36 month")) {
-    return "ข่าวเก่าเกินกรอบเวลาวิเคราะห์ 36 เดือนล่าสุด"
+    return "ข่าวเก่าเกินกรอบเวลาวิเคราะห์ 3 ปี ล่าสุด"
   }
   if (reason.includes("Province outside Northern 17")) {
-    return "สถานีหรือข้อมูลอยู่นอกเขต 17 จังหวัดภาคเหนือ"
+    return "สถานีหรือข้อมูลอยู่นอกเขตจังหวัดภาคเหนือ"
   }
   return reason
 }
@@ -131,7 +131,7 @@ export function translateFeatureName(feature: string, lang: Lang): string {
     heavy_rain_days: "จำนวนวันฝนตกหนักในเดือน (วัน)",
     th_cpi_yoy_pct: "อัตราเงินเฟ้อทั่วไปของไทยเทียบปีก่อน (%)",
     usdthb_yoy_pct: "อัตราแลกเปลี่ยนเงินบาทต่อดอลลาร์เทียบปีก่อน (%)",
-    th_reer_yoy_pct: "ดัชนีค่าเงินบาทที่แท้จริงเทียบปีก่อน (%)",
+    th_reer_yoy_pct: "ดัชนีค่าเงินบาทที่แท้จริงเทียบคู่ค้าและคู่แข่ง (%)",
     thai_rice_usd_yoy_pct: "ราคาข้าวส่งออกไทยเทียบปีก่อน (%)",
   }
   const en: Record<string, string> = {
@@ -177,21 +177,52 @@ export function translateTargetName(target: string, lang: Lang): string {
   return (lang === "th" ? th[target] : en[target]) || target
 }
 
-export function translateClusterGuidance(clusterId: number | null, lang: Lang): string {
-  const th: Record<number, string> = {
-    1: "เน้นสำรองสภาพคล่องรับช่วงผู้เข้าพักน้อยและเตรียมพักชำระเงินต้นระยะสั้นหากเกิดเหตุฉุกเฉินด้านฝุ่นหรือน้ำท่วม",
-    2: "เน้นปรับโครงสร้างหนี้เชิงรุก ลดภาระดอกเบี้ย และเชื่อมโยงคลินิกแก้หนี้สำหรับผู้ประกอบการและครัวเรือนที่มีเงินเหลือหลังหักรายจ่ายน้อย",
-    3: "เน้นสินเชื่อหมุนเวียนรับฤดูกาลท่องเที่ยวในประเทศและวงเงินฟื้นฟูหลังน้ำป่าไหลหลากในพื้นที่ลุ่มน้ำ",
-    4: "เน้นรวมหนี้และวางแผนภาระค่างวดเชิงป้องกันเพื่อรักษาสภาพคล่องท่ามกลางต้นทุนค่าครองชีพและฝุ่นละอองเรื้อรัง",
+export function translateClusterGuidance(
+  clusterKey: string | number | null,
+  lang: Lang,
+): string {
+  if (!clusterKey) return ""
+
+  const byLabelTh: Record<string, string> = {
+    "International Tourism Hub":
+      "เน้นสำรองสภาพคล่องรับช่วงนอกฤดูท่องเที่ยวและเตรียมพักชำระเงินต้นระยะสั้นหากเกิดเหตุฉุกเฉินด้านฝุ่นหรือน้ำท่วม",
+    "High Debt Chronic Haze Belt":
+      "เน้นปรับโครงสร้างหนี้เชิงรุก ลดภาระดอกเบี้ย และเชื่อมโยงคลินิกแก้หนี้สำหรับผู้ประกอบการและครัวเรือนที่มีเงินเหลือหลังหักรายจ่ายน้อย",
+    "Secondary Domestic Tourism Corridor":
+      "เน้นสินเชื่อหมุนเวียนรับฤดูกาลท่องเที่ยวในประเทศและวงเงินฟื้นฟูหลังน้ำป่าไหลหลากในพื้นที่ลุ่มน้ำ",
+    "Elevated Debt Domestic Basin":
+      "เน้นรวมหนี้และวางแผนภาระค่างวดเชิงป้องกันเพื่อรักษาสภาพคล่องท่ามกลางต้นทุนค่าครองชีพและฝุ่นละอองเรื้อรัง",
   }
-  const en: Record<number, string> = {
-    1: "Focus on seasonal working capital buffers and temporary principal deferral during acute haze or flood disruptions.",
-    2: "Prioritize proactive debt restructuring, interest reduction, and Debt Clinic referral for high debt SMEs and households.",
-    3: "Support domestic seasonal working capital lines and targeted flash flood recovery credit across secondary corridors.",
-    4: "Encourage preventive debt consolidation and cash buffer planning against rising living costs and chronic orange haze.",
+
+  const byLabelEn: Record<string, string> = {
+    "International Tourism Hub":
+      "Focus on seasonal working capital buffers and temporary principal deferral during acute haze or flood disruptions.",
+    "High Debt Chronic Haze Belt":
+      "Prioritize proactive debt restructuring, interest reduction, and Debt Clinic referral for high-debt SMEs and households.",
+    "Secondary Domestic Tourism Corridor":
+      "Support domestic seasonal working capital lines and targeted flash flood recovery credit across secondary corridors.",
+    "Elevated Debt Domestic Basin":
+      "Encourage preventive debt consolidation and cash buffer planning against rising living costs and chronic haze.",
   }
-  if (!clusterId) return ""
-  return (lang === "th" ? th[clusterId] : en[clusterId]) || ""
+
+  if (typeof clusterKey === "string") {
+    return (
+      (lang === "th" ? byLabelTh[clusterKey] : byLabelEn[clusterKey]) ??
+      (lang === "th"
+        ? "เน้นวางแผนสภาพคล่องและปรับโครงสร้างภาระค่างวดให้สอดคล้องกับรายได้ตามฤดูกาลของจังหวัด"
+        : "Focus on cash-flow planning and aligning debt installments with provincial seasonal income.")
+    )
+  }
+
+  // Fallback กรณีมีการส่งเลข clusterId เดิมเข้ามา
+  const legacyOrder = [
+    "International Tourism Hub",
+    "High Debt Chronic Haze Belt",
+    "Secondary Domestic Tourism Corridor",
+    "Elevated Debt Domestic Basin",
+  ]
+  const mappedLabel = legacyOrder[clusterKey - 1]
+  return mappedLabel ? translateClusterGuidance(mappedLabel, lang) : ""
 }
 
 export function translateShockType(shockType: string, lang: Lang): string {
@@ -226,14 +257,14 @@ export function translateSubregion(subregion: string, lang: Lang): string {
 export function translateDsrBand(band: string, lang: Lang): string {
   const th: Record<string, string> = {
     stable: "สภาพคล่องปกติ (ต่ำกว่า 40%)",
-    watch: "เฝ้าระวัง (40 ถึง 60%)",
-    tight: "ตึงตัวสูง (60 ถึง 80%)",
+    watch: "เฝ้าระวัง (40% ถึงต่ำกว่า 60%)",
+    tight: "ตึงตัวสูง (60% ถึงต่ำกว่า 80%)",
     critical: "เปราะบางวิกฤต (80% ขึ้นไป)",
   }
   const en: Record<string, string> = {
     stable: "Stable Liquidity (Under 40%)",
-    watch: "Moderate Watch (40 to 60%)",
-    tight: "Tight Liquidity (60 to 80%)",
+    watch: "Moderate Watch (40% to under 60%)",
+    tight: "Tight Liquidity (60% to under 80%)",
     critical: "Critical Stress (80% and above)",
   }
   return (lang === "th" ? th[band] : en[band]) || band

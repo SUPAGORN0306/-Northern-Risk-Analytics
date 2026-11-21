@@ -75,6 +75,7 @@ const CLUSTER_DOT_CLASS: Record<number, string> = {
   2: "bg-amber-600",
   3: "bg-slate-700",
   4: "bg-slate-400",
+  5: "bg-indigo-600",
 }
 
 export function StaffWorkspace({
@@ -789,7 +790,7 @@ function PolicyOverviewPage({
     return `${v.toFixed(1)}%`
   }
 
-  // Group summary statistics across the 4 structural clusters for the left executive column
+  // Group summary statistics across the structural clusters for the left executive column
   const clusterSummaries = useMemo(() => {
     const groups = new Map<
       number,
@@ -916,7 +917,7 @@ function PolicyOverviewPage({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(310px,33fr)_minmax(0,67fr)] lg:items-stretch">
-        {/* Left Sidebar Active Provincial Focus + Top 5 Priority Watchlist + 4 Group Summary + Demand Signals */}
+        {/* Left Sidebar Active Provincial Focus + Top 5 Priority Watchlist + Group Summary + Demand Signals */}
         <aside className="flex flex-col gap-4">
           {selectedRanked && (
             <div className="rounded-2xl border border-border bg-secondary/45 p-4">
@@ -967,7 +968,7 @@ function PolicyOverviewPage({
               </div>
 
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                {translateClusterGuidance(selectedRanked.cluster_id, lang)}
+                {translateClusterGuidance(selectedRanked.cluster_label, lang)}
               </p>
             </div>
           )}
@@ -1091,14 +1092,14 @@ function PolicyOverviewPage({
             )}
           </section>
 
-          {/* 4 Group Structural Risk Breakdown Card to enrich Left Column */}
+          {/* Group Structural Risk Breakdown Card to enrich Left Column */}
           <section className="rounded-2xl border border-border bg-card p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold">
                   {lang === "th"
-                    ? "สรุปโครงสร้างความเสี่ยง 4 กลุ่มจังหวัด"
-                    : "4 Group Structural Risk Summary"}
+                    ? `สรุปโครงสร้างความเสี่ยง ${clusterSummaries.length} กลุ่มจังหวัด`
+                    : `${clusterSummaries.length} Group Structural Risk Summary`}
                 </h2>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {lang === "th"
@@ -1345,7 +1346,7 @@ function PolicyOverviewPage({
                           : `Tight (<19%) ${distributionStats.zoneHighRisk}`
                         : distMetric === "debt"
                           ? lang === "th"
-                            ? `ภาระหนี้สูง (>=0.65 เท่า) ${distributionStats.zoneHighRisk} จังหวัด`
+                            ? `ภาระหนี้สูง (≥0.65 เท่า) ${distributionStats.zoneHighRisk} จังหวัด`
                             : `High Debt (>=0.65x) ${distributionStats.zoneHighRisk}`
                           : lang === "th"
                             ? `เข้าพักชะลอตัว (<52%) ${distributionStats.zoneHighRisk} จังหวัด`
@@ -1355,14 +1356,14 @@ function PolicyOverviewPage({
                       <span className="size-2 rounded-full bg-amber-500" />
                       {distMetric === "margin"
                         ? lang === "th"
-                          ? `ปานกลาง (19 ถึง 24%) ${distributionStats.zoneModerate} จังหวัด`
+                          ? `ปานกลาง (19% ถึง 24%) ${distributionStats.zoneModerate} จังหวัด`
                           : `Moderate (19 to 24%) ${distributionStats.zoneModerate}`
                         : distMetric === "debt"
                           ? lang === "th"
-                            ? `ปานกลาง (0.45 ถึง 0.65 เท่า) ${distributionStats.zoneModerate} จังหวัด`
-                            : `Moderate (0.45 to 0.65x) ${distributionStats.zoneModerate}`
+                            ? `ปานกลาง (0.45 ถึงต่ำกว่า 0.65 เท่า) ${distributionStats.zoneModerate} จังหวัด`
+                            : `Moderate (0.45 to <0.65x) ${distributionStats.zoneModerate}`
                           : lang === "th"
-                            ? `ท่องเที่ยวรอง (52 ถึง 66%) ${distributionStats.zoneModerate} จังหวัด`
+                            ? `ท่องเที่ยวรอง (52% ถึง 66%) ${distributionStats.zoneModerate} จังหวัด`
                             : `Secondary (52 to 66%) ${distributionStats.zoneModerate}`}
                     </span>
                     <span className="inline-flex items-center gap-1.5">
@@ -1498,26 +1499,19 @@ function PolicyOverviewPage({
                     : `${monitor?.model_used || "KMeans"} · Silhouette ${monitor?.silhouette_score != null ? monitor.silhouette_score.toFixed(4) : "—"}`}
                 </p>
                 <h2 className="mt-1 font-display text-lg font-semibold">
-                  {lang === "th" ? "แผนภาพการกระจายตัว 4 กลุ่มจังหวัดตามการพึ่งพาท่องเที่ยวและแรงกดดันภายนอก" : "4 Group Regional Risk Positioning"}
+                  {lang === "th"
+                    ? `แผนภาพการกระจายตัว ${clusterSummaries.length || 4} กลุ่มจังหวัดตามการพึ่งพาท่องเที่ยวและแรงกดดันภายนอก`
+                    : `${clusterSummaries.length || 4} Group Regional Risk Positioning`}
                 </h2>
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1.5 text-[10px] text-muted-foreground">
-                <ClusterLegend
-                  color="bg-teal-700"
-                  label={lang === "th" ? "กลุ่มที่ 1 เมืองท่องเที่ยวหลัก (พึ่งพิงฤดูกาล)" : "Group 1 Primary Tourism Hub"}
-                />
-                <ClusterLegend
-                  color="bg-amber-600"
-                  label={lang === "th" ? "กลุ่มที่ 2 ภาระหนี้สูงและเผชิญฝุ่นสะสม" : "Group 2 High Debt & Haze"}
-                />
-                <ClusterLegend
-                  color="bg-slate-700"
-                  label={lang === "th" ? "กลุ่มที่ 3 เมืองท่องเที่ยวรอง (การเงินปานกลาง)" : "Group 3 Secondary Tourism"}
-                />
-                <ClusterLegend
-                  color="bg-slate-400"
-                  label={lang === "th" ? "กลุ่มที่ 4 ลุ่มน้ำภาคเหนือตอนล่าง (เงินสดตึงตัว)" : "Group 4 Lower Basin Tight Margin"}
-                />
+                {clusterSummaries.map((g) => (
+                  <ClusterLegend
+                    key={g.cluster_id}
+                    color={CLUSTER_DOT_CLASS[g.cluster_id] || "bg-slate-400"}
+                    label={`${formatGroupTag(g.cluster_id, lang)} ${translateClusterLabel(g.cluster_label, lang)}`}
+                  />
+                ))}
               </div>
             </div>
             <RegionalRiskGrouping
@@ -1824,7 +1818,7 @@ function RiskModelingAndClusteringPage({
                     setCostShockPct(c)
                     void executeMonteCarlo(horizonMonths, c, includeNewsRegime, nSimulations)
                   }}
-                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                     costShockPct === c ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -2280,9 +2274,9 @@ function RiskModelingAndClusteringPage({
                   <th className="py-2 pr-3 font-medium">{lang === "th" ? "ตัวแปรปัจจัย" : "Driver Indicator"}</th>
                   <th className="py-2 pr-3 font-medium">{lang === "th" ? "ตัวชี้วัดเป้าหมาย" : "Target Metric"}</th>
                   <th className="py-2 pr-3 font-medium">{lang === "th" ? "ระยะเวลาส่งผล" : "Lag"}</th>
-                  <th className="py-2 pr-3 font-medium">{lang === "th" ? "ค่าความสัมพันธ์" : "Spearman r"}</th>
-                  <th className="py-2 pr-3 font-medium">{lang === "th" ? "ค่านัยสำคัญทางสถิติ" : "p value"}</th>
-                  <th className="py-2 font-medium">{lang === "th" ? "ค่าความซ้ำซ้อน" : "VIF"}</th>
+                  <th className="py-2 pr-3 font-medium">{lang === "th" ? "ค่าสหสัมพันธ์ (Spearman r)" : "Spearman r"}</th>
+                  <th className="py-2 pr-3 font-medium">{lang === "th" ? "ค่านัยสำคัญ (p-value)" : "p-value"}</th>
+                  <th className="py-2 font-medium">{lang === "th" ? "ค่าความซ้ำซ้อน (VIF)" : "VIF"}</th>
                 </tr>
               </thead>
               <tbody>

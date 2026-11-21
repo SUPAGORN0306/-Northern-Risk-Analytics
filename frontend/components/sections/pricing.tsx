@@ -10,7 +10,6 @@ import {
   Calculator,
   Check,
   ChevronDown,
-  Download,
   ExternalLink,
   FileCheck2,
   FileText,
@@ -18,9 +17,7 @@ import {
   PhoneCall,
   Printer,
   RotateCcw,
-  ShieldCheck,
   Sparkles,
-  Upload,
 } from "lucide-react"
 import {
   Bar,
@@ -46,7 +43,7 @@ import {
   computeFinancialDiagnostic,
   type DebtStatusKey,
 } from "@/lib/financial-dossier"
-import { translateDsrBand, useAppState } from "@/lib/i18n"
+import { useAppState } from "@/lib/i18n"
 
 const FALLBACK_PROVINCES = [
   { code: "CM", name_th: "เชียงใหม่", name_en: "Chiang Mai" },
@@ -105,7 +102,7 @@ const DEBT_STATUS_OPTIONS: {
   },
   {
     id: "persistent",
-    th: "จ่ายได้แค่ขั้นต่ำวนไปเรื่อยๆ",
+    th: "จ่ายได้แค่ขั้นต่ำ ตัดต้นแทบไม่ลด",
     en: "Paying minimum only on revolving debt",
     sub_th: "บัตรกดเงินสดหรือสินเชื่อหมุนเวียนที่หักเงินต้นได้น้อย",
     sub_en: "Revolving personal credit where principal barely drops",
@@ -283,16 +280,29 @@ function matchOfficialPrograms(params: {
 
 type PresetKey = "individual_tight" | "sme_tight" | "khunsoo_sme" | "disaster_cr" | null
 
+type LoanCategory = "card" | "personal" | "auto" | "home" | "sme" | "informal"
+
 type ExtraLoanItem = {
   id: string
-  category: "card" | "auto" | "home" | "sme"
+  category: LoanCategory
   monthlyPayment: string
   principal: string
 }
 
+function formatMoneyInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "")
+  if (!digits) return ""
+  return Number(digits).toLocaleString("en-US")
+}
+
+function parseMoney(raw: string): number {
+  const cleaned = raw.replace(/[^\d.]/g, "")
+  const value = Number(cleaned)
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
 export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const ref = useRef(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const dossierDialogRef = useRef<HTMLDialogElement | null>(null)
   const docPageDialogRef = useRef<HTMLDialogElement | null>(null)
   const isInView = useInView(ref, { once: true, margin: "-60px" })
@@ -320,8 +330,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const [deferMonths, setDeferMonths] = useState(6)
   const [stressDropPct, setStressDropPct] = useState(30)
 
-  const [hasEvaluated, setHasEvaluated] = useState(false)
-  const [csvImportNote, setCsvImportNote] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [result, setResult] = useState<ReliefCheckResponse | null>(null)
@@ -349,14 +357,14 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     return found ? (lang === "th" ? found.name_th : found.name_en) : selectedProvinceCode
   }, [provinceList, selectedProvinceCode, lang])
 
-  const numRevenue = Math.max(0, Number(revenue) || 0)
-  const numOpex = Math.max(0, Number(opex) || 0)
-  const baseDebt = Math.max(0, Number(debtPayment) || 0)
-  const extraDebtSum = extraLoans.reduce((acc, item) => acc + Math.max(0, Number(item.monthlyPayment) || 0), 0)
+  const numRevenue = parseMoney(revenue)
+  const numOpex = parseMoney(opex)
+  const baseDebt = parseMoney(debtPayment)
+  const extraDebtSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.monthlyPayment), 0)
   const numDebt = baseDebt + extraDebtSum
-  const numReserve = Math.max(0, Number(cashReserve) || 0)
-  const basePrincipal = Math.max(0, Number(totalPrincipal) || 0)
-  const extraPrincipalSum = extraLoans.reduce((acc, item) => acc + Math.max(0, Number(item.principal) || 0), 0)
+  const numReserve = parseMoney(cashReserve)
+  const basePrincipal = parseMoney(totalPrincipal)
+  const extraPrincipalSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.principal), 0)
   const numPrincipal = basePrincipal + extraPrincipalSum
   const hasAnyInput = Boolean(
     revenue.trim() ||
@@ -369,20 +377,10 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   )
 
   useEffect(() => {
-    if (!csvImportNote) return
-    const timer = setTimeout(() => {
-      setCsvImportNote(null)
-    }, 4000)
-    return () => clearTimeout(timer)
-  }, [csvImportNote])
-
-  useEffect(() => {
     if (numRevenue <= 0 || numDebt <= 0) {
-      setHasEvaluated(false)
       setResult(null)
       return
     }
-    setHasEvaluated(true)
     const timer = setTimeout(() => {
       void runBackendAssessment({
         prov: selectedProvinceCode,
@@ -404,8 +402,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     setTotalPrincipal("")
     setExtraLoans([])
     setHorizonYears(5)
-    setHasEvaluated(false)
-    setCsvImportNote(null)
     setApiError(null)
     setResult(null)
   }
@@ -420,12 +416,12 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     }
   }
 
-  function addExtraLoan() {
+  function addExtraLoan(category: LoanCategory = "card") {
     setExtraLoans((prev) => [
       ...prev,
       {
         id: `${Date.now()}-${prev.length}`,
-        category: userType === "individual" ? "card" : "sme",
+        category,
         monthlyPayment: "",
         principal: "",
       },
@@ -527,7 +523,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     revVal: number
     debtVal: number
   }) {
-    setHasEvaluated(true)
     setSubmitting(true)
     setApiError(null)
     try {
@@ -561,11 +556,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setUserType("individual")
       setBusiness("household")
       setDebtStatus("current")
-      setRevenue("35000")
-      setOpex("14000")
-      setDebtPayment("15500")
-      setCashReserve("45000")
-      setTotalPrincipal("450000")
+      setRevenue("35,000")
+      setOpex("14,000")
+      setDebtPayment("15,500")
+      setCashReserve("45,000")
+      setTotalPrincipal("450,000")
       setHorizonYears(5)
       void runBackendAssessment({
         prov: selectedProvinceCode,
@@ -578,11 +573,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setUserType("business")
       setBusiness("hotel")
       setDebtStatus("current")
-      setRevenue("165000")
-      setOpex("112000")
-      setDebtPayment("48000")
-      setCashReserve("240000")
-      setTotalPrincipal("1850000")
+      setRevenue("165,000")
+      setOpex("112,000")
+      setDebtPayment("48,000")
+      setCashReserve("240,000")
+      setTotalPrincipal("1,850,000")
       void runBackendAssessment({
         prov: selectedProvinceCode,
         biz: "hotel",
@@ -594,11 +589,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setUserType("business")
       setBusiness("restaurant")
       setDebtStatus("overdue_31_120")
-      setRevenue("120000")
-      setOpex("84000")
-      setDebtPayment("44000")
-      setCashReserve("150000")
-      setTotalPrincipal("1600000")
+      setRevenue("120,000")
+      setOpex("84,000")
+      setDebtPayment("44,000")
+      setCashReserve("150,000")
+      setTotalPrincipal("1,600,000")
       void runBackendAssessment({
         prov: selectedProvinceCode,
         biz: "restaurant",
@@ -611,11 +606,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setSelectedProvinceCode("CR")
       setBusiness("restaurant")
       setDebtStatus("disaster")
-      setRevenue("135000")
-      setOpex("92000")
-      setDebtPayment("39000")
-      setCashReserve("160000")
-      setTotalPrincipal("1500000")
+      setRevenue("135,000")
+      setOpex("92,000")
+      setDebtPayment("39,000")
+      setCashReserve("160,000")
+      setTotalPrincipal("1,500,000")
       void runBackendAssessment({
         prov: "CR",
         biz: "restaurant",
@@ -628,7 +623,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!revenue.trim() || !debtPayment.trim() || numRevenue <= 0) {
+    if (!revenue.trim() || numDebt <= 0 || numRevenue <= 0) {
       setApiError(
         lang === "th"
           ? "กรุณากรอกรายได้ต่อเดือนและค่างวดหนี้ต่อเดือนก่อนกดคำนวณ"
@@ -854,7 +849,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 <h3 className="font-display text-base font-semibold text-foreground sm:text-lg">
                   {lang === "th" ? "ข้อมูลรายรับ รายจ่าย และภาระหนี้" : "Cashflow & Debt Inputs"}
                 </h3>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-sm leading-6 text-[#4B5563]">
                   {lang === "th"
                     ? "ไม่เก็บข้อมูลส่วนบุคคล ประมวลผลเพื่อจำลองแผนเจรจาเท่านั้น"
                     : "No personal data stored. Processed strictly for planning."}
@@ -910,14 +905,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   <div className="relative">
                     <input
                       id="monthly-revenue"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={revenue}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={formatMoneyInput(revenue)}
                       onChange={(e) => {
                         setActivePreset(null)
-                        setRevenue(e.target.value)
+                        setRevenue(formatMoneyInput(e.target.value))
                       }}
                       placeholder={lang === "th" ? "กรอกรายได้ต่อเดือน" : "Enter monthly revenue"}
                       className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
@@ -934,14 +928,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   <div className="relative">
                     <input
                       id="debt-payment"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={debtPayment}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={formatMoneyInput(debtPayment)}
                       onChange={(e) => {
                         setActivePreset(null)
-                        setDebtPayment(e.target.value)
+                        setDebtPayment(formatMoneyInput(e.target.value))
                       }}
                       placeholder={lang === "th" ? "กรอกค่างวดต่อเดือน" : "Enter monthly payment"}
                       className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
@@ -967,14 +960,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   <div className="relative">
                     <input
                       id="monthly-opex"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={opex}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={formatMoneyInput(opex)}
                       onChange={(e) => {
                         setActivePreset(null)
-                        setOpex(e.target.value)
+                        setOpex(formatMoneyInput(e.target.value))
                       }}
                       placeholder={lang === "th" ? "เช่น ค่าเช่า ค่ากิน ค่าน้ำไฟ" : "Enter fixed costs"}
                       className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
@@ -1002,14 +994,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   <div className="relative">
                     <input
                       id="cash-reserve"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={cashReserve}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={formatMoneyInput(cashReserve)}
                       onChange={(e) => {
                         setActivePreset(null)
-                        setCashReserve(e.target.value)
+                        setCashReserve(formatMoneyInput(e.target.value))
                       }}
                       placeholder={lang === "th" ? "กรอกเงินสำรองที่มี" : "Enter cash reserve"}
                       className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
@@ -1033,12 +1024,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                     <div className="relative">
                       <input
                         id="total-principal"
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="any"
-                        value={totalPrincipal}
-                        onChange={(e) => setTotalPrincipal(e.target.value)}
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={formatMoneyInput(totalPrincipal)}
+                        onChange={(e) => setTotalPrincipal(formatMoneyInput(e.target.value))}
                         placeholder={lang === "th" ? "กรอกยอดเงินต้นคงเหลือ" : "Enter total principal"}
                         className="h-9 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
                       />
@@ -1096,7 +1086,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </span>
                   <button
                     type="button"
-                    onClick={addExtraLoan}
+                    onClick={() => addExtraLoan("card")}
                     className="shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
                   >
                     {lang === "th" ? "+ เพิ่มก้อนหนี้อื่น" : "+ Add Loan"}
@@ -1111,7 +1101,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                           aria-label={`Extra loan ${idx + 1} type`}
                           value={loan.category}
                           onChange={(e) =>
-                            updateExtraLoan(loan.id, { category: e.target.value as ExtraLoanItem["category"] })
+                            updateExtraLoan(loan.id, { category: e.target.value as LoanCategory })
                           }
                           className="h-8 rounded-lg border border-input bg-background px-2 text-[11px] text-foreground outline-none"
                         >
@@ -1121,20 +1111,22 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                           <option value="sme">{lang === "th" ? "สินเชื่อร้านค้า" : "Business Loan"}</option>
                         </select>
                         <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={loan.monthlyPayment}
-                          onChange={(e) => updateExtraLoan(loan.id, { monthlyPayment: e.target.value })}
+                          type="text"
+                          inputMode="numeric"
+                          value={formatMoneyInput(loan.monthlyPayment)}
+                          onChange={(e) =>
+                            updateExtraLoan(loan.id, { monthlyPayment: formatMoneyInput(e.target.value) })
+                          }
                           placeholder={lang === "th" ? "ค่างวด/เดือน" : "Monthly pay"}
                           className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground outline-none"
                         />
                         <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={loan.principal}
-                          onChange={(e) => updateExtraLoan(loan.id, { principal: e.target.value })}
+                          type="text"
+                          inputMode="numeric"
+                          value={formatMoneyInput(loan.principal)}
+                          onChange={(e) =>
+                            updateExtraLoan(loan.id, { principal: formatMoneyInput(e.target.value) })
+                          }
                           placeholder={lang === "th" ? "ยอดต้น (ไม่บังคับ)" : "Principal"}
                           className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground outline-none"
                         />
@@ -1320,7 +1312,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </h3>
                   <p className="mt-1.5 text-xs leading-6 text-muted-foreground">
                     {lang === "th"
-                      ? "เมื่อกรอกข้อมูลครบ ระบบจะแสดงความสามารถในการจ่ายหนี้ ระยะเวลาที่เงินเก็บอยู่รอดได้ กราฟเปรียบเทียบค่างวดเดิม–ใหม่ และปุ่มพิมพ์ใบสรุป 1 หน้าสำหรับนำไปคุยกับธนาคาร"
+                      ? "เมื่อกรอกข้อมูลครบ ระบบจะแสดงความสามารถในการจ่ายหนี้ ระยะเวลาที่เงินเก็บอยู่รอดได้ กราฟเปรียบเทียบค่างวดเดิม–ใหม่ และปุ่มพิมพ์ใบสรุปสำหรับนำไปคุยกับธนาคาร"
                       : "Displays affordability, cash reserve runway, stress impact, payment comparison charts, and a 1 page printable dossier."}
                   </p>
                 </div>
@@ -1596,7 +1588,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         </div>
                       )}
 
-{(() => {
+                      {(() => {
                         const isDisaster = loanComparison.mode === "disaster_defer"
                         const gMonths = loanComparison.graceMonths ?? deferMonths
                         const activePayment = isDisaster
@@ -1747,7 +1739,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         </div>
 
                         {/* Clear Plain Thai Explanation of What the User Gains from this Simulation */}
-<div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
+                        <div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
                           <p className="font-semibold text-teal-900">
                             {lang === "th"
                               ? `สิ่งที่${beneficiaryNounTh}ได้รับจากแผนปรับโครงสร้างนี้:`
@@ -1801,7 +1793,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   <div className="max-w-md">
                     <p className="text-xs font-semibold text-foreground">
                       {lang === "th"
-                        ? "3. ใบสรุปความพร้อมทางการเงิน 1 หน้าสำหรับยื่นธนาคาร"
+                        ? "3. ใบสรุปความพร้อมทางการเงิน สำหรับยื่นธนาคาร"
                         : "3. One Page Financial Readiness Dossier"}
                     </p>
                     <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
@@ -1817,7 +1809,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85"
                     >
                       <FileText aria-hidden="true" className="size-3.5" />
-                      {lang === "th" ? "เปิดดูและพิมพ์ใบสรุป 1 หน้า" : "Preview & Print 1 Page Dossier"}
+                      {lang === "th" ? "เปิดดูและพิมพ์ใบสรุป" : "Preview & Print Dossier"}
                     </button>
                   </div>
                 </div>
@@ -2024,15 +2016,19 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 <div className="rounded-xl border border-border bg-secondary/25 px-3.5 py-2.5">
                   <p className="text-[10px] text-muted-foreground">
-                    {lang === "th" ? "รายได้ต่อเดือน / กำไรก่อนจ่ายหนี้" : "Monthly Revenue / Operating Profit"}
+                    {lang === "th"
+                      ? userType === "individual"
+                        ? "รายได้ต่อเดือน / เงินเหลือหลังหักค่าใช้จ่าย"
+                        : "รายได้ต่อเดือน / กำไรก่อนจ่ายหนี้"
+                      : "Monthly Income / Pre-Debt Cashflow"}
                   </p>
                   <p className="mt-1 font-display text-base font-semibold tabular-nums text-foreground">
                     {Math.round(diagnostic.monthlyRevenue).toLocaleString()} {lang === "th" ? "บาท" : "THB"}
                   </p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
                     {lang === "th"
-                      ? `กำไรก่อนหนี้ ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน`
-                      : `Operating profit ${Math.round(diagnostic.operatingCashflow).toLocaleString()} THB/mo`}
+                      ? `${userType === "individual" ? "เงินเหลือจ่ายหนี้ได้" : "กำไรก่อนหนี้"} ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน`
+                      : `Pre-debt cashflow ${Math.round(diagnostic.operatingCashflow).toLocaleString()} THB/mo`}
                   </p>
                 </div>
 
@@ -2098,8 +2094,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </p>
                   <p className="mt-1 text-muted-foreground">
                     {lang === "th"
-                      ? `ขอปรับลดภาระค่างวดปีที่ 1 จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน เหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน เพื่อให้สอดคล้องกับกำไรจากการดำเนินงานจริง (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน) ช่วยเพิ่มสภาพคล่องหมุนเวียน +${loanComparison.monthlyLiquiditySaved.toLocaleString()} บาท/เดือน และประหยัดดอกเบี้ยจ่ายจริงเทียบสัญญาเดิมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท${loanComparison.grossWaivedInterest ? ` (คิดเป็นมูลค่าดอกเบี้ยที่โครงการยกเว้นให้ในช่วงพักชำระ 3 ปีแรกประมาณ ${loanComparison.grossWaivedInterest.toLocaleString()} บาท)` : ""}${loanComparison.payoffMonthPol ? ` โดยสามารถปิดจบหนี้ได้เสร็จสิ้นภายในสิ้นปีที่ ${Math.ceil(loanComparison.payoffMonthPol / 12)} ทำให้ปีถัดไปไม่มีภาระค่างวดอีกต่อไป (0 บาท)` : ""}`
-                      : `Reduces Year 1 monthly payment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${loanComparison.policyYear1Payment.toLocaleString()} THB/mo, freeing +${loanComparison.monthlyLiquiditySaved.toLocaleString()} THB/mo in liquidity and saving approx. ${loanComparison.totalInterestSaved.toLocaleString()} THB in net interest${loanComparison.grossWaivedInterest ? ` (~${loanComparison.grossWaivedInterest.toLocaleString()} THB gross interest waived during the freeze)` : ""}${loanComparison.payoffMonthPol ? `. The loan is fully amortized by Year ${Math.ceil(loanComparison.payoffMonthPol / 12)}, with 0 THB installment thereafter.` : "."}`}
+                      ? `ขอปรับลดภาระค่างวดปีที่ 1 จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน เหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน เพื่อให้สอดคล้องกับ${userType === "individual" ? "เงินเหลือหลังหักค่าใช้จ่ายจำเป็น" : "กำไรจากการดำเนินงานจริง"} (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน) ช่วยเพิ่มสภาพคล่องหมุนเวียน +${loanComparison.monthlyLiquiditySaved.toLocaleString()} บาท/เดือน และประหยัดดอกเบี้ยจ่ายจริงเทียบสัญญาเดิมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท${loanComparison.grossWaivedInterest ? ` (คิดเป็นมูลค่าดอกเบี้ยที่โครงการยกเว้นให้ในช่วงพักชำระ 3 ปีแรกประมาณ ${loanComparison.grossWaivedInterest.toLocaleString()} บาท)` : ""}${loanComparison.payoffMonthPol ? ` โดยสามารถปิดจบหนี้ได้เสร็จสิ้นภายในสิ้นปีที่ ${Math.ceil(loanComparison.payoffMonthPol / 12)} ทำให้ปีถัดไปไม่มีภาระค่างวดอีกต่อไป (0 บาท)` : ""}`
+                      : `Reduces Year 1 monthly payment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${loanComparison.policyYear1Payment.toLocaleString()} THB/mo, aligning with actual pre-debt cashflow (${Math.round(diagnostic.operatingCashflow).toLocaleString()} THB/mo), freeing +${loanComparison.monthlyLiquiditySaved.toLocaleString()} THB/mo in liquidity and saving approx. ${loanComparison.totalInterestSaved.toLocaleString()} THB in net interest${loanComparison.grossWaivedInterest ? ` (~${loanComparison.grossWaivedInterest.toLocaleString()} THB gross interest waived during the freeze)` : ""}${loanComparison.payoffMonthPol ? `. The loan is fully amortized by Year ${Math.ceil(loanComparison.payoffMonthPol / 12)}, with 0 THB installment thereafter.` : "."}`}
                   </p>
                 </div>
               )}
@@ -2181,7 +2177,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background hover:opacity-85"
             >
               <Printer aria-hidden="true" className="size-3.5" />
-              {lang === "th" ? "สั่งพิมพ์ / บันทึกเป็นไฟล์ PDF 1 หน้า" : "Print / Save 1 Page PDF"}
+              {lang === "th" ? "สั่งพิมพ์ / บันทึกเป็นไฟล์ PDF" : "Print / Save PDF"}
             </button>
           </div>
         </div>

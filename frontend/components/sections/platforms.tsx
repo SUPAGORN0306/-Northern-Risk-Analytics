@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowDownRight,
   CalendarDays,
+  ChevronDown,
   ExternalLink,
   LineChart as LineChartIcon,
   MapPin,
@@ -59,6 +60,8 @@ export function RiskOutlook({
   const [chartTab, setChartTab] = useState<ChartTab>("trend")
   const [detail, setDetail] = useState<ProvinceDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [playbookOpen, setPlaybookOpen] = useState(false)
+  const [segmentsOpen, setSegmentsOpen] = useState(false)
 
   const provinces = outlook?.provinces ?? []
   const selectedItem = useMemo(
@@ -73,6 +76,8 @@ export function RiskOutlook({
     let active = true
     if (!selectedProvinceCode) return
     setDetailLoading(true)
+    setPlaybookOpen(false)
+    setSegmentsOpen(false)
     fetchProvinceDetail(selectedProvinceCode)
       .then((res) => {
         if (active) setDetail(res)
@@ -91,7 +96,12 @@ export function RiskOutlook({
   // Compute live regional averages and notable spotlight provinces for 1 click exploration
   const regionalBenchmarks = useMemo(() => {
     if (!provinces.length) {
-      return { avgOcc: 58.0, avgSmeDebt: 0.65, avgSmeCushion: 22.0, spotlights: [] as { code: string; tag: string; name: string }[] }
+      return {
+        avgOcc: 58.0,
+        avgSmeDebt: 0.65,
+        avgSmeCushion: 22.0,
+        spotlights: [] as { code: string; tag: string; name: string }[],
+      }
     }
     const occVals = provinces.map((p) => p.occupancy_rate).filter((v): v is number => v != null)
     const debtVals = provinces.map((p) => p.debt_to_annual_income_sme).filter((v): v is number => v != null)
@@ -116,21 +126,21 @@ export function RiskOutlook({
     if (topOcc) {
       spotlights.push({
         code: topOcc.province_code,
-        tag: lang === "th" ? "เข้าพักสูงสุด" : "Top Occupancy",
+        tag: lang === "th" ? "อัตราเข้าพักสูงสุด" : "Top Occupancy",
         name: lang === "th" ? topOcc.name_th : topOcc.name_en,
       })
     }
     if (topDebt) {
       spotlights.push({
         code: topDebt.province_code,
-        tag: lang === "th" ? "หนี้ธุรกิจสูงสุด" : "Highest SME Debt",
+        tag: lang === "th" ? "ภาระหนี้ธุรกิจสูง" : "Highest SME Debt",
         name: lang === "th" ? topDebt.name_th : topDebt.name_en,
       })
     }
     if (lowCushion) {
       spotlights.push({
         code: lowCushion.province_code,
-        tag: lang === "th" ? "เงินเหลือน้อย" : "Thin Cash Surplus",
+        tag: lang === "th" ? "เงินเหลือหลังหักค่าใช้จ่ายน้อย" : "Thin Cash Surplus",
         name: lang === "th" ? lowCushion.name_th : lowCushion.name_en,
       })
     }
@@ -139,10 +149,10 @@ export function RiskOutlook({
         code: highShock.province_code,
         tag: highShock.has_active_water_pollution
           ? lang === "th"
-            ? "เฝ้าระวังสารพิษน้ำ"
+            ? "เฝ้าระวังน้ำปนเปื้อนสารพิษ"
             : "Water Pollution Alert"
           : lang === "th"
-            ? "เสี่ยงภัยฝุ่น/ฝนสูง"
+            ? "เสี่ยงภัยฝุ่นหรือฝนตกหนัก"
             : "High Hazard Exposure",
         name: lang === "th" ? highShock.name_th : highShock.name_en,
       })
@@ -281,7 +291,7 @@ export function RiskOutlook({
   const metricTabs: { id: MapMetricMode; label: string }[] =
     lang === "th"
       ? [
-          { id: "cluster", label: "อันดับความเปราะบาง" },
+          { id: "cluster", label: "ระดับความเสี่ยงทางเศรษฐกิจ" },
           { id: "occupancy", label: "อัตราเข้าพัก" },
           { id: "debt", label: "ภาระหนี้และเงินเหลือ" },
         ]
@@ -339,20 +349,20 @@ export function RiskOutlook({
       const finLine =
         smeDebt != null && cushion != null
           ? smeDebt >= 1.0 || cushion <= 12
-            ? `หนี้ผู้ประกอบการเฉลี่ย ${smeDebt.toFixed(2)} เท่าของรายได้ทั้งปี และหลังหักรายจ่ายแล้วเหลือเงินเก็บเพียง ${cushion.toFixed(0)}% ของรายได้ (ควรวางแผนลดภาระค่างวด)`
+            ? `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (ควรวางแผนลดภาระค่างวด)`
             : smeDebt >= 0.65 || cushion <= 22
-              ? `หนี้ผู้ประกอบการเฉลี่ย ${smeDebt.toFixed(2)} เท่าของรายได้ทั้งปี หลังหักรายจ่ายแล้วเหลือเงิน ${cushion.toFixed(0)}% ของรายได้ (ควรสำรองเงินรับช่วงผู้เข้าพักน้อย)`
-              : `หนี้ผู้ประกอบการเฉลี่ย ${smeDebt.toFixed(2)} เท่าของรายได้ทั้งปี และหลังหักรายจ่ายยังเหลือเงิน ${cushion.toFixed(0)}% ของรายได้ (อยู่ในเกณฑ์คล่องตัว)`
+              ? `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (ควรสำรองเงินรับช่วงผู้เข้าพักน้อย)`
+              : `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (สภาพคล่องดี)`
           : "อยู่ระหว่างอัปเดตข้อมูลฐานะการเงินรายจังหวัด"
 
       const seasonLine = bestSeasonMonths
         ? `ช่วงทำรายได้หลักคือ ${bestSeasonMonths}${stressSeasonMonths ? ` · ช่วงที่ควรสำรองเงินสดรับมือคือ ${stressSeasonMonths}` : ""}`
-        : translateClusterGuidance(selectedItem.cluster_id, lang)
+        : translateClusterGuidance(selectedItem.cluster_label, lang)
 
       return [
-        { label: "ภาวะท่องเที่ยว", text: `${occCompare}${yoyNote}` },
-        { label: "หนี้และเงินเหลือผู้ประกอบการ", text: finLine },
-        { label: "จังหวะวางแผนเงินสด", text: seasonLine },
+        { label: "สถานการณ์การท่องเที่ยว", text: `${occCompare}${yoyNote}` },
+        { label: "ภาระหนี้และรายได้ของผู้ประกอบการ", text: finLine },
+        { label: "ช่วงเวลาที่ควรวางแผนการเงิน", text: seasonLine },
       ]
     }
 
@@ -384,7 +394,7 @@ export function RiskOutlook({
 
     const seasonLineEn = bestSeasonMonths
       ? `Peak demand in ${bestSeasonMonths}${stressSeasonMonths ? ` · Reserve liquidity before ${stressSeasonMonths}` : ""}.`
-      : translateClusterGuidance(selectedItem.cluster_id, lang)
+      : translateClusterGuidance(selectedItem.cluster_label, lang)
 
     return [
       { label: "Service Demand", text: `${occCompareEn}${yoyNoteEn}` },
@@ -414,7 +424,7 @@ export function RiskOutlook({
         >
           <div className="max-w-2xl">
             <p className="mb-2 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              {lang === "th" ? "ชีพจรเศรษฐกิจภาคบริการรายจังหวัด" : "Provincial Economic Pulse"}
+              {lang === "th" ? "สถานการณ์รายจังหวัด" : "Provincial Outlook"}
             </p>
             <h2
               id="risk-outlook-heading"
@@ -426,8 +436,8 @@ export function RiskOutlook({
             </h2>
             <p className="mt-2.5 text-sm leading-6 text-muted-foreground">
               {lang === "th"
-                ? "ชี้หรือคลิกจังหวัดบนแผนที่เพื่อเทียบอัตราเข้าพัก ภาระหนี้ และเงินเหลือหลังหักรายจ่ายของผู้ประกอบการกับค่าเฉลี่ยทั้งภาคเหนือ พร้อมข้อมูลฤดูกาล 12 เดือน"
-                : "Hover or click any province to compare occupancy, SME debt, and post expense cash surplus against the regional average with a 12 month planner."}
+                ? "เลือกจังหวัดเพื่อดูอัตราเข้าพัก ภาระหนี้ และรายได้ที่เหลือหลังหักค่าใช้จ่าย เทียบกับค่าเฉลี่ยภาคเหนือตลอดทั้งปี"
+                : "Hover or click any province to compare occupancy, SME debt, and post-expense cash surplus against the regional average with a 12-month planner."}
             </p>
           </div>
 
@@ -460,7 +470,7 @@ export function RiskOutlook({
           <div className="mb-5 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
               <Sparkles aria-hidden="true" className="size-3.5 text-foreground" />
-              {lang === "th" ? "จุดเด่นที่น่าสนใจ:" : "Notable provinces:"}
+              {lang === "th" ? "ข้อมูลที่น่าสนใจ:" : "Notable provinces:"}
             </span>
             {regionalBenchmarks.spotlights.map((sp) => {
               const active = selectedProvinceCode === sp.code
@@ -494,7 +504,7 @@ export function RiskOutlook({
               <p className="font-semibold">
                 {lang === "th"
                   ? (summary.water_pollution_alert_provinces?.length ?? 0) > 0
-                    ? "ตรวจพบสัญญาณเฝ้าระวังมลพิษ/สารพิษทางน้ำและแรงกดดันภายนอก"
+                    ? "ตรวจพบสัญญาณเฝ้าระวังน้ำปนเปื้อนสารพิษและแรงกดดันภายนอก"
                     : "ตรวจพบสัญญาณแรงกดดันภายนอกเกินเกณฑ์เฝ้าระวัง"
                   : (summary.water_pollution_alert_provinces?.length ?? 0) > 0
                     ? "Active Water Pollution & Multi Hazard Alert"
@@ -502,7 +512,7 @@ export function RiskOutlook({
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {lang === "th"
-                  ? `จังหวัดที่ควรติดตามเป็นพิเศษ: ${shockProvinceNames.join(", ")} (ตรวจสอบข่าวอ้างอิงจริงและเกณฑ์มาตรการด้านล่าง)`
+                  ? `จังหวัดที่ควรเฝ้าระวังเป็นพิเศษ: ${shockProvinceNames.join(", ")} (ตรวจสอบข่าวอ้างอิงจริงและเกณฑ์มาตรการด้านล่าง)`
                   : `Provinces under active alert: ${shockProvinceNames.join(", ")} (inspect verified field reports and relief playbook below).`}
               </p>
             </div>
@@ -522,9 +532,16 @@ export function RiskOutlook({
           {/* Left Map Stage with Regional Tier Breakdown */}
           <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
             <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span className="inline-flex items-center gap-2 text-sm font-medium text-[#4B5563]">
                 <MapPin aria-hidden="true" className="size-3.5 text-foreground" />
-                {lang === "th" ? "ชี้เพื่อดูเร็ว · คลิกเพื่อเจาะลึก" : "Hover to preview · Click to inspect"}
+                <span className="md:hidden">
+                  {lang === "th"
+                    ? "แตะจังหวัดบนแผนที่ หรือเลือกจากรายชื่อด้านล่าง"
+                    : "Tap a province, or pick one from the list below"}
+                </span>
+                <span className="hidden md:inline">
+                  {lang === "th" ? "ชี้เพื่อดูเร็ว · คลิกเพื่อเจาะลึก" : "Hover to preview · Click to inspect"}
+                </span>
               </span>
               {outlook?.latest_month && (
                 <span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
@@ -533,9 +550,28 @@ export function RiskOutlook({
               )}
             </div>
 
+            {provinces.length > 0 && (
+              <label className="block md:hidden">
+                <span className="mb-1.5 block text-sm font-medium text-[#4B5563]">
+                  {lang === "th" ? "เลือกจังหวัด" : "Choose a province"}
+                </span>
+                <select
+                  value={selectedItem?.province_code ?? ""}
+                  onChange={(e) => setSelectedProvinceCode(e.target.value)}
+                  className="h-12 w-full rounded-xl border border-input bg-background px-3 text-base font-medium text-foreground outline-none focus:border-foreground/45"
+                >
+                  {provinces.map((p) => (
+                    <option key={p.province_code} value={p.province_code}>
+                      {lang === "th" ? p.name_th : p.name_en}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             {loading && !provinces.length ? (
               <div className="flex h-[440px] items-center justify-center text-xs text-muted-foreground">
-                {lang === "th" ? "กำลังโหลดแผนที่ข้อมูลจริง 17 จังหวัด…" : "Loading live 17 province map…"}
+                {lang === "th" ? "กำลังโหลดแผนที่ข้อมูลจริง…" : "Loading map…"}
               </div>
             ) : (
               <NorthernThailandMap
@@ -552,8 +588,8 @@ export function RiskOutlook({
               <div className="rounded-2xl border border-border bg-secondary/30 p-3.5">
                 <p className="mb-2 text-[11px] font-semibold text-foreground">
                   {lang === "th"
-                    ? "ภาพรวม 17 จังหวัดแยกตามระดับความเปราะบาง"
-                    : "17 Provinces by Vulnerability Tier"}
+                    ? "ภาพรวมทุกจังหวัด จำแนกตามระดับความเสี่ยงทางเศรษฐกิจของพื้นที่"
+                    : "Provincial Economic Risk Overview"}
                 </p>
                 <div className="space-y-2">
                   {tierGroups.map((grp) => (
@@ -626,7 +662,7 @@ export function RiskOutlook({
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-600/35 bg-amber-500/15 px-3 py-1 text-[11px] font-medium text-amber-900">
                         <AlertTriangle aria-hidden="true" className="size-3.5" />
                         {lang === "th"
-                          ? `เฝ้าระวังสารพิษทางน้ำ (${selectedItem.water_pollution_count ?? 1} ข่าว)`
+                          ? `เฝ้าระวังน้ำปนเปื้อนสารพิษ (${selectedItem.water_pollution_count ?? 1} ข่าว)`
                           : `Water Pollution Alert (${selectedItem.water_pollution_count ?? 1})`}
                       </span>
                     ) : selectedItem.has_active_external_shock ? (
@@ -646,7 +682,7 @@ export function RiskOutlook({
 
                   {/* Plain language 3 bullet summary */}
                   <div className="rounded-2xl border border-border bg-secondary/45 p-3.5">
-                    <ul className="space-y-1.5 text-xs leading-5 text-muted-foreground">
+                    <ul className="space-y-1.5 text-sm leading-6 text-[#4B5563]">
                       {plainTakeaways.map((item) => (
                         <li key={item.label} className="flex items-start gap-2">
                           <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground/70" aria-hidden="true" />
@@ -673,25 +709,23 @@ export function RiskOutlook({
                       tone="neutral"
                     />
                     <CompareBarTile
-                      label={lang === "th" ? "ภาระหนี้เทียบกับรายได้ทั้งปี" : "Debt / Annual Income"}
+                      label={lang === "th" ? "สัดส่วนหนี้ต่อรายได้ทั้งปี" : "Debt / Annual Income"}
                       valueText={
                         selectedItem.debt_to_annual_income_sme != null
-                          ? lang === "th"
-                            ? `${selectedItem.debt_to_annual_income_sme.toFixed(2)} เท่า`
-                            : `${selectedItem.debt_to_annual_income_sme.toFixed(2)}x`
+                          ? `${Math.round(selectedItem.debt_to_annual_income_sme * 100)}%`
                           : "—"
                       }
                       subText={
                         lang === "th"
-                          ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgSmeDebt.toFixed(2)} เท่า`
-                          : `North avg ${regionalBenchmarks.avgSmeDebt.toFixed(2)}x`
+                          ? `เฉลี่ยภาคเหนือ ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
+                          : `North avg ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
                       }
                       pct={Math.min(100, ((selectedItem.debt_to_annual_income_sme ?? 0) / 1.6) * 100)}
                       avgPct={Math.min(100, (regionalBenchmarks.avgSmeDebt / 1.6) * 100)}
                       tone={(selectedItem.debt_to_annual_income_sme ?? 0) >= 1.0 ? "warn" : "neutral"}
                     />
                     <CompareBarTile
-                      label={lang === "th" ? "เงินเหลือหลังหักรายจ่าย" : "SME Surplus After Expenses"}
+                      label={lang === "th" ? "เงินเหลือใช้ต่อเดือน" : "Monthly cash left"}
                       valueText={selectedCushion != null ? `${selectedCushion.toFixed(0)}%` : "—"}
                       subText={
                         lang === "th"
@@ -720,7 +754,7 @@ export function RiskOutlook({
                         </div>
                         <span className="rounded-full bg-background px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
                           {lang === "th"
-                            ? `คะแนนความเปราะบาง ${selectedItem.vulnerability_score ?? 0}/100`
+                            ? `คะแนนประเมินความเสี่ยง ${selectedItem.vulnerability_score ?? 0}/100`
                             : `Score ${selectedItem.vulnerability_score ?? 0}/100`}
                         </span>
                       </div>
@@ -739,68 +773,97 @@ export function RiskOutlook({
                         </div>
                       ) : null}
 
-                      {/* Targeted Policy Starting Point */}
-                      <div className="mt-3 rounded-xl border border-border/80 bg-background p-3">
-                        <p className="text-[11px] font-semibold text-foreground">
-                          {lang === "th"
-                            ? `เกณฑ์ตั้งต้นมาตรการช่วยเหลือ: ${selectedItem.tier_playbook_title_th}`
-                            : `Recommended Starting Playbook: ${selectedItem.tier_playbook_title_en}`}
-                        </p>
-                        <ul className="mt-1.5 space-y-1 text-[11px] leading-5 text-muted-foreground">
-                          {(lang === "th" ? selectedItem.tier_actions_th : selectedItem.tier_actions_en)
-                            ?.slice(0, 3)
-                            .map((act) => (
-                              <li key={act} className="flex items-start gap-2">
-                                <span className="mt-2 size-1 shrink-0 rounded-full bg-foreground/60" aria-hidden="true" />
-                                <span>{act}</span>
-                              </li>
-                            ))}
-                        </ul>
+                      <div className="mt-3 overflow-hidden rounded-xl border border-border/80 bg-background">
+                        <button
+                          type="button"
+                          aria-expanded={playbookOpen}
+                          onClick={() => setPlaybookOpen((open) => !open)}
+                          className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+                        >
+                          <span className="text-sm font-semibold text-foreground">
+                            {lang === "th"
+                              ? `เกณฑ์ตั้งต้นมาตรการช่วยเหลือ: ${selectedItem.tier_playbook_title_th}`
+                              : `Recommended starting playbook: ${selectedItem.tier_playbook_title_en}`}
+                          </span>
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`size-4 shrink-0 transition-transform ${playbookOpen ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                        {playbookOpen && (
+                          <ul className="space-y-1.5 border-t border-border px-3 py-3 text-sm leading-6 text-[#4B5563]">
+                            {(lang === "th" ? selectedItem.tier_actions_th : selectedItem.tier_actions_en)
+                              ?.slice(0, 3)
+                              .map((act) => (
+                                <li key={act} className="flex items-start gap-2">
+                                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground/60" aria-hidden="true" />
+                                  <span>{act}</span>
+                                </li>
+                              ))}
+                          </ul>
+                        )}
                       </div>
 
-                      {/* Business Segment Sensitivity Pills */}
                       {selectedItem.business_segments && selectedItem.business_segments.length > 0 && (
-                        <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
-                          {selectedItem.business_segments.map((seg) => {
-                            const toneCls =
-                              seg.risk_level === "high"
-                                ? "border-red-600/25 bg-red-500/5 text-red-800"
-                                : seg.risk_level === "medium"
-                                  ? "border-amber-600/25 bg-amber-500/5 text-amber-900"
-                                  : "border-emerald-700/20 bg-emerald-700/5 text-emerald-800"
-                            const riskText =
-                              seg.risk_level === "high"
-                                ? lang === "th"
-                                  ? "ตึงตัวสูง"
-                                  : "High"
-                                : seg.risk_level === "medium"
-                                  ? lang === "th"
-                                    ? "เฝ้าระวัง"
-                                    : "Watch"
-                                  : lang === "th"
-                                    ? "คล่องตัว"
-                                    : "Resilient"
-                            return (
-                              <div
-                                key={seg.sector}
-                                className="flex h-full flex-col justify-between rounded-xl border border-border bg-background p-2.5"
-                              >
-                                <div className="flex items-center justify-between gap-1.5">
-                                  <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
-                                    {lang === "th" ? seg.label_th.replace("คาเฟ่", "ร้านกาแฟ") : seg.label_en}
-                                  </span>
-                                  <span
-                                    className={`shrink-0 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-medium ${toneCls}`}
+                        <div className="mt-2.5 overflow-hidden rounded-xl border border-border bg-background">
+                          <button
+                            type="button"
+                            aria-expanded={segmentsOpen}
+                            onClick={() => setSegmentsOpen((open) => !open)}
+                            className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm font-semibold text-foreground"
+                          >
+                            {lang === "th"
+                              ? "คำแนะนำสำหรับแต่ละประเภทธุรกิจ"
+                              : "Guidance by business sector"}
+                            <ChevronDown
+                              aria-hidden="true"
+                              className={`size-4 shrink-0 transition-transform ${segmentsOpen ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                          {segmentsOpen && (
+                            <div className="grid gap-2 border-t border-border p-3 sm:grid-cols-3">
+                              {selectedItem.business_segments.map((seg) => {
+                                const toneCls =
+                                  seg.risk_level === "high"
+                                    ? "border-red-600/25 bg-red-500/5 text-red-800"
+                                    : seg.risk_level === "medium"
+                                      ? "border-amber-600/25 bg-amber-500/5 text-amber-900"
+                                      : "border-emerald-700/20 bg-emerald-700/5 text-emerald-800"
+                                const riskText =
+                                  seg.risk_level === "high"
+                                    ? lang === "th"
+                                      ? "ตึงตัวสูง"
+                                      : "High"
+                                    : seg.risk_level === "medium"
+                                      ? lang === "th"
+                                        ? "เฝ้าระวัง"
+                                        : "Watch"
+                                      : lang === "th"
+                                        ? "สภาพคล่องดี"
+                                        : "Resilient"
+                                return (
+                                  <div
+                                    key={seg.sector}
+                                    className="flex h-full flex-col justify-between rounded-xl border border-border bg-background p-2.5"
                                   >
-                                    {riskText}
-                                  </span>
-                                </div>
-                                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                                  {lang === "th" ? seg.guidance_th : seg.guidance_en}
-                                </p>
-                              </div>
-                            )
-                          })}
+                                    <div className="flex items-center justify-between gap-1.5">
+                                      <span className="min-w-0 text-sm font-medium text-foreground">
+                                        {lang === "th" ? seg.label_th.replace("คาเฟ่", "ร้านกาแฟ") : seg.label_en}
+                                      </span>
+                                      <span
+                                        className={`shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${toneCls}`}
+                                      >
+                                        {riskText}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-sm leading-6 text-[#4B5563]">
+                                      {lang === "th" ? seg.guidance_th : seg.guidance_en}
+                                    </p>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -809,7 +872,7 @@ export function RiskOutlook({
                         <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-border/70 pt-2.5">
                           <span className="text-[10px] font-medium text-muted-foreground">
                             {lang === "th"
-                              ? `จังหวัดระดับเดียวกัน (${activeTierGroup.province_count} จังหวัด):`
+                              ? `จังหวัดที่มีระดับความเสี่ยงใกล้เคียงกัน (${activeTierGroup.province_count} จังหวัด):`
                               : `Same Tier Peers (${activeTierGroup.province_count}):`}
                           </span>
                           {activeTierGroup.provinces.map((peer) => (
@@ -845,7 +908,7 @@ export function RiskOutlook({
                           }`}
                         >
                           <LineChartIcon aria-hidden="true" className="size-3" />
-                          {lang === "th" ? "แนวโน้มจริง 18 เดือน" : "18 Month Trend"}
+                          {lang === "th" ? "แนวโน้มข้อมูลรายเดือน" : "Month Trend"}
                         </button>
                         <button
                           type="button"
@@ -857,7 +920,7 @@ export function RiskOutlook({
                           }`}
                         >
                           <CalendarDays aria-hidden="true" className="size-3" />
-                          {lang === "th" ? "ฤดูกาลท่องเที่ยว 12 เดือน" : "12 Month Seasonality"}
+                          {lang === "th" ? "ฤดูกาลท่องเที่ยวและสภาพอากาศ" : "Monthly Tourism & Weather"}
                         </button>
                       </div>
 
@@ -866,24 +929,24 @@ export function RiskOutlook({
                           <>
                             <span className="inline-flex items-center gap-1">
                               <span className="h-0.5 w-3 bg-slate-900" aria-hidden="true" />
-                              {lang === "th" ? "อัตราเข้าพัก" : "Occupancy"}
+                              {lang === "th" ? "อัตราเข้าพัก" : "Occupancy Rate"}
                             </span>
                             <span className="inline-flex items-center gap-1">
                               <span className="size-2 rounded-sm bg-slate-300" aria-hidden="true" />
-                              {lang === "th" ? "แรงกดดันฝุ่น ฝน และต้นทุน (เกิน 50 = น่ากังวล)" : "Hazard & Cost Pressure (50+ alert)"}
+                              {lang === "th" ? "ดัชนีแรงกดดัน (เกิน 50 = เฝ้าระวัง)" : "Hazard & Cost Pressure (50+ alert)"}
                             </span>
                           </>
                         ) : (
                           <>
                             <span className="inline-flex items-center gap-1">
                               <span className="h-0.5 w-3 bg-slate-900" aria-hidden="true" />
-                              {lang === "th" ? "เข้าพักเฉลี่ย" : "Avg Occupancy"}
+                              {lang === "th" ? "อัตราเข้าพักเฉลี่ย" : "Avg Occupancy"}
                             </span>
                             <span className="inline-flex items-center gap-1">
                               <span className="h-0.5 w-3 border-t border-dashed border-amber-600" aria-hidden="true" />
                               {lang === "th"
-                                ? `ค่าเฉลี่ยทั้งปี (${seasonalPlan?.annualAvgOcc ?? "—"}%)`
-                                : `Annual Mean (${seasonalPlan?.annualAvgOcc ?? "—"}%)`}
+                                ? `ค่าเฉลี่ยอัตราเข้าพักทั้งปี (${seasonalPlan?.annualAvgOcc ?? "—"}%)`
+                                : `Annual Average Occupancy Rate (${seasonalPlan?.annualAvgOcc ?? "—"}%)`}
                             </span>
                             <span className="inline-flex items-center gap-1">
                               <span className="size-2 rounded-sm bg-sky-600/50" aria-hidden="true" />
@@ -1020,7 +1083,7 @@ export function RiskOutlook({
                                     <div className="rounded-xl border border-border bg-background px-3 py-2 text-[11px] shadow-lg">
                                       <p className="font-semibold text-foreground">{label}</p>
                                       <p className="mt-1 text-foreground">
-                                        {lang === "th" ? "อัตราเข้าพักเฉลี่ย" : "Avg Occupancy"}:{" "}
+                                        {lang === "th" ? "อัตราการเข้าพักเฉลี่ย" : "Average Occupancy Rate"}:{" "}
                                         <strong>{d.occupancy}%</strong>
                                       </p>
                                       <p className="text-muted-foreground">
@@ -1069,7 +1132,7 @@ export function RiskOutlook({
                               </p>
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {lang === "th"
-                                  ? `เข้าพักสูงสุดเดือน ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) สูงกว่าค่าเฉลี่ยทั้งปี (${seasonalPlan.annualAvgOcc}%)`
+                                  ? `นักท่องเที่ยวเข้าพักสูงสุดเดือน ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) ซึ่งสูงกว่าค่าเฉลี่ยทั้งปี (${seasonalPlan.annualAvgOcc}%)`
                                   : `Peaks in ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) vs ${seasonalPlan.annualAvgOcc}% annual mean.`}
                               </p>
                             </div>
@@ -1081,7 +1144,7 @@ export function RiskOutlook({
                               </p>
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {lang === "th"
-                                  ? `ต่ำสุดเดือน ${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%) · ยอดเข้าพักลดลง -${seasonalPlan.dropFromPeakPct}% จากเดือนสูงสุด`
+                                  ? `ต่ำสุดเดือน ${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%) · ยอดเข้าพักลดลง ${seasonalPlan.dropFromPeakPct}% จากเดือนสูงสุด`
                                   : `Lowest in ${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%), a -${seasonalPlan.dropFromPeakPct}% drop from peak.`}
                               </p>
                             </div>
@@ -1092,10 +1155,10 @@ export function RiskOutlook({
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {seasonalPlan.hasHazeExceed
                                   ? lang === "th"
-                                    ? `ฝุ่นเกินเกณฑ์ 37.5 ช่วง ${seasonalPlan.hazeExceedMonths} (สูงสุด ${seasonalPlan.maxHazeVal}) · ฝนหนักสุด ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
-                                    : `PM2.5 >37.5 in ${seasonalPlan.hazeExceedMonths} (${seasonalPlan.maxHazeVal}) · Heavy rain ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm}mm).`
+                                    ? `ฝุ่น PM2.5 เกินเกณฑ์ 37.5 ช่วง ${seasonalPlan.hazeExceedMonths} (สูงสุด ${seasonalPlan.maxHazeVal}) · ฝนหนักสุด ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
+                                    : `PM2.5 > 37.5 in ${seasonalPlan.hazeExceedMonths} (${seasonalPlan.maxHazeVal}) · Heavy rain ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm}mm).`
                                   : lang === "th"
-                                    ? `ฝุ่นเฉลี่ยรายเดือนไม่เกินเกณฑ์ 37.5 (สูงสุด ${seasonalPlan.maxHazeVal} เดือน ${seasonalPlan.maxHazeMonth}) · ฝนชุก ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
+                                    ? `ฝุ่น PM2.5 เฉลี่ยรายเดือนไม่เกินเกณฑ์ 37.5 (สูงสุด ${seasonalPlan.maxHazeVal} เดือน ${seasonalPlan.maxHazeMonth}) · ฝนชุก ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
                                     : `Monthly PM2.5 stays under 37.5 (max ${seasonalPlan.maxHazeVal} in ${seasonalPlan.maxHazeMonth}) · Rain peaks ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm}mm).`}
                               </p>
                             </div>
@@ -1213,7 +1276,7 @@ function CompareBarTile({
   return (
     <div className="flex h-full flex-col justify-between rounded-2xl border border-border bg-secondary/30 px-3.5 py-3">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="min-w-0 truncate text-[10px] text-muted-foreground">{label}</p>
+        <p className="min-w-0 text-sm leading-5 text-[#4B5563]">{label}</p>
         <p className="shrink-0 whitespace-nowrap font-display text-base font-semibold tabular-nums text-foreground">
           {valueText}
         </p>
@@ -1228,7 +1291,7 @@ function CompareBarTile({
             aria-hidden="true"
           />
         </div>
-        <p className="mt-1.5 text-[10px] text-muted-foreground">{subText}</p>
+        <p className="mt-1.5 text-sm leading-5 text-[#4B5563]">{subText}</p>
       </div>
     </div>
   )

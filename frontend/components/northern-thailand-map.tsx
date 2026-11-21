@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { Lang, ProvinceOutlookItem } from "@/lib/api"
-import { NORTH17_GEO_SHAPES, NORTH17_VIEWBOX } from "@/lib/north17-map-data"
+import { NORTH17_GEO_SHAPES } from "@/lib/north17-map-data"
 import { translateClusterLabel } from "@/lib/i18n"
 
 export type MapMetricMode = "occupancy" | "debt" | "cluster"
@@ -82,7 +82,7 @@ function metricValueText(item: ProvinceOutlookItem, mode: MapMetricMode, lang: L
   if (mode === "cluster") {
     return item.vulnerability_tier
       ? lang === "th"
-        ? `อันดับความเปราะบางระดับ ${item.vulnerability_tier} (คะแนน ${item.vulnerability_score ?? 0}/100)`
+        ? `ระดับความเสี่ยงเศรษฐกิจในพื้นที่ ${item.vulnerability_tier} (คะแนน ${item.vulnerability_score ?? 0}/100)`
         : `Vulnerability Tier ${item.vulnerability_tier} (${item.vulnerability_score ?? 0}/100)`
       : translateClusterLabel(item.cluster_label, lang)
   }
@@ -116,14 +116,15 @@ export function NorthernThailandMap({
         }}
       >
         <svg
-          viewBox={NORTH17_VIEWBOX}
+          viewBox="-14 -14 488 617"
           role="img"
           aria-label={
             lang === "th"
               ? "แผนที่ 17 จังหวัดภาคเหนือแบบโต้ตอบ"
               : "Interactive map of 17 Northern Thailand provinces"
           }
-          className="h-auto w-full select-none"
+          preserveAspectRatio="xMidYMid meet"
+          className="mx-auto block h-auto w-full select-none max-md:h-[min(56dvh,520px)] max-md:w-auto"
         >
           {/* Render province polygons first so borders never overlap neighboring text labels */}
           <g>
