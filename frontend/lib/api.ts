@@ -243,14 +243,16 @@ export type QuadrantProvince = {
   subregion: string
   cluster_id: number
   cluster_label: string
-  shock_intensity: number
-  exposure_score: number
+  shock_intensity: number | null
+  exposure_score: number | null
   avg_monthly_revenue_mthb: number
   avg_occupancy_rate: number
   debt_to_annual_income_all: number | null
   debt_to_annual_income_sme: number | null
   expense_to_income_pct_sme: number | null
   recommended_policy: string
+  priority_rank?: number
+  priority_score?: number
 }
 
 export type FeatureScreeningRow = {
@@ -343,6 +345,8 @@ export type WatchlistProvinceItem = {
   exp_inc_all: number
   risk_reason: string
   recommended_action: string
+  priority_rank?: number
+  priority_score?: number
 }
 
 export type PolicyActionItem = {
@@ -366,6 +370,7 @@ export type ExecutiveBriefData = {
     th_cpi_yoy_pct: number | null
     th_cpi_month: string
     oil_brent_yoy_pct: number | null
+    oil_brent_month?: string
     elevated_shock_provinces: string[]
     has_regional_external_shock: boolean
   }
@@ -374,9 +379,79 @@ export type ExecutiveBriefData = {
   verified_news: VerifiedNewsItem[]
 }
 
-const API_BASE = (
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"
-).replace(/\/$/, "")
+export type LiveRefreshResponse = {
+  status?: string
+  provinces_synced?: number
+  air4thai?: {
+    stations_synced?: number
+    provinces_updated?: number
+  }
+  news_bronze?: {
+    fetched_unique?: number
+    feeds_succeeded?: number
+    feeds_failed?: number
+  }
+  news_silver?: {
+    validated_silver?: number
+    quarantined?: number
+  }
+}
+
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401
+}
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError"
+}
+
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL
+if (!RAW_API_BASE && process.env.NODE_ENV === "production" && typeof console !== "undefined") {
+  console.warn(
+    "[api.ts] NEXT_PUBLIC_API_BASE_URL is not set in production; falling back to http://127.0.0.1:8000.",
+  )
+}
+
+const API_BASE = (RAW_API_BASE || "http://127.0.0.1:8000").replace(/\/$/, "")
+
+function formatApiErrorDetail(detail: unknown, fallbackStatus: number): string {
+  if (typeof detail === "string" && detail.trim()) {
+    return detail
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") return item
+        if (item && typeof item === "object") {
+          const rec = item as { loc?: unknown[]; msg?: unknown }
+          const loc = Array.isArray(rec.loc) ? rec.loc.join(".") : ""
+          const msg = typeof rec.msg === "string" ? rec.msg : JSON.stringify(item)
+          return loc ? `${loc}: ${msg}` : msg
+        }
+        return String(item)
+      })
+      .filter(Boolean)
+    if (messages.length > 0) return messages.join("; ")
+  }
+  if (detail && typeof detail === "object") {
+    try {
+      return JSON.stringify(detail)
+    } catch {
+      return `HTTP ${fallbackStatus}`
+    }
+  }
+  return `HTTP ${fallbackStatus}`
+}
 
 async function apiRequest<T>(
   path: string,
@@ -384,8 +459,12 @@ async function apiRequest<T>(
   token?: string | null,
 ): Promise<T> {
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     ...(options.headers as Record<string, string> | undefined),
+  }
+
+  // Only attach Content-Type when sending a request body to avoid unnecessary CORS preflight on GET
+  if (options.body !== undefined && !("Content-Type" in headers)) {
+    headers["Content-Type"] = "application/json"
   }
   if (token) {
     headers.Authorization = `Bearer ${token}`
@@ -398,55 +477,70 @@ async function apiRequest<T>(
   })
 
   if (!response.ok) {
-    let detail = `HTTP ${response.status}`
+    let message = `HTTP ${response.status}`
     try {
       const errBody = await response.json()
-      if (errBody?.detail) detail = String(errBody.detail)
+      if (errBody?.detail !== undefined) {
+        message = formatApiErrorDetail(errBody.detail, response.status)
+      }
     } catch {
-      // Ignore non JSON error payload
+      // Ignore non-JSON error payload
     }
-    throw new Error(detail)
+    throw new ApiError(message, response.status)
   }
+
   return response.json() as Promise<T>
 }
 
-export function fetchRiskOutlook(months = 18): Promise<RiskOutlookResponse> {
-  return apiRequest<RiskOutlookResponse>(`/api/risk-outlook?months=${months}`)
+export function fetchRiskOutlook(months = 18, signal?: AbortSignal): Promise<RiskOutlookResponse> {
+  return apiRequest<RiskOutlookResponse>(`/api/risk-outlook?months=${months}`, { signal })
 }
 
-export function fetchProvinceDetail(code: string): Promise<ProvinceDetailResponse> {
-  return apiRequest<ProvinceDetailResponse>(`/api/provinces/${encodeURIComponent(code)}`)
+export function fetchProvinceDetail(code: string, signal?: AbortSignal): Promise<ProvinceDetailResponse> {
+  return apiRequest<ProvinceDetailResponse>(`/api/provinces/${encodeURIComponent(code)}`, { signal })
 }
 
-export function submitReliefCheck(payload: {
-  province: string
-  business_type: string
-  monthly_revenue_thb: number
-  monthly_debt_thb: number
-  impact_tags: string[]
-  language: Lang
-}): Promise<ReliefCheckResponse> {
+export function submitReliefCheck(
+  payload: {
+    province: string
+    business_type: string
+    monthly_revenue_thb: number
+    monthly_debt_thb: number
+    impact_tags: string[]
+    language: Lang
+  },
+  signal?: AbortSignal,
+): Promise<ReliefCheckResponse> {
   return apiRequest<ReliefCheckResponse>("/api/relief-check", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   })
 }
 
-export function fetchPolicyPage(docTitle: string, pageNum: number): Promise<PolicyPageResponse> {
+export function fetchPolicyPage(
+  docTitle: string,
+  pageNum: number,
+  signal?: AbortSignal,
+): Promise<PolicyPageResponse> {
   const params = new URLSearchParams({
     doc_title: docTitle,
     page_num: String(pageNum),
   })
-  return apiRequest<PolicyPageResponse>(`/api/policy-page?${params.toString()}`)
+  return apiRequest<PolicyPageResponse>(`/api/policy-page?${params.toString()}`, { signal })
 }
 
-export function sendPolicyChat(payload: {
-  question: string
-  language: Lang
-}): Promise<ChatResponse> {
+export function sendPolicyChat(
+  payload: {
+    question: string
+    language: Lang
+  },
+  signal?: AbortSignal,
+): Promise<ChatResponse> {
   return apiRequest<ChatResponse>("/api/chat", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   })
 }
 
@@ -458,37 +552,63 @@ export function staffLogin(username: string, password: string): Promise<StaffAut
 }
 
 export function staffDemoAccess(): Promise<StaffAuthResponse> {
+  // Set NEXT_PUBLIC_DISABLE_DEMO_ACCESS=true in real production environments to block passwordless demo login
+  if (process.env.NEXT_PUBLIC_DISABLE_DEMO_ACCESS === "true") {
+    return Promise.reject(new ApiError("Demo access is disabled in this environment", 403))
+  }
   return apiRequest<StaffAuthResponse>("/api/auth/demo-access", {
     method: "POST",
   })
 }
 
-export function fetchPolicyMonitor(token: string, fresh = false): Promise<PolicyMonitorResponse> {
-  return apiRequest<PolicyMonitorResponse>(fresh ? "/api/policy-monitor?fresh=true" : "/api/policy-monitor", {}, token)
+export function fetchPolicyMonitor(
+  token: string,
+  fresh = false,
+  signal?: AbortSignal,
+): Promise<PolicyMonitorResponse> {
+  return apiRequest<PolicyMonitorResponse>(
+    fresh ? "/api/policy-monitor?fresh=true" : "/api/policy-monitor",
+    { signal },
+    token,
+  )
 }
 
-export function fetchDataHealth(token: string, fresh = false): Promise<DataHealthResponse> {
-  return apiRequest<DataHealthResponse>(fresh ? "/api/data-health?fresh=true" : "/api/data-health", {}, token)
+export function fetchDataHealth(
+  token: string,
+  fresh = false,
+  signal?: AbortSignal,
+): Promise<DataHealthResponse> {
+  return apiRequest<DataHealthResponse>(
+    fresh ? "/api/data-health?fresh=true" : "/api/data-health",
+    { signal },
+    token,
+  )
 }
 
-export function fetchExecutiveBriefJson(token: string, lang: Lang): Promise<ExecutiveBriefData> {
-  return apiRequest<ExecutiveBriefData>(`/api/export-brief?format=json&lang=${lang}`, {}, token)
+export function fetchExecutiveBriefJson(
+  token: string,
+  lang: Lang,
+  signal?: AbortSignal,
+): Promise<ExecutiveBriefData> {
+  return apiRequest<ExecutiveBriefData>(`/api/export-brief?format=json&lang=${lang}`, { signal }, token)
 }
 
 export async function fetchExecutiveBriefText(
   token: string,
   format: "markdown" | "html",
   lang: Lang,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetch(
     `${API_BASE}/api/export-brief?format=${format}&lang=${lang}`,
     {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
+      signal,
     },
   )
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
+    throw new ApiError(`HTTP ${response.status}`, response.status)
   }
   return response.text()
 }
@@ -572,19 +692,24 @@ export type StaffMonteCarloResponse = {
   }[]
 }
 
-export function triggerLiveRefresh(token: string): Promise<Record<string, any>> {
-  return apiRequest<Record<string, any>>("/api/refresh", { method: "POST" }, token)
+export function triggerLiveRefresh(
+  token: string,
+  signal?: AbortSignal,
+): Promise<LiveRefreshResponse> {
+  return apiRequest<LiveRefreshResponse>("/api/refresh", { method: "POST", signal }, token)
 }
 
 export function runStaffRecluster(
   token: string,
   payload: { k: number; feature_keys?: string[]; persist?: boolean },
+  signal?: AbortSignal,
 ): Promise<StaffReclusterResponse> {
   return apiRequest<StaffReclusterResponse>(
     "/api/staff/recluster",
     {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     },
     token,
   )
@@ -598,12 +723,14 @@ export function runStaffMonteCarlo(
     include_news_regime: boolean
     n_simulations?: number
   },
+  signal?: AbortSignal,
 ): Promise<StaffMonteCarloResponse> {
   return apiRequest<StaffMonteCarloResponse>(
     "/api/staff/monte-carlo",
     {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     },
     token,
   )

@@ -1102,23 +1102,43 @@ def trigger_incremental_refresh(
     staff: dict[str, Any] = Depends(require_staff_token),
 ) -> dict[str, Any]:
     """Run live Air4Thai sensor sync, 17 province RSS news fetch, and immediate Silver extraction."""
+    import logging
+
     from src.extract.air4thai_client import load_air4thai_to_bronze
     from src.extract.news_scraper import load_news_to_bronze
     from src.transform.llm_shock_extractor import run_silver_news_extraction
     from src.transform.silver_clean import transform_air4thai_bronze_to_silver
 
-    air_bronze = load_air4thai_to_bronze()
-    air_silver = transform_air4thai_bronze_to_silver()
-    news_bronze = load_news_to_bronze()
-    news_silver = run_silver_news_extraction(limit=40, batch_size=10)
+    log = logging.getLogger(__name__)
+    errors: list[str] = []
+
+    air_bronze: dict[str, Any] = {"fetched_valid": 0, "inserted_bronze": 0, "quarantined": 0}
+    air_silver: dict[str, Any] = {}
+    try:
+        air_bronze = load_air4thai_to_bronze()
+        air_silver = transform_air4thai_bronze_to_silver()
+    except Exception as exc:
+        log.warning("Air4Thai live sync failed: %s", exc)
+        errors.append(f"air4thai: {exc}")
+
+    news_bronze: dict[str, Any] = {"fetched_unique": 0}
+    news_silver: dict[str, Any] = {"validated_silver": 0}
+    try:
+        news_bronze = load_news_to_bronze()
+        news_silver = run_silver_news_extraction(limit=40, batch_size=10)
+    except Exception as exc:
+        log.warning("News live sync failed: %s", exc)
+        errors.append(f"news: {exc}")
+
     _invalidate_read_cache()
     return {
-        "status": "refreshed",
+        "status": "partial" if errors else "refreshed",
         "triggered_by": staff["sub"],
         "air4thai_bronze": air_bronze,
         "air4thai_silver": air_silver,
         "news_bronze": news_bronze,
         "news_silver": news_silver,
+        "errors": errors,
     }
 
 

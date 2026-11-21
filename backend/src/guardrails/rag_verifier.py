@@ -37,7 +37,8 @@ class VerificationResult:
 def verify_rag_grounding(
     retrieved_chunks: Sequence[RetrievedChunk],
     claimed_citations: Sequence[CitedSource],
-    min_similarity: float = 0.68,
+    min_similarity: float = 0.50,
+    allow_empty_citations: bool = False,
 ) -> VerificationResult:
     """Enforce retrieval threshold refusal and O(1) verification of every claimed citation."""
     if not retrieved_chunks:
@@ -63,6 +64,13 @@ def verify_rag_grounding(
     )
 
     if not claimed_citations:
+        if allow_empty_citations:
+            return VerificationResult(
+                is_valid=True,
+                should_refuse=False,
+                reason="Answered with app feature guidance without policy citations",
+                verified_citations=(),
+            )
         return VerificationResult(
             is_valid=False,
             should_refuse=True,

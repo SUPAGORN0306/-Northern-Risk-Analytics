@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import ssl
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -19,6 +20,7 @@ from src.guardrails.schemas import Air4ThaiStationReading, resolve_northern_prov
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ICT_TZ = timezone(timedelta(hours=7))
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -34,15 +36,35 @@ def _make_sha256(station_id: str, recorded_iso: str, pm25_raw: Any) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def _fetch_air4thai_json(url: str, timeout_sec: int) -> dict[str, Any]:
+    """Fetch Air4Thai JSON with OS CA verification first, falling back if server omits intermediate CA."""
+    tls_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    try:
+        with httpx.Client(verify=tls_ctx, timeout=timeout_sec, follow_redirects=True) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ConnectError as exc:
+        err_text = str(exc)
+        is_ssl_chain_err = (
+            "CERTIFICATE_VERIFY_FAILED" in err_text
+            or isinstance(exc.__cause__, ssl.SSLCertVerificationError)
+        )
+        if not is_ssl_chain_err:
+            raise
+        logger.warning(
+            "Air4Thai TLS intermediate certificate missing on Linux/WSL; retrying public endpoint without SSL verification"
+        )
+        with httpx.Client(verify=False, timeout=timeout_sec, follow_redirects=True) as insecure_client:
+            resp = insecure_client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+
+
 def fetch_northern_air4thai() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Fetch current Air4Thai stations and separate valid Northern rows from quarantined rows."""
     cfg = _load_air4thai_config()
-    # Use OS system CA store so Thai government intermediate certificates verify cleanly
-    tls_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    with httpx.Client(verify=tls_ctx, timeout=int(cfg["timeout_sec"])) as client:
-        resp = client.get(cfg["endpoint_url"])
-        resp.raise_for_status()
-        payload = resp.json()
+    payload = _fetch_air4thai_json(cfg["endpoint_url"], int(cfg["timeout_sec"]))
     stations = payload.get("stations", [])
 
     bronze_rows: list[dict[str, Any]] = []

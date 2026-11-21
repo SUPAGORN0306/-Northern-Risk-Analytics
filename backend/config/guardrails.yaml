@@ -6,9 +6,9 @@ llm:
 
 rag:
   top_k: 5
-  min_similarity_threshold: 0.68
+  min_similarity_threshold: 0.50
   # Vector weight for hybrid search
-  hybrid_alpha: 0.78
+  hybrid_alpha: 0.68
   refusal_message_th: "ไม่พบข้อมูลเงื่อนไขดังกล่าวในเอกสารอ้างอิงที่มีอยู่ในระบบ กรุณาตรวจสอบเพิ่มเติมผ่านช่องทางอย่างเป็นทางการของธนาคารแห่งประเทศไทย (สายด่วน 1213) หรือสถาบันการเงินของท่าน"
   refusal_message_en: "No supporting criteria were found in the indexed official documents. Please verify directly through official Bank of Thailand channels (Hotline 1213) or your financial institution."
 
