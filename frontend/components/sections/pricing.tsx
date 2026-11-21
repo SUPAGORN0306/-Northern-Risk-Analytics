@@ -393,6 +393,12 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     return () => clearTimeout(timer)
   }, [numRevenue, numDebt, selectedProvinceCode, business, debtStatus])
 
+  useEffect(() => {
+    const onOpenResources = () => setShowSources(true)
+    window.addEventListener("open-official-resources", onOpenResources)
+    return () => window.removeEventListener("open-official-resources", onOpenResources)
+  }, [])
+
   function resetAllInputs() {
     setActivePreset(null)
     setRevenue("")
@@ -1893,7 +1899,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
             )}
 
             {/* Collapsible Checklist & Official Links at Bottom */}
-            <div className="mt-4">
+            <div id="official-resources" className="mt-4 scroll-mt-28">
               <button
                 type="button"
                 aria-expanded={showSources}
