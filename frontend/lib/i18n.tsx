@@ -76,6 +76,51 @@ export function shortCalendarMonth(calMonth: number, lang: Lang): string {
   return lang === "th" ? th[idx] : en[idx]
 }
 
+export function fullCalendarMonth(calMonth: number, lang: Lang): string {
+  const th = [
+    "มกราคม",
+    "กุมภาพันธ์",
+    "มีนาคม",
+    "เมษายน",
+    "พฤษภาคม",
+    "มิถุนายน",
+    "กรกฎาคม",
+    "สิงหาคม",
+    "กันยายน",
+    "ตุลาคม",
+    "พฤศจิกายน",
+    "ธันวาคม",
+  ]
+  const en = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ]
+  const idx = Math.max(0, Math.min(11, calMonth - 1))
+  return lang === "th" ? th[idx] : en[idx]
+}
+
+export function joinNaturalList(items: string[], lang: Lang): string {
+  const clean = items.filter(Boolean)
+  if (clean.length === 0) return ""
+  if (clean.length === 1) return clean[0]
+  if (clean.length === 2) {
+    return lang === "th" ? `${clean[0]}และ${clean[1]}` : `${clean[0]} and ${clean[1]}`
+  }
+  const head = clean.slice(0, -1).join(lang === "th" ? " " : ", ")
+  const last = clean[clean.length - 1]
+  return lang === "th" ? `${head} และ${last}` : `${head}, and ${last}`
+}
+
 export function translateClusterLabel(label: string, lang: Lang): string {
   if (lang === "en") return label
   const map: Record<string, string> = {

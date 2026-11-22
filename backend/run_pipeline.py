@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,7 +18,9 @@ if str(BACKEND_DIR) not in sys.path:
 from src.analytics.clustering import run_clustering_pipeline
 from src.analytics.eda_feature_selection import run_full_eda_screening
 from src.analytics.shock_index import run_shock_index_pipeline
+from src.config.feature_registry import get_git_commit_short, get_spec_version
 from src.db.connection import bulk_execute, fetch_all
+from src.evaluation.layered_eval import run_layer2_data_quality
 from src.extract.air4thai_client import load_air4thai_to_bronze
 from src.extract.historical_hazard_client import load_historical_hazards_to_bronze
 from src.extract.macro_controls_client import load_macro_controls_to_bronze
@@ -31,6 +34,35 @@ from src.transform.llm_shock_extractor import run_silver_news_extraction
 from src.transform.silver_clean import transform_air4thai_bronze_to_silver
 
 ICT_TZ = timezone(timedelta(hours=7))
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert pipeline results to strict JSON values (PostgreSQL JSONB rejects NaN/Infinity)."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if value.__class__.__name__ in {"NAType", "NaTType"}:
+        return None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    # Handle NumPy/Pandas scalar and array values without importing their libraries here.
+    if hasattr(value, "tolist"):
+        try:
+            return _json_safe(value.tolist())
+        except (TypeError, ValueError):
+            pass
+    if hasattr(value, "item"):
+        try:
+            return _json_safe(value.item())
+        except (TypeError, ValueError):
+            pass
+    return str(value)
 
 
 def _execute_stage(
@@ -101,7 +133,9 @@ def _persist_pipeline_run(run_type: str, report: dict[str, Any]) -> None:
         [
             {
                 "run_type": run_type,
-                "metrics_json": json.dumps(report, ensure_ascii=False, default=str),
+                "metrics_json": json.dumps(
+                    _json_safe(report), ensure_ascii=False, allow_nan=False, default=str
+                ),
                 "token_count": tokens_used,
                 "estimated_cost_thb": est_cost_thb,
             }
@@ -155,17 +189,39 @@ def run_elt_pipeline(
             )
         )
 
+    # Step 6 deterministic Layer 2 data quality and freshness assertions
+    stages.append(
+        _execute_stage(
+            "layer2_data_quality",
+            lambda: run_layer2_data_quality(role="baseline", persist=True),
+        )
+    )
+
     db_snapshot = _collect_db_health_snapshot()
     failed_stages = [s["stage"] for s in stages if s["status"] != "ok"]
+    critical_stage_names = {
+        "silver_air_daily",
+        "bronze_mots_tourism",
+        "bronze_nso_finance",
+        "gold_feature_screening",
+        "gold_shock_index",
+        "gold_clustering",
+        "rag_pdf_sync",
+        "layer2_data_quality",
+    }
+    failed_critical_stages = [st for st in failed_stages if st in critical_stage_names]
     total_elapsed_s = round(time.perf_counter() - t_all, 2)
 
     report = {
         "mode": mode,
+        "git_commit": get_git_commit_short(),
+        "feature_spec_version": get_spec_version(),
         "started_at_ict": started_at,
         "finished_at_ict": datetime.now(ICT_TZ).isoformat(timespec="seconds"),
         "total_elapsed_sec": total_elapsed_s,
         "failed_stages": failed_stages,
-        "status": "ok" if not failed_stages else "partial_warning",
+        "failed_critical_stages": failed_critical_stages,
+        "status": "ok" if not failed_stages else ("failed" if failed_critical_stages else "partial_warning"),
         "stages": stages,
         "post_run_db_snapshot": db_snapshot,
     }
@@ -212,7 +268,10 @@ if __name__ == "__main__":
         skip_pdf_sync=args.skip_pdf_sync,
         news_limit=args.news_limit,
     )
-    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
-    # Fail CI workflow only if every live ingestion stage failed or critical Gold rebuild raised
-    if len(summary["failed_stages"]) == len(summary["stages"]):
+    print(json.dumps(_json_safe(summary), ensure_ascii=False, indent=2, allow_nan=False, default=str))
+    if summary["failed_stages"]:
+        sys.stderr.write(
+            f"Pipeline stage failure detected in {summary['failed_stages']}\n"
+        )
+    if summary.get("failed_critical_stages") or len(summary["failed_stages"]) == len(summary["stages"]):
         sys.exit(1)

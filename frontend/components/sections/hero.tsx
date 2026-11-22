@@ -48,17 +48,17 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/40 to-black/65" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.3)_100%)]" />
 
-        <div className="relative z-10 flex min-h-[500px] flex-col items-center justify-center px-5 pb-12 pt-16 text-center sm:min-h-[540px] sm:px-10 sm:pt-20">
+        <div className="relative z-10 flex min-h-[430px] flex-col items-center justify-center px-4 pb-8 pt-12 text-center sm:min-h-[540px] sm:px-10 sm:pb-12 sm:pt-20">
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 backdrop-blur-md"
+            className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-1.5 backdrop-blur-md sm:mb-5 sm:px-4"
           >
-            <Activity aria-hidden="true" className="size-3.5 text-white/80" />
-            <span className="text-xs font-medium tracking-wide text-white/85">
+            <Activity aria-hidden="true" className="size-3.5 shrink-0 text-white/80" />
+            <span className="text-[11px] font-medium tracking-wide text-white/85 sm:text-xs">
               {lang === "th"
-                ? "ครอบคลุม 17 จังหวัดภาคเหนือ · ข้อมูลอัปเดตจากหน่วยงานรัฐและ ธปท."
+                ? "ครอบคลุม 17 จังหวัดภาคเหนือ · ข้อมูลหน่วยงานรัฐและ ธปท."
                 : "17 Northern Provinces · Official Data from Government & BOT"}
             </span>
           </motion.div>
@@ -67,7 +67,7 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="max-w-4xl font-display text-3xl font-semibold leading-[1.15] tracking-[-0.03em] text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)] sm:text-5xl lg:text-[3.4rem]"
+            className="max-w-4xl font-display text-2xl font-semibold leading-[1.2] tracking-[-0.03em] text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)] sm:text-5xl sm:leading-[1.15] lg:text-[3.4rem]"
           >
             <span className="text-balance">
               {lang === "th"
@@ -80,7 +80,7 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.22 }}
-            className="mt-4 max-w-2xl text-sm leading-7 text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.65)] sm:text-base"
+            className="mt-3 max-w-2xl text-xs leading-6 text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.65)] sm:mt-4 sm:text-base sm:leading-7"
           >
             {lang === "th"
               ? "ดูแนวโน้มค่าครองชีพ ภัยพิบัติ ในจังหวัดของคุณ พร้อมคำนวณค่างวดใหม่และพิมพ์ใบสรุปไปคุยกับธนาคารได้ทันที"
@@ -91,18 +91,18 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.32 }}
-            className="mt-7 flex flex-wrap items-center justify-center gap-3"
+            className="mt-5 flex w-full max-w-md flex-col items-stretch justify-center gap-2.5 sm:mt-7 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
           >
             <a
               href="#risk-outlook"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black shadow-md transition-transform hover:scale-[1.02]"
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black shadow-md transition-transform hover:scale-[1.02]"
             >
               {lang === "th" ? "เช็กสถานการณ์จังหวัดของคุณ" : "Check Your Province"}
               <ArrowDown aria-hidden="true" className="size-4" />
             </a>
             <a
               href="#relief-assistant"
-              className="inline-flex items-center rounded-full border border-white/45 bg-black/35 px-6 py-2.5 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
+              className="inline-flex items-center justify-center rounded-full border border-white/45 bg-black/35 px-6 py-2.5 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
             >
               {lang === "th" ? "คำนวณค่างวดและหาทางลดหนี้" : "Calculate Payment & Relief"}
             </a>
@@ -113,7 +113,7 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.44 }}
-            className="mt-8 grid w-full max-w-5xl grid-cols-2 gap-2.5 text-left lg:grid-cols-4"
+            className="mt-6 grid w-full max-w-5xl grid-cols-2 gap-2 text-left sm:mt-8 sm:gap-2.5 lg:grid-cols-4"
           >
             <HeroKpi
               label={lang === "th" ? "อัตราเข้าพักเฉลี่ยภาคเหนือ" : "Regional Avg Occupancy"}
@@ -152,15 +152,15 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
                   : `Higher transport & goods cost (${cpiLabel})`
               }
             />
-            <div className="rounded-2xl border border-amber-300/35 bg-white/15 px-4 py-3 backdrop-blur-md">
+            <div className="rounded-2xl border border-amber-300/35 bg-white/15 px-3.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
               <p className="text-[11px] font-medium text-white/85">
                 {lang === "th" ? "ภัยพิบัติและมลพิษ" : "Hazard & Pollution Watch"}
               </p>
-              <div className="mt-1 flex items-center gap-2">
+              <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
                 {summary?.has_active_external_shock ? (
                   <>
-                    <AlertTriangle aria-hidden="true" className="size-4 shrink-0 text-amber-300" />
-                    <span className="font-display text-lg font-semibold text-amber-200">
+                    <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0 text-amber-300 sm:size-4" />
+                    <span className="font-display text-base font-semibold text-amber-200 sm:text-lg">
                       {lang === "th"
                         ? `เฝ้าระวัง ${summary.active_external_shock_provinces.length}/17 จังหวัด`
                         : `${summary.active_external_shock_provinces.length}/17 Alert`}
@@ -168,14 +168,14 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
                   </>
                 ) : (
                   <>
-                    <ShieldCheck aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />
-                    <span className="font-display text-lg font-semibold text-white">
+                    <ShieldCheck aria-hidden="true" className="size-3.5 shrink-0 text-emerald-300 sm:size-4" />
+                    <span className="font-display text-base font-semibold text-white sm:text-lg">
                       {lang === "th" ? "ภาวะปกติ (0/17)" : "Normal (0/17)"}
                     </span>
                   </>
                 )}
               </div>
-              <p className="mt-0.5 text-[10px] font-medium text-amber-100/95">
+              <p className="mt-0.5 hidden text-[10px] font-medium text-amber-100/95 sm:block">
                 {summary?.has_active_external_shock
                   ? lang === "th"
                     ? `เฝ้าระวัง: ${alertProvinceNames.join(", ")}`
@@ -194,12 +194,12 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
 
 function HeroKpi({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-md">
-      <p className="text-[11px] text-white/70">{label}</p>
-      <p className="mt-1 font-display text-xl font-semibold tracking-tight text-white tabular-nums sm:text-2xl">
+    <div className="rounded-2xl border border-white/15 bg-white/10 px-3.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
+      <p className="truncate text-[11px] text-white/75">{label}</p>
+      <p className="mt-0.5 font-display text-lg font-semibold tracking-tight text-white tabular-nums sm:mt-1 sm:text-2xl">
         {value}
       </p>
-      {sub && <p className="mt-0.5 text-[10px] text-white/60">{sub}</p>}
+      {sub && <p className="mt-0.5 hidden text-[10px] text-white/60 sm:block">{sub}</p>}
     </div>
   )
 }

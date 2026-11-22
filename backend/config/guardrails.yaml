@@ -9,8 +9,8 @@ rag:
   min_similarity_threshold: 0.50
   # Vector weight for hybrid search
   hybrid_alpha: 0.68
-  refusal_message_th: "ไม่พบข้อมูลเงื่อนไขดังกล่าวในเอกสารอ้างอิงที่มีอยู่ในระบบ กรุณาตรวจสอบเพิ่มเติมผ่านช่องทางอย่างเป็นทางการของธนาคารแห่งประเทศไทย (สายด่วน 1213) หรือสถาบันการเงินของท่าน"
-  refusal_message_en: "No supporting criteria were found in the indexed official documents. Please verify directly through official Bank of Thailand channels (Hotline 1213) or your financial institution."
+  refusal_message_th: "ขอโทษครับ ตอนนี้ผมยังไม่มีเอกสารอ้างอิงที่ใช้ตอบเรื่องนี้ได้ เลยไม่อยากเดาคำตอบครับ ถ้าเป็นเรื่องเศรษฐกิจภาคเหนือ การจัดการหนี้ หรือมาตรการช่วยเหลือ ลองถามต่อได้เลยครับ หากต้องการยืนยันสิทธิ์เฉพาะราย แนะนำติดต่อเจ้าหนี้หรือ ธปท. 1213"
+  refusal_message_en: "Sorry, I don’t have a supporting source for this yet, so I don’t want to guess. I can help with Northern Thailand’s economy, debt management, or support programs. For individual eligibility, please check with your lender or the Bank of Thailand at 1213."
 
 air4thai:
   # Thailand PCD elevated and critical PM2.5 thresholds

@@ -15,6 +15,7 @@ from src.analytics.clustering import (
     _silhouette_exact,
 )
 from src.analytics.dsr_calculator import calculate_dsr
+from src.analytics.vulnerability_tiering import evaluate_province_vulnerability
 from src.extract.bot_pdf_loader import assess_pdf_text_quality, normalize_thai_pdf_text
 from src.guardrails.pii_redactor import redact_pii
 from src.guardrails.prompt_defense import detect_prompt_injection, wrap_untrusted_text
@@ -176,6 +177,8 @@ def test_rag_verifier_enforces_threshold_and_exact_citations() -> None:
     ]
     ok = verify_rag_grounding(chunks, [CitedSource(doc_title="Responsible Lending 2568", page_num=37)])
     assert ok.is_valid is True and ok.should_refuse is False
+    assert ok.citation_provenance_verified is True
+    assert ok.claim_factual_entailment_verified is False
 
     bad_page = verify_rag_grounding(chunks, [CitedSource(doc_title="Responsible Lending 2568", page_num=99)])
     assert bad_page.is_valid is False and bad_page.should_refuse is True
@@ -211,3 +214,162 @@ def test_pure_numpy_clustering_metrics_accuracy() -> None:
     assert _davies_bouldin_exact(x, y) < 0.05
     assert _calinski_harabasz_exact(x, y) > 1000.0
     assert _adjusted_rand_exact(y, np.array([1, 1, 1, 0, 0, 0])) == pytest.approx(1.0)
+
+
+def test_vulnerability_tiering_flags_missing_data_without_false_safe() -> None:
+    """Verify missing provincial metrics are flagged as insufficient data rather than normal tier 4."""
+    sparse_prov = {"province_code": "CM", "name_th": "เชียงใหม่", "name_en": "Chiang Mai"}
+    res = evaluate_province_vulnerability(sparse_prov, [])
+    assert res["insufficient_data"] is True
+    assert res["tier_code"] == "insufficient_data"
+    assert res["data_completeness_pct"] == 0.0
+    assert len(res["missing_metrics"]) == 6
+    assert res["signal_scope"] == "provincial_macro_surveillance_only"
+
+
+def test_feature_registry_loads_and_validates_specs() -> None:
+    """Verify feature_specs.yaml loads cleanly and exposes validated policy thresholds."""
+    from src.config.feature_registry import get_feature_spec_map, get_spec_version, get_validation_policy
+
+    assert get_spec_version() == "1.0.0"
+    policy = get_validation_policy()
+    assert policy["multiple_testing_correction"] == "benjamini_hochberg_fdr"
+    assert 0.0 < policy["alpha_threshold"] < 0.5
+    assert policy["max_vif"] == 5.0
+    spec_map = get_feature_spec_map()
+    assert "pm25_mean" in spec_map
+    assert "debt_to_annual_income_sme" in spec_map
+
+
+def test_dsr_calculator_labels_gross_income_formula() -> None:
+    """Verify DSR calculator explicitly labels gross income formula definition."""
+    res = calculate_dsr(monthly_revenue_thb=50000.0, monthly_debt_thb=25000.0)
+    assert res.dsr_pct == 50.0
+    assert res.formula_type == "gross_income_dsr"
+    assert "รายได้รวม" in res.summary_th
+    assert "gross" in res.summary_en.lower()
+
+
+def test_tier1_policy_actions_reflect_closed_khunsoo_and_separate_sme_individual() -> None:
+    """Verify Tier 1 actions state Khun Soo registration closed and separate SME vs individual relief."""
+    from src.analytics.vulnerability_tiering import TIER_DEFINITIONS
+
+    joined_th = " ".join(TIER_DEFINITIONS[1]["actions_th"])
+    joined_en = " ".join(TIER_DEFINITIONS[1]["actions_en"])
+    assert "ปิดลงทะเบียนแล้ว" in joined_th
+    assert "ปิดหนี้ไว ไปต่อได้" in joined_th
+    assert "SME" in joined_th and "บุคคลธรรมดา" in joined_th
+    assert "closed new registration" in joined_en
+
+
+def test_layered_evaluation_summary_detects_stale_and_candidate_deltas() -> None:
+    """Verify 4 layer summary flags expired runs as stale and computes baseline vs candidate deltas."""
+    from datetime import datetime, timedelta, timezone
+    from src.evaluation.layered_eval import build_layered_evaluation_summary
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    fresh_ts = datetime.now(timezone.utc).isoformat()
+    rows = [
+        {
+            "run_type": "layer2_data_quality",
+            "ran_at": old_ts,
+            "metrics_json": {
+                "run_id": "dq_old",
+                "role": "baseline",
+                "status": "passed",
+                "metrics": {"checks_passed": 9},
+                "failures": [],
+                "warnings": [],
+            },
+        },
+        {
+            "run_type": "layer3_statistical_validation",
+            "ran_at": fresh_ts,
+            "metrics_json": {
+                "run_id": "stat_cand",
+                "role": "candidate",
+                "status": "passed",
+                "feature_spec_version": "1.1.0",
+                "metrics": {"silhouette_score": 0.48},
+                "failures": [],
+                "warnings": [],
+            },
+        },
+        {
+            "run_type": "layer3_statistical_validation",
+            "ran_at": old_ts,
+            "metrics_json": {
+                "run_id": "stat_base",
+                "role": "baseline",
+                "status": "warn",
+                "feature_spec_version": "1.0.0",
+                "metrics": {"silhouette_score": 0.41},
+                "failures": [],
+                "warnings": [],
+            },
+        },
+    ]
+    summary = build_layered_evaluation_summary(rows)
+    by_layer = {item["layer"]: item for item in summary["layers"]}
+    assert by_layer["data_quality"]["status"] == "stale"
+    assert by_layer["data_quality"]["is_stale"] is True
+    assert by_layer["code_tests"]["status"] == "not_evaluated"
+    assert len(summary["baseline_vs_candidate"]) == 1
+    cmp_item = summary["baseline_vs_candidate"][0]
+    assert cmp_item["layer"] == "statistical_validation"
+    assert cmp_item["promotion_ready"] is True
+    assert cmp_item["metric_deltas"][0]["delta"] == pytest.approx(0.07)
+
+
+def test_priority_score_requires_all_four_components() -> None:
+    """Verify heuristic priority score refuses partial 3 variable renormalization and computes exact 4 variable value."""
+    from src.reporting.brief_generator import compute_priority_score
+
+    assert compute_priority_score(80.0, 60.0, 20.0, None) is None
+    assert compute_priority_score(80.0, None, 20.0, 0.8) is None
+    score = compute_priority_score(80.0, 60.0, 20.0, 0.8)
+    assert score == pytest.approx(60.7, abs=0.05)
+
+
+def test_shock_index_preserves_missing_weather_without_zero_imputation() -> None:
+    """Verify winsorized positive score and weighted blend never convert missing weather inputs to zero."""
+    import pandas as pd
+    from src.analytics.shock_index import _weighted_observed_blend, _winsorized_positive_score
+
+    s = pd.Series([10.0, 50.0, np.nan, 100.0])
+    scaled = _winsorized_positive_score(s, cap_quantile=0.98)
+    assert pd.isna(scaled.iloc[2])
+    assert float(scaled.iloc[3]) == pytest.approx(100.0)
+
+    c1 = pd.Series([80.0, np.nan, np.nan])
+    c2 = pd.Series([40.0, 60.0, np.nan])
+    blended, cov = _weighted_observed_blend([(c1, 0.5), (c2, 0.5)], c1.index)
+    assert float(blended.iloc[0]) == pytest.approx(60.0)
+    assert float(blended.iloc[1]) == pytest.approx(60.0)
+    assert float(cov.iloc[1]) == pytest.approx(50.0)
+    assert pd.isna(blended.iloc[2])
+    assert float(cov.iloc[2]) == pytest.approx(0.0)
+
+
+def test_within_province_fe_ols_absorbs_province_fixed_effects() -> None:
+    """Verify within province fixed effects OLS removes province intercepts and flags small cluster count."""
+    import pandas as pd
+    from src.analytics.eda_feature_selection import _run_controlled_panel_ols
+
+    rng = np.random.default_rng(7)
+    rows = []
+    for p_idx in range(10):
+        prov = f"P{p_idx:02d}"
+        prov_fe = p_idx * 50.0
+        for m in range(12):
+            x_val = float(rng.normal(0.0, 1.0))
+            cpi = float(rng.normal(1.0, 0.5))
+            y_val = prov_fe + 3.0 * x_val - 0.5 * cpi + float(rng.normal(0.0, 0.05))
+            rows.append({"province_code": prov, "y_target": y_val, "hazard_x": x_val, "th_cpi_yoy_pct": cpi})
+    df = pd.DataFrame(rows)
+    res = _run_controlled_panel_ols(df, "y_target", ["hazard_x"], {"hazard_x": 0, "th_cpi_yoy_pct": 0})
+    assert res["province_fixed_effects"] is True
+    assert res["small_cluster_count_warning"] is True
+    assert res["n_clusters"] == 10
+    assert res["r2_within"] > 0.95
+    assert res["terms"]["hazard_x"]["std_beta"] > 2.5

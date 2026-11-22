@@ -96,11 +96,11 @@
     "expected_pages": [36, 39]
   },
   {
-    "id": "q13_khunsoo_programs",
+    "id": "q13_khunsoo_current_status",
     "category": "khunsoo_raochuay",
     "in_scope": true,
-    "question": "โครงการคุณสู้ เราช่วย มีมาตรการจ่ายตรง คงทรัพย์ และจ่าย ปิด จบ ช่วยเหลือลูกหนี้บ้าน รถ และ SME อย่างไร",
-    "expected_doc_substr": "คุณสู้ เราช่วย",
+    "question": "ตอนนี้โครงการคุณสู้ เราช่วยยังเปิดลงทะเบียนใหม่หรือไม่ ปิดรับเมื่อใด และผู้ที่ลงทะเบียนแล้วได้รับความช่วยเหลือต่ออย่างไร",
+    "expected_doc_substr": "สถานะการลงทะเบียน",
     "expected_pages": [1, 2]
   },
   {

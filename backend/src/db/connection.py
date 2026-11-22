@@ -124,6 +124,10 @@ def _release_pooled_connection(conn: Any, healthy: bool) -> None:
 def get_connection() -> Iterator[Any]:
     """Yield a transactional pooled Neon PostgreSQL connection for write operations."""
     conn = _acquire_pooled_connection()
+    try:
+        conn.autocommit = False
+    except Exception:
+        pass
     healthy = True
     try:
         yield conn
@@ -193,37 +197,67 @@ def seed_provinces() -> int:
     return bulk_execute(upsert_sql, rows)
 
 
+def _execute_batches_on_cursor(
+    cur: Any,
+    sql: str,
+    rows: Sequence[dict[str, Any]],
+    batch_size: int = 250,
+) -> int:
+    """Run parameterized multi row INSERT batches on an existing transactional cursor."""
+    if not rows:
+        return 0
+    parsed = _parse_multi_row_insert(sql)
+    total_affected = 0
+    if parsed is not None:
+        prefix, compiled_tuple, suffix, keys = parsed
+        for start in range(0, len(rows), batch_size):
+            batch = rows[start : start + batch_size]
+            multi_sql = f"{prefix}{', '.join([compiled_tuple] * len(batch))}{suffix}"
+            flat_params = [row[k] for row in batch for k in keys]
+            cur.execute(multi_sql, flat_params)
+            if cur.rowcount is not None and cur.rowcount >= 0:
+                total_affected += cur.rowcount
+    else:
+        compiled_sql, keys = _compile_named_sql(sql)
+        for start in range(0, len(rows), batch_size):
+            batch = rows[start : start + batch_size]
+            param_tuples = [tuple(row[k] for k in keys) for row in batch]
+            cur.executemany(compiled_sql, param_tuples)
+            if cur.rowcount is not None and cur.rowcount >= 0:
+                total_affected += cur.rowcount
+    return total_affected
+
+
 def bulk_execute(sql: str, rows: Sequence[dict[str, Any]], batch_size: int = 250) -> int:
     """Execute true multi row parameterized INSERT batches in O(N/B) network round trips."""
     if not rows:
         return 0
 
-    parsed = _parse_multi_row_insert(sql)
-    total_affected = 0
+    with get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            return _execute_batches_on_cursor(cur, sql, rows, batch_size=batch_size)
+        finally:
+            cur.close()
+
+
+def atomic_replace_table(
+    delete_sql: str,
+    insert_sql: str,
+    rows: Sequence[dict[str, Any]],
+    batch_size: int = 250,
+) -> int:
+    """Delete and repopulate a table inside a single atomic transaction so failed writes roll back cleanly."""
+    if not rows:
+        raise ValueError("Refusing to replace table with an empty row set")
 
     with get_connection() as conn:
         cur = conn.cursor()
         try:
-            if parsed is not None:
-                prefix, compiled_tuple, suffix, keys = parsed
-                for start in range(0, len(rows), batch_size):
-                    batch = rows[start : start + batch_size]
-                    multi_sql = f"{prefix}{', '.join([compiled_tuple] * len(batch))}{suffix}"
-                    flat_params = [row[k] for row in batch for k in keys]
-                    cur.execute(multi_sql, flat_params)
-                    if cur.rowcount is not None and cur.rowcount >= 0:
-                        total_affected += cur.rowcount
-            else:
-                compiled_sql, keys = _compile_named_sql(sql)
-                for start in range(0, len(rows), batch_size):
-                    batch = rows[start : start + batch_size]
-                    param_tuples = [tuple(row[k] for k in keys) for row in batch]
-                    cur.executemany(compiled_sql, param_tuples)
-                    if cur.rowcount is not None and cur.rowcount >= 0:
-                        total_affected += cur.rowcount
+            cur.execute(delete_sql)
+            return _execute_batches_on_cursor(cur, insert_sql, rows, batch_size=batch_size)
         finally:
             cur.close()
-    return total_affected
 
 
 def fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:

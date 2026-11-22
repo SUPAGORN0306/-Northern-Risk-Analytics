@@ -119,6 +119,7 @@ export type RiskOutlookResponse = {
   vulnerability_tiers?: VulnerabilityTierSummary[]
   regional_timeseries: RegionalTimeseriesPoint[]
   recent_verified_news: VerifiedNewsItem[]
+  default_province_detail?: ProvinceDetailResponse | null
 }
 
 export type ProvinceSeriesPoint = {
@@ -130,10 +131,12 @@ export type ProvinceSeriesPoint = {
   visitors_total: number | null
   pm25_mean: number | null
   rainfall_sum_mm: number | null
-  composite_shock_idx: number
+  composite_shock_idx: number | null
   flood_shock_subidx: number | null
   haze_shock_subidx: number | null
   macro_pressure_subidx: number | null
+  th_cpi_yoy_pct?: number | null
+  oil_brent_yoy_pct?: number | null
   shock_driver: string
 }
 
@@ -247,10 +250,18 @@ export type QuadrantProvince = {
   exposure_score: number | null
   avg_monthly_revenue_mthb: number
   avg_occupancy_rate: number
+  latest_occupancy_rate?: number | null
   debt_to_annual_income_all: number | null
   debt_to_annual_income_sme: number | null
   expense_to_income_pct_sme: number | null
   recommended_policy: string
+  vulnerability_score?: number | null
+  vulnerability_tier?: number | null
+  tier_code?: string
+  tier_short_th?: string
+  tier_short_en?: string
+  tier_color?: string
+  insufficient_data?: boolean
   priority_rank?: number
   priority_score?: number
 }
@@ -292,8 +303,81 @@ export type PolicyMonitorResponse = {
   }
 }
 
+export type EvalStatus = "passed" | "failed" | "warn" | "not_evaluated" | "stale" | "running"
+
+export type EvaluationIssueItem = {
+  check?: string
+  case?: string
+  observed?: string | number | null
+  expected?: string
+  reason?: string
+}
+
+export type EvaluationLayerItem = {
+  layer: "code_tests" | "data_quality" | "statistical_validation" | "rag_evaluation"
+  title_th: string
+  title_en: string
+  review_mode: "deterministic" | "ai_assisted" | "hybrid_deterministic_and_ai_assisted"
+  status: EvalStatus
+  raw_status: string
+  is_stale: boolean
+  age_hours: number | null
+  stale_after_hours: number
+  ran_at: string | null
+  run_id: string | null
+  role: "baseline" | "candidate" | string
+  git_commit?: string | null
+  feature_spec_version?: string | null
+  dataset_cutoff?: string | null
+  prompt_version?: string | null
+  rag_index_version?: string | null
+  evaluator_version?: string | null
+  sample_size: number | null
+  threshold_summary: string | null
+  metrics: Record<string, any>
+  freshness?: Record<string, any>
+  ai_assisted_review?: {
+    label: string
+    prompt_version?: string
+    rag_index_version?: string
+    claim_factual_entailment_verified?: boolean
+    human_review_required?: boolean
+  } | null
+  failures: EvaluationIssueItem[]
+  warnings: EvaluationIssueItem[]
+  trigger_policy_th: string
+  trigger_policy_en: string
+}
+
+export type BaselineCandidateComparison = {
+  layer: string
+  baseline_run_id: string | null
+  candidate_run_id: string | null
+  baseline_ran_at: string | null
+  candidate_ran_at: string | null
+  baseline_status: string | null
+  candidate_status: string | null
+  baseline_spec_version?: string | null
+  candidate_spec_version?: string | null
+  metric_deltas: {
+    metric: string
+    baseline: number
+    candidate: number
+    delta: number
+  }[]
+  promotion_ready: boolean
+}
+
+export type LayeredEvaluationSummary = {
+  evaluator_version: string
+  feature_spec_version: string
+  layers: EvaluationLayerItem[]
+  baseline_vs_candidate: BaselineCandidateComparison[]
+}
+
 export type DataHealthResponse = {
   authenticated_staff: string
+  rag_index_version?: string
   cache_status?: "HIT" | "MISS"
   server_query_ms?: number
   layer_counts: {
@@ -332,6 +416,7 @@ export type DataHealthResponse = {
     ran_at: string
     metrics_json: Record<string, any>
   }[]
+  layered_evaluation?: LayeredEvaluationSummary
 }
 
 export type WatchlistProvinceItem = {
@@ -340,13 +425,14 @@ export type WatchlistProvinceItem = {
   name_en: string
   occupancy_pct: number
   occupancy_yoy_diff: number
-  dti_sme: number
-  cash_cushion_sme: number
-  exp_inc_all: number
+  dti_sme: number | null
+  cash_cushion_sme: number | null
+  exp_inc_all: number | null
+  data_sufficient?: boolean
   risk_reason: string
   recommended_action: string
   priority_rank?: number
-  priority_score?: number
+  priority_score?: number | null
 }
 
 export type PolicyActionItem = {
@@ -415,6 +501,51 @@ export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError"
 }
 
+export function formatFetchError(err: unknown, lang: Lang): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      return lang === "th"
+        ? "เซสชันหมดอายุหรือไม่มีสิทธิ์เข้าถึง กรุณาเข้าสู่ระบบใหม่อีกครั้ง"
+        : "Your session expired or access is unauthorized. Please sign in again."
+    }
+    if (err.status === 403) {
+      return lang === "th"
+        ? "สิทธิ์การเข้าถึงถูกจำกัดในสภาพแวดล้อมนี้"
+        : "Access is restricted in this environment."
+    }
+    if (err.status === 429) {
+      return lang === "th"
+        ? "มีคำขอจำนวนมากเกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง"
+        : "Too many requests right now. Please wait a moment and try again."
+    }
+    if (err.status >= 500) {
+      return lang === "th"
+        ? `เซิร์ฟเวอร์ข้อมูลขัดข้องชั่วคราว (รหัส ${err.status}) กรุณากดลองใหม่อีกครั้ง`
+        : `The data server is temporarily unavailable (HTTP ${err.status}). Please retry shortly.`
+    }
+    return lang === "th"
+      ? `ไม่สามารถดึงข้อมูลได้ในขณะนี้ (${err.message})`
+      : `Request failed (${err.message}).`
+  }
+
+  const msg = err instanceof Error ? err.message : String(err || "")
+  const low = msg.toLowerCase()
+  if (
+    !msg ||
+    low.includes("failed to fetch") ||
+    low.includes("networkerror") ||
+    low.includes("load failed") ||
+    low.includes("fetch failed")
+  ) {
+    return lang === "th"
+      ? "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ข้อมูลได้ในขณะนี้ (ระบบอาจกำลังปลุกเครื่องหรือปิดปรับปรุงชั่วคราว) กรุณากดลองใหม่"
+      : "Unable to reach the data server right now (the service may be waking up or temporarily offline). Please retry."
+  }
+  return lang === "th"
+    ? `เกิดข้อผิดพลาดในการโหลดข้อมูล กรุณาลองใหม่อีกครั้ง`
+    : `Could not load data (${msg}). Please try again.`
+}
+
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL
 if (!RAW_API_BASE && process.env.NODE_ENV === "production" && typeof console !== "undefined") {
   console.warn(
@@ -470,26 +601,46 @@ async function apiRequest<T>(
     headers.Authorization = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-    cache: "no-store",
-  })
+  const isGet = !options.method || options.method.toUpperCase() === "GET"
+  const maxAttempts = isGet ? 3 : 1
 
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response: Response
     try {
-      const errBody = await response.json()
-      if (errBody?.detail !== undefined) {
-        message = formatApiErrorDetail(errBody.detail, response.status)
+      response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers,
+        cache: "no-store",
+      })
+    } catch (err) {
+      if (isAbortError(err) || attempt === maxAttempts) {
+        throw err
       }
-    } catch {
-      // Ignore non-JSON error payload
+      await new Promise((r) => setTimeout(r, attempt * 600))
+      continue
     }
-    throw new ApiError(message, response.status)
+
+    if (!response.ok) {
+      if (isGet && attempt < maxAttempts && [502, 503, 504].includes(response.status)) {
+        await new Promise((r) => setTimeout(r, attempt * 600))
+        continue
+      }
+      let message = `HTTP ${response.status}`
+      try {
+        const errBody = await response.json()
+        if (errBody?.detail !== undefined) {
+          message = formatApiErrorDetail(errBody.detail, response.status)
+        }
+      } catch {
+        // Ignore non JSON error payload
+      }
+      throw new ApiError(message, response.status)
+    }
+
+    return response.json() as Promise<T>
   }
 
-  return response.json() as Promise<T>
+  throw new Error("Request failed")
 }
 
 export function fetchRiskOutlook(months = 18, signal?: AbortSignal): Promise<RiskOutlookResponse> {
@@ -534,6 +685,7 @@ export function sendPolicyChat(
   payload: {
     question: string
     language: Lang
+    recent_questions?: string[]
   },
   signal?: AbortSignal,
 ): Promise<ChatResponse> {
@@ -665,7 +817,25 @@ export type StaffMonteCarloResponse = {
   history_months_used?: number
   data_range_start?: string
   data_range_end?: string
+  target_calendar_months?: number[]
+  missing_expense_provinces?: string[]
+  metric_definition?: string
+  simulation_assumptions?: {
+    sampling_method: string
+    baseline_reference?: string
+    shortfall_definition?: string
+    cost_structure: string
+    news_overlay: string
+    disclaimer_th: string
+    disclaimer_en: string
+  }
   regional_metrics: {
+    expected_monthly_shortfall_mthb?: number
+    median_monthly_shortfall_mthb?: number
+    var95_monthly_shortfall_mthb?: number
+    cvar95_monthly_shortfall_mthb?: number
+    expected_operating_deficit_mthb?: number
+    var95_operating_deficit_mthb?: number
     expected_monthly_loss_mthb: number
     median_monthly_loss_mthb: number
     var95_monthly_loss_mthb: number
@@ -682,11 +852,16 @@ export type StaffMonteCarloResponse = {
     province_code: string
     name_th: string
     name_en: string
+    expense_data_status?: "observed_nso" | "not_evaluated_missing_nso"
     baseline_revenue_mthb: number
-    baseline_margin_pct: number
-    deficit_probability_pct: number
-    p95_worst_margin_pct: number
+    baseline_margin_pct: number | null
+    deficit_probability_pct: number | null
+    simulated_deficit_ratio_pct?: number | null
+    p95_worst_margin_pct: number | null
+    var95_revenue_shortfall_mthb?: number
     var95_revenue_loss_mthb: number
+    expected_operating_deficit_mthb?: number | null
+    hypothetical_expense_scenarios?: Record<string, number>
     has_active_water_alert: boolean
     active_news_count: number
   }[]

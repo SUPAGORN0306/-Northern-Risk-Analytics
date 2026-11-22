@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,8 @@ import matplotlib.pyplot as plt
 
 from src.analytics.eda_deep_insights import analyze_nso_vulnerability_shift
 from src.analytics.shock_index import compute_composite_shock_panel
-from src.db.connection import bulk_execute, get_connection
+from src.config.feature_registry import get_git_commit_short, get_spec_version
+from src.db.connection import atomic_replace_table, bulk_execute, get_connection
 from src.transform.panel_builder import (
     build_monthly_analysis_panel,
     build_provincial_structural_profile,
@@ -509,11 +511,6 @@ def save_clusters_to_neon(
     model_str = f"{winner['algorithm']} (k={int(winner['k'])}, {winner['scaler']})"
     sil_val = float(winner["silhouette"])
 
-    with get_connection() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM gold.province_clusters")
-        cur.close()
-
     rows = [
         {
             "province_code": str(r["province_code"]),
@@ -537,9 +534,12 @@ def save_clusters_to_neon(
             :shock_intensity, :exposure_score, :silhouette_score, :recommended_policy
         )
     """
-    saved = bulk_execute(insert_sql, rows)
+    saved = atomic_replace_table("DELETE FROM gold.province_clusters", insert_sql, rows)
 
     eval_payload = {
+        "run_id": f"cluster_{uuid.uuid4().hex[:12]}",
+        "git_commit": get_git_commit_short(),
+        "feature_spec_version": get_spec_version(),
         "winner": winner,
         "features": list(CORE_6_FEATURES),
         "all_24_benchmarks": bench_df.to_dict(orient="records"),

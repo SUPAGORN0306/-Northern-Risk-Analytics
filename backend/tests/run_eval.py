@@ -27,10 +27,23 @@ from src.analytics.clustering import (
     _scale_matrix,
     prepare_clustering_matrix,
 )
+from src.config.feature_registry import get_git_commit_short, get_spec_version
 from src.db.connection import bulk_execute, fetch_all
+from src.evaluation.layered_eval import (
+    EVALUATOR_VERSION,
+    build_layer3_statistical_payload,
+    compute_clustering_perturbation_ari,
+    persist_layer_evaluation,
+    run_layer2_data_quality,
+)
 from src.guardrails.pii_redactor import redact_pii
 from src.guardrails.prompt_defense import detect_prompt_injection
-from src.rag.policy_assistant import answer_policy_question, retrieve_hybrid_chunks
+from src.rag.policy_assistant import (
+    RAG_PROMPT_VERSION,
+    answer_policy_question,
+    get_rag_index_version,
+    retrieve_hybrid_chunks,
+)
 from src.transform.llm_shock_extractor import _province_grounded_in_text, _quote_is_grounded
 from tests.test_guardrails import INJECTION_ATTACK_CASES, PII_POSITIVE_CASES
 
@@ -252,7 +265,8 @@ def eval_dim4_analytics_and_clustering() -> dict[str, Any]:
         "silhouette_score": clust_bt.get("silhouette"),
         "davies_bouldin_index": clust_bt.get("davies_bouldin"),
         "calinski_harabasz_score": clust_bt.get("calinski_harabasz"),
-        "passed": True,
+        "evaluation_status": "not_evaluated",
+        "passed": None,
     }
 
 
@@ -272,6 +286,7 @@ def eval_dim5_security_guardrails() -> dict[str, Any]:
         "pii_redaction_recall_pct": pii_recall,
         "injection_cases_tested": len(INJECTION_ATTACK_CASES),
         "injection_block_rate_pct": inj_block,
+        "evaluation_scope": "curated_regression_sample_only_not_comprehensive_security_certification",
         "passed": bool(pii_recall == 100.0 and inj_block == 100.0),
     }
 
@@ -303,13 +318,23 @@ def eval_dim6_stability() -> dict[str, Any]:
 
     cross_scaler_ari = round(_adjusted_rand_exact(lbl_km_std, lbl_km_rob), 4)
     km_vs_ward_rob_ari = round(_adjusted_rand_exact(lbl_km_rob, lbl_ward_rob), 4)
+    perturbation_ari = compute_clustering_perturbation_ari(
+        x_scaled=x_std,
+        base_labels=lbl_km_std,
+        fit_fn=_fit_labels,
+        ari_fn=_adjusted_rand_exact,
+        k=4,
+        n_trials=12,
+        noise_scale=0.08,
+        seed=42,
+    )
 
     return {
         "llm_3run_consistency_pct": llm_stability_pct,
-        "kmeans_k4_perturbation_ari": 0.9287,
+        "kmeans_k4_perturbation_ari": perturbation_ari,
         "kmeans_vs_ward_robust_k4_ari": km_vs_ward_rob_ari,
         "kmeans_standard_vs_robust_k4_ari": cross_scaler_ari,
-        "passed": bool(llm_stability_pct >= 95.0),
+        "passed": bool(llm_stability_pct >= 95.0 and perturbation_ari >= 0.70),
     }
 
 
@@ -338,7 +363,8 @@ def eval_dim7_cost_and_governance() -> dict[str, Any]:
         "quarantined_records_caught": int(stats_row["quarantined_total"]),
         "cumulative_logged_tokens": int(stats_row["cumulative_logged_tokens"]),
         "cumulative_estimated_cost_thb": round(float(stats_row["cumulative_cost_thb"]), 4),
-        "passed": True,
+        "evaluation_status": "not_evaluated",
+        "passed": None,
     }
 
 
@@ -467,8 +493,19 @@ def plot_evaluation_scorecard(scorecard: dict[str, Any]) -> Path:
     return out_path
 
 
-def run_full_7d_evaluation() -> dict[str, Any]:
-    """Execute all 7 evaluation contract dimensions, persist to Neon, and save 300 DPI scorecard."""
+def run_full_7d_evaluation(role: str = "baseline") -> dict[str, Any]:
+    """Execute all evaluation dimensions with provenance metadata and persist layered records to Neon."""
+    import argparse
+    import uuid
+    from datetime import datetime, timezone
+
+    _ = argparse
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    run_id = f"eval7d_{uuid.uuid4().hex[:10]}"
+    git_commit = get_git_commit_short()
+    spec_version = get_spec_version()
+    rag_index_ver = get_rag_index_version(force_check=True)
+
     d1 = eval_dim1_retrieval()
     d2 = eval_dim2_rag_qa()
     d3 = eval_dim3_news_extraction()
@@ -476,8 +513,31 @@ def run_full_7d_evaluation() -> dict[str, Any]:
     d5 = eval_dim5_security_guardrails()
     d6 = eval_dim6_stability()
     d7 = eval_dim7_cost_and_governance()
+    dq_report = run_layer2_data_quality(role=role, persist=True)
+
+    dim_pairs = (
+        ("dim1_retrieval", d1),
+        ("dim2_rag_qa", d2),
+        ("dim3_news_extraction", d3),
+        ("dim4_analytics", d4),
+        ("dim5_security_guardrails", d5),
+        ("dim6_stability", d6),
+        ("dim7_cost_and_governance", d7),
+    )
+    evaluated_dims = [d for _, d in dim_pairs if d.get("passed") is not None]
+    not_evaluated_dims = [name for name, d in dim_pairs if d.get("passed") is None]
+    finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     scorecard = {
+        "run_id": run_id,
+        "role": role,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "git_commit": git_commit,
+        "feature_spec_version": spec_version,
+        "prompt_version": RAG_PROMPT_VERSION,
+        "rag_index_version": rag_index_ver,
+        "evaluator_version": EVALUATOR_VERSION,
         "dim1_retrieval": d1,
         "dim2_rag_qa": d2,
         "dim3_news_extraction": d3,
@@ -485,9 +545,10 @@ def run_full_7d_evaluation() -> dict[str, Any]:
         "dim5_security_guardrails": d5,
         "dim6_stability": d6,
         "dim7_cost_and_governance": d7,
-        "all_dimensions_passed": all(
-            d["passed"] for d in (d1, d2, d3, d4, d5, d6, d7)
-        ),
+        "layer2_data_quality_status": dq_report["status"],
+        "evaluated_dimensions_passed": bool(evaluated_dims) and all(bool(d["passed"]) for d in evaluated_dims),
+        "not_evaluated_dimensions": not_evaluated_dims,
+        "all_dimensions_passed": False if not_evaluated_dims else all(bool(d["passed"]) for d in evaluated_dims),
     }
 
     fig_path = plot_evaluation_scorecard(scorecard)
@@ -495,6 +556,89 @@ def run_full_7d_evaluation() -> dict[str, Any]:
 
     tokens_used = int(d2["total_tokens"])
     est_cost_thb = round((tokens_used / 1_000_000.0) * 12.0, 4)
+
+    # Persist structured Layer 3 statistical validation record
+    eval_rows = fetch_all(
+        """
+        SELECT DISTINCT ON (run_type) run_type, metrics_json
+        FROM gold.pipeline_eval_runs
+        WHERE run_type IN ('shock_index_backtest', 'clustering_benchmark')
+        ORDER BY run_type, ran_at DESC
+        """
+    )
+    by_type = {str(r["run_type"]): r["metrics_json"] for r in eval_rows}
+    l3_payload = build_layer3_statistical_payload(
+        shock_bt=by_type.get("shock_index_backtest") or {},
+        clust_bt=(by_type.get("clustering_benchmark") or {}).get("winner") or {},
+        sig_map=d4.get("selected_features_by_target") or {},
+        perturbation_ari=d6.get("kmeans_k4_perturbation_ari"),
+        cross_scaler_ari=d6.get("kmeans_standard_vs_robust_k4_ari"),
+        km_vs_ward_ari=d6.get("kmeans_vs_ward_robust_k4_ari"),
+        role=role,
+    )
+    persist_layer_evaluation("statistical_validation", l3_payload)
+
+    # Persist structured Layer 4 RAG evaluation record separating deterministic checks from AI review
+    hyb = d1.get("hybrid_rrf") or {}
+    rag_failures: list[dict[str, Any]] = []
+    if not d1.get("passed"):
+        rag_failures.append(
+            {
+                "check": "retrieval_hit_at_5",
+                "observed": hyb.get("hit_rate_top5_pct"),
+                "expected": ">= 85.0%",
+            }
+        )
+    if not d2.get("passed"):
+        rag_failures.append(
+            {
+                "check": "citation_provenance_or_refusal",
+                "observed": f"cite={d2.get('citation_accuracy_pct')}%, refusal={d2.get('refusal_accuracy_pct')}%",
+                "expected": "100% provenance & 100% refusal",
+            }
+        )
+    l4_status = "failed" if rag_failures else "warn"
+    l4_payload = {
+        "layer": "rag_evaluation",
+        "run_id": f"l4_rag_{uuid.uuid4().hex[:10]}",
+        "role": role,
+        "review_mode": "hybrid_deterministic_and_ai_assisted",
+        "status": l4_status,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "git_commit": git_commit,
+        "prompt_version": RAG_PROMPT_VERSION,
+        "rag_index_version": rag_index_ver,
+        "evaluator_version": EVALUATOR_VERSION,
+        "sample_size": int(hyb.get("n_queries") or 0) + int(d2.get("traps_tested") or 0),
+        "threshold_summary": "Hit@5 >= 85%, Citation Provenance 100%, Trap Refusal 100% (semantic accuracy requires human spot-check)",
+        "metrics": {
+            "hit_rate_top5_pct": hyb.get("hit_rate_top5_pct"),
+            "mrr": hyb.get("mrr"),
+            "citation_provenance_pct": d2.get("citation_accuracy_pct"),
+            "refusal_accuracy_pct": d2.get("refusal_accuracy_pct"),
+            "in_scope_answer_rate_pct": d2.get("in_scope_answer_rate_pct"),
+            "in_scope_tested": d2.get("in_scope_tested"),
+            "traps_tested": d2.get("traps_tested"),
+            "median_latency_ms": d2.get("median_latency_ms"),
+            "llm_3run_consistency_pct": d6.get("llm_3run_consistency_pct"),
+        },
+        "ai_assisted_review": {
+            "label": "AI-assisted review (not a deterministic pass/fail gate)",
+            "prompt_version": RAG_PROMPT_VERSION,
+            "rag_index_version": rag_index_ver,
+            "claim_factual_entailment_verified": False,
+            "human_review_required": True,
+        },
+        "failures": rag_failures,
+        "warnings": [
+            {
+                "check": "semantic_entailment_human_review",
+                "reason": f"Citation verifier checks chunk provenance only; semantic accuracy across {d2.get('in_scope_tested')} answers requires human review",
+            }
+        ],
+    }
+    persist_layer_evaluation("rag_evaluation", l4_payload, token_count=tokens_used, estimated_cost_thb=est_cost_thb)
 
     bulk_execute(
         """
@@ -514,5 +658,10 @@ def run_full_7d_evaluation() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    res = run_full_7d_evaluation()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run full multi layer evaluation harness.")
+    parser.add_argument("--role", choices=["baseline", "candidate"], default="baseline")
+    cli_args = parser.parse_args()
+    res = run_full_7d_evaluation(role=cli_args.role)
     print(json.dumps(res, ensure_ascii=False, indent=2))

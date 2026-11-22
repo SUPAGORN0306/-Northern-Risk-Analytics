@@ -1,0 +1,109 @@
+spec_version: "1.0.0"
+updated_at: "2026-11-22"
+grain_default: "province_month"
+validation_policy:
+  multiple_testing_correction: "benjamini_hochberg_fdr"
+  alpha_threshold: 0.05
+  max_vif: 5.0
+  time_split_train_ratio: 0.75
+  scope_classification: "exploratory_within_province_screening"
+
+features:
+  - feature_id: "pm25_mean"
+    version: 1
+    source: "open_meteo_air_quality_and_air4thai"
+    owner_agency: "PCD Air4Thai / Open Meteo"
+    grain: "province_month"
+    unit: "ug_per_m3"
+    definition: "Monthly arithmetic mean of daily provincial PM2.5 concentration"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0.0, 500.0]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "pm25_days_over_37_5"
+    version: 1
+    source: "open_meteo_air_quality_and_air4thai"
+    owner_agency: "PCD Air4Thai / Open Meteo"
+    grain: "province_month"
+    unit: "days"
+    definition: "Count of calendar days in month where provincial daily mean PM2.5 exceeds 37.5 ug/m3"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0, 31]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "pm25_days_over_75"
+    version: 1
+    source: "open_meteo_air_quality_and_air4thai"
+    owner_agency: "PCD Air4Thai / Open Meteo"
+    grain: "province_month"
+    unit: "days"
+    definition: "Count of calendar days in month where provincial daily mean PM2.5 exceeds 75.0 ug/m3"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0, 31]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "rainfall_sum_mm"
+    version: 1
+    source: "open_meteo_era5_archive"
+    owner_agency: "ECMWF ERA5 / Open Meteo"
+    grain: "province_month"
+    unit: "mm"
+    definition: "Total monthly cumulative precipitation in millimeters"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0.0, 2500.0]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "heavy_rain_days_35mm"
+    version: 1
+    source: "open_meteo_era5_archive"
+    owner_agency: "ECMWF ERA5 / Open Meteo"
+    grain: "province_month"
+    unit: "days"
+    definition: "Count of days in month with daily precipitation >= 35 mm"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0, 31]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "th_cpi_yoy_pct"
+    version: 1
+    source: "bis_and_moc_cpi"
+    owner_agency: "Ministry of Commerce / BIS"
+    grain: "macro_month"
+    unit: "percent"
+    definition: "Year over year percentage change in Thailand headline Consumer Price Index"
+    missing_policy: "lagged_latest_published"
+    allowed_range: [-10.0, 25.0]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "oil_brent_yoy_pct"
+    version: 1
+    source: "fred_brent_crude"
+    owner_agency: "EIA / FRED"
+    grain: "macro_month"
+    unit: "percent"
+    definition: "Year over year percentage change in monthly Brent crude oil benchmark price"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [-80.0, 200.0]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "debt_to_annual_income_sme"
+    version: 1
+    source: "nso_household_socio_economic_survey"
+    owner_agency: "National Statistical Office (NSO)"
+    grain: "province_year"
+    unit: "ratio"
+    definition: "Average enterprise household debt divided by annualized enterprise household income"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 10.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "expense_to_income_pct_sme"
+    version: 1
+    source: "nso_household_socio_economic_survey"
+    owner_agency: "National Statistical Office (NSO)"
+    grain: "province_year"
+    unit: "percent"
+    definition: "Average monthly operating and household expense as percentage of monthly income for SME households"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 200.0]
+    candidate_lags_months: [0]

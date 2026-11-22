@@ -16,49 +16,34 @@ type Props = {
 }
 
 const TIER_FILLS: Record<number, string> = {
-  1: "#991b1b",
-  2: "#d97706",
-  3: "#0369a1",
-  4: "#0f766e",
+  1: "#e57373",
+  2: "#f5b87a",
+  3: "#93c5e8",
+  4: "#7ec8a9",
 }
 
 function getFillColor(item: ProvinceOutlookItem | undefined, mode: MapMetricMode): string {
-  if (!item) return "#e5e7eb"
+  if (!item) return "#eef2f6"
   if (mode === "cluster") {
-    return TIER_FILLS[item.vulnerability_tier ?? 3] || "#0369a1"
+    return TIER_FILLS[item.vulnerability_tier ?? 3] || "#93c5e8"
   }
   if (mode === "occupancy") {
     const occ = item.occupancy_rate ?? 0
-    if (occ >= 68) return "#1e3a8a"
-    if (occ >= 58) return "#2563eb"
-    if (occ >= 48) return "#60a5fa"
-    return "#bfdbfe"
+    if (occ >= 68) return "#6bb8a8"
+    if (occ >= 58) return "#99d6c8"
+    if (occ >= 48) return "#c8ece3"
+    return "#e8eef3"
   }
   const smeDebt = item.debt_to_annual_income_sme ?? item.debt_to_annual_income_all ?? 0
   const expRatio = item.expense_to_income_pct_sme ?? item.expense_to_income_pct_all ?? 0
-  if (smeDebt >= 1.0 || expRatio >= 88) return "#7c2d12"
-  if (smeDebt >= 0.7 || expRatio >= 80) return "#c2410c"
-  if (smeDebt >= 0.5 || expRatio >= 72) return "#f59e0b"
-  return "#fde68a"
+  if (smeDebt >= 1.0 || expRatio >= 88) return "#e57373"
+  if (smeDebt >= 0.7 || expRatio >= 82) return "#f5b482"
+  if (smeDebt >= 0.5 || expRatio >= 78) return "#fae588"
+  return "#7ec8a9"
 }
 
 function isDarkFill(hex: string): boolean {
-  return [
-    "#0f172a",
-    "#1e3a8a",
-    "#2563eb",
-    "#0369a1",
-    "#334155",
-    "#475569",
-    "#64748b",
-    "#0f766e",
-    "#b45309",
-    "#991b1b",
-    "#b91c1c",
-    "#d97706",
-    "#7c2d12",
-    "#c2410c",
-  ].includes(hex)
+  return ["#0f172a", "#1e293b", "#334155"].includes(hex)
 }
 
 function metricValueText(item: ProvinceOutlookItem, mode: MapMetricMode, lang: Lang): string {
@@ -154,9 +139,9 @@ export function NorthernThailandMap({
                     }
                   }}
                   fill={fill}
-                  fillOpacity={isSelected ? 1 : isHovered ? 0.94 : 0.84}
-                  stroke={isSelected ? "#09090b" : "#ffffff"}
-                  strokeWidth={isSelected ? 2.8 : isHovered ? 1.8 : 1.15}
+                  fillOpacity={isSelected ? 1 : isHovered ? 0.96 : 0.9}
+                  stroke={isSelected ? "#1e293b" : "#ffffff"}
+                  strokeWidth={isSelected ? 2.6 : isHovered ? 1.8 : 1.15}
                   className="cursor-pointer outline-none transition-all duration-150"
                 />
               )
@@ -182,9 +167,9 @@ export function NorthernThailandMap({
                   dominantBaseline="central"
                   fontSize={lang === "th" ? 8.6 : 10}
                   fontWeight={isSelected ? 700 : 600}
-                  fill={dark ? "#ffffff" : "#0f172a"}
-                  stroke={dark ? "rgba(15,23,42,0.45)" : "rgba(255,255,255,0.75)"}
-                  strokeWidth={2}
+                  fill={dark ? "#ffffff" : "#1e293b"}
+                  stroke={dark ? "rgba(15,23,42,0.45)" : "rgba(255,255,255,0.85)"}
+                  strokeWidth={2.2}
                   paintOrder="stroke"
                 >
                   {label}
@@ -239,26 +224,26 @@ export function NorthernThailandMap({
       <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-2 border-t border-border pt-3.5 text-[11px] text-muted-foreground">
         {metricMode === "occupancy" && (
           <>
-            <LegendDot color="#1e3a8a" label={lang === "th" ? "อันดับ 1 เข้าพักสูง (68% ขึ้นไป)" : "68%+"} />
-            <LegendDot color="#2563eb" label={lang === "th" ? "อันดับ 2 ปานกลางค่อนสูง (58–68%)" : "58 to 68%"} />
-            <LegendDot color="#60a5fa" label={lang === "th" ? "อันดับ 3 ปานกลาง (48–58%)" : "48 to 58%"} />
-            <LegendDot color="#bfdbfe" label={lang === "th" ? "อันดับ 4 เข้าพักน้อย (ต่ำกว่า 48%)" : "Under 48%"} />
+            <LegendDot color="#6bb8a8" label={lang === "th" ? "อันดับ 1 เข้าพักสูง (68% ขึ้นไป)" : "68%+"} />
+            <LegendDot color="#99d6c8" label={lang === "th" ? "อันดับ 2 ปานกลางค่อนสูง (58–68%)" : "58 to 68%"} />
+            <LegendDot color="#c8ece3" label={lang === "th" ? "อันดับ 3 ปานกลาง (48–58%)" : "48 to 58%"} />
+            <LegendDot color="#e8eef3" label={lang === "th" ? "อันดับ 4 เข้าพักน้อย (ต่ำกว่า 48%)" : "Under 48%"} />
           </>
         )}
         {metricMode === "debt" && (
           <>
-            <LegendDot color="#7c2d12" label={lang === "th" ? "อันดับ 1 หนี้หนักสุด / เงินเหลือน้อย" : "Rank 1 Highest Debt"} />
-            <LegendDot color="#c2410c" label={lang === "th" ? "อันดับ 2 หนี้ค่อนข้างสูง" : "Rank 2 Elevated Debt"} />
-            <LegendDot color="#f59e0b" label={lang === "th" ? "อันดับ 3 ภาระหนี้ปานกลาง" : "Rank 3 Moderate Debt"} />
-            <LegendDot color="#fde68a" label={lang === "th" ? "อันดับ 4 หนี้ต่ำ / เงินเหลือคล่องตัว" : "Rank 4 Low Debt"} />
+            <LegendDot color="#e57373" label={lang === "th" ? "อันดับ 1 หนี้หนักสุด / เงินเหลือน้อย" : "Rank 1 Highest Debt"} />
+            <LegendDot color="#f5b482" label={lang === "th" ? "อันดับ 2 หนี้ค่อนข้างสูง" : "Rank 2 Elevated Debt"} />
+            <LegendDot color="#fae588" label={lang === "th" ? "อันดับ 3 ภาระหนี้ปานกลาง" : "Rank 3 Moderate Debt"} />
+            <LegendDot color="#7ec8a9" label={lang === "th" ? "อันดับ 4 หนี้ต่ำ / เงินเหลือคล่องตัว" : "Rank 4 Low Debt"} />
           </>
         )}
         {metricMode === "cluster" && (
           <>
-            <LegendDot color="#991b1b" label={lang === "th" ? "อันดับ 1 เปราะบางสูง" : "Tier 1 Critical"} />
-            <LegendDot color="#d97706" label={lang === "th" ? "อันดับ 2 เปราะบางต่อภัยและฤดูกาล" : "Tier 2 Hazard & Seasonal"} />
-            <LegendDot color="#0369a1" label={lang === "th" ? "อันดับ 3 เฝ้าระวังปานกลาง" : "Tier 3 Moderate"} />
-            <LegendDot color="#0f766e" label={lang === "th" ? "อันดับ 4 คล่องตัว" : "Tier 4 Resilient"} />
+            <LegendDot color="#e57373" label={lang === "th" ? "อันดับ 1 เปราะบางสูง" : "Tier 1 Critical"} />
+            <LegendDot color="#f5b87a" label={lang === "th" ? "อันดับ 2 เปราะบางต่อภัยและฤดูกาล" : "Tier 2 Hazard & Seasonal"} />
+            <LegendDot color="#93c5e8" label={lang === "th" ? "อันดับ 3 เฝ้าระวังปานกลาง" : "Tier 3 Moderate"} />
+            <LegendDot color="#7ec8a9" label={lang === "th" ? "อันดับ 4 คล่องตัว" : "Tier 4 Resilient"} />
           </>
         )}
       </div>
@@ -269,7 +254,11 @@ export function NorthernThailandMap({
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
+      <span
+        className="size-2.5 shrink-0 rounded-full ring-1 ring-black/15"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
       <span>{label}</span>
     </span>
   )

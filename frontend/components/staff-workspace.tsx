@@ -9,6 +9,7 @@ import {
   ChartNoAxesCombined,
   Check,
   CheckCircle2,
+  ChevronDown,
   CircleHelp,
   ClipboardList,
   Clock,
@@ -19,6 +20,7 @@ import {
   Gauge,
   Layers,
   Loader2,
+  Menu,
   MinusCircle,
   Play,
   RefreshCw,
@@ -50,6 +52,7 @@ import {
   fetchExecutiveBriefText,
   fetchPolicyMonitor,
   fetchProvinceDetail,
+  formatFetchError,
   isAbortError,
   isUnauthorizedError,
   runStaffMonteCarlo,
@@ -168,6 +171,7 @@ export function StaffWorkspace({
   const [mcComputeMs, setMcComputeMs] = useState<number | null>(null)
   const [clusterComputeMs, setClusterComputeMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [staffMobileMenuOpen, setStaffMobileMenuOpen] = useState(false)
 
   const briefRef = useRef<HTMLDialogElement>(null)
   const sessionExpiredRef = useRef(false)
@@ -215,13 +219,7 @@ export function StaffWorkspace({
           handleUnauthorized()
           return
         }
-        setError(
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ไม่สามารถโหลดข้อมูลโหมดเจ้าหน้าที่ได้"
-              : "Failed to load staff workspace",
-        )
+        setError(formatFetchError(err, lang))
       } finally {
         setLoading(false)
         setTestingSpeed(false)
@@ -249,13 +247,7 @@ export function StaffWorkspace({
         handleUnauthorized()
         return
       }
-      setBenchmarkError(
-        err instanceof Error
-          ? err.message
-          : lang === "th"
-            ? "ทดสอบความเร็วไม่สำเร็จ กรุณาลองใหม่"
-            : "Speed benchmark failed. Please retry.",
-      )
+      setBenchmarkError(formatFetchError(err, lang))
     } finally {
       setTestingSpeed(false)
     }
@@ -276,28 +268,37 @@ export function StaffWorkspace({
     return () => clearTimeout(timer)
   }, [refreshNotice])
 
-  // Fetch provincial detail synced with global selectedProvinceCode (with AbortController)
-  useEffect(() => {
-    const controller = new AbortController()
-    setDetail(null)
-    setDetailError(null)
-    fetchProvinceDetail(selectedProvinceCode, controller.signal)
-      .then((res) => {
+  const loadProvinceDetailData = useCallback(
+    async (code: string, signal?: AbortSignal) => {
+      setDetail(null)
+      setDetailError(null)
+      try {
+        const res = await fetchProvinceDetail(code, signal)
         setDetail(res)
-      })
-      .catch((err) => {
+      } catch (err) {
         if (isAbortError(err)) return
         setDetail(null)
-        setDetailError(
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ไม่สามารถดึงข้อมูลรายเดือนของจังหวัดนี้ได้"
-              : "Failed to load provincial monthly details",
-        )
-      })
+        setDetailError(formatFetchError(err, lang))
+      }
+    },
+    [lang],
+  )
+
+  // Fetch provincial detail synced with global selectedProvinceCode
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadProvinceDetailData(selectedProvinceCode, controller.signal)
     return () => controller.abort()
-  }, [selectedProvinceCode, lang])
+  }, [selectedProvinceCode, loadProvinceDetailData])
+
+  // Auto recover provincial detail if monitor finishes loading after a transient wakeup error
+  useEffect(() => {
+    if (monitor && !detail && detailError) {
+      const controller = new AbortController()
+      void loadProvinceDetailData(selectedProvinceCode, controller.signal)
+      return () => controller.abort()
+    }
+  }, [monitor, detail, detailError, selectedProvinceCode, loadProvinceDetailData])
 
   const provinces = monitor?.quadrant_provinces ?? []
   const selected = useMemo(
@@ -322,13 +323,7 @@ export function StaffWorkspace({
           return
         }
         setBrief(null)
-        setBriefError(
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ไม่สามารถสร้างรายงานสรุปเชิงนโยบายได้"
-              : "Failed to generate policy brief",
-        )
+        setBriefError(formatFetchError(err, lang))
       } finally {
         setBriefLoading(false)
       }
@@ -345,6 +340,7 @@ export function StaffWorkspace({
   }, [briefOpen, loadBriefData])
 
   function openBriefDialog() {
+    setStaffMobileMenuOpen(false)
     setBrief(null)
     setBriefError(null)
     setPrintError(null)
@@ -353,6 +349,16 @@ export function StaffWorkspace({
       briefRef.current.showModal()
     }
   }
+
+  // Match the public navigation: dismiss the mobile menu when the layout becomes desktop.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)")
+    const onChange = () => {
+      if (mq.matches) setStaffMobileMenuOpen(false)
+    }
+    mq.addEventListener("change", onChange)
+    return () => mq.removeEventListener("change", onChange)
+  }, [])
 
   function closeBriefDialog() {
     setBriefOpen(false)
@@ -410,13 +416,7 @@ export function StaffWorkspace({
         handleUnauthorized()
         return
       }
-      setPrintError(
-        err instanceof Error
-          ? err.message
-          : lang === "th"
-            ? "ดึงเอกสารสำหรับพิมพ์ไม่สำเร็จ"
-            : "Failed to fetch printable brief",
-      )
+      setPrintError(formatFetchError(err, lang))
       setPrintingBrief(false)
     }
   }
@@ -460,12 +460,7 @@ export function StaffWorkspace({
       }
       setRefreshNotice({
         type: "error",
-        text:
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ดึงข้อมูลสดไม่สำเร็จ กรุณาลองใหม่"
-              : "Live refresh failed. Please try again.",
+        text: formatFetchError(err, lang),
       })
     } finally {
       setRefreshing(false)
@@ -474,14 +469,18 @@ export function StaffWorkspace({
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-2.5">
+      <header
+        className={`sticky top-2 z-40 mx-3 max-w-[1440px] border border-border bg-background/95 shadow-lg backdrop-blur-xl transition-all md:top-0 md:mx-auto md:rounded-none md:border-x-0 md:border-t-0 md:shadow-none ${
+          staffMobileMenuOpen ? "rounded-3xl" : "rounded-full"
+        }`}
+      >
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2">
             <Activity aria-hidden="true" className="size-5 shrink-0" />
             <span className="truncate font-display text-sm font-semibold tracking-tight sm:text-base">
               {lang === "th" ? "ระบบงานเจ้าหน้าที่วิเคราะห์นโยบาย" : "NorthRisk Staff Analytics"}
             </span>
-            <span className="hidden rounded-full border border-border px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground sm:inline-flex">
+            <span className="hidden rounded-full border border-border px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline-flex">
               {auth.username === "demo_analyst" && lang === "th"
                 ? "เจ้าหน้าที่วิเคราะห์นโยบาย"
                 : auth.username}
@@ -490,7 +489,7 @@ export function StaffWorkspace({
 
           <nav
             aria-label={lang === "th" ? "เมนูมุมมองเจ้าหน้าที่" : "Staff portal views"}
-            className="order-3 flex w-full items-center gap-1 overflow-x-auto md:order-none md:w-auto"
+            className="hidden items-center gap-1 md:flex"
           >
             <button
               type="button"
@@ -563,13 +562,98 @@ export function StaffWorkspace({
             <button
               type="button"
               onClick={onExit}
-              className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className="hidden shrink-0 items-center gap-2 rounded-full border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:inline-flex"
             >
               <span className="size-1.5 rounded-full bg-emerald-600" aria-hidden="true" />
               <span>{lang === "th" ? "ออกจากโหมดเจ้าหน้าที่" : "Exit Staff View"}</span>
             </button>
+
+            <button
+              type="button"
+              aria-expanded={staffMobileMenuOpen}
+              aria-label={staffMobileMenuOpen ? "Close staff menu" : "Open staff menu"}
+              onClick={() => setStaffMobileMenuOpen((prev) => !prev)}
+              className="flex size-9 items-center justify-center rounded-full border border-border bg-background text-foreground transition-colors hover:bg-secondary md:hidden"
+            >
+              {staffMobileMenuOpen ? (
+                <X aria-hidden="true" className="size-4" />
+              ) : (
+                <Menu aria-hidden="true" className="size-4" />
+              )}
+            </button>
           </div>
         </div>
+
+        {/* Mobile Hamburger Navigation Drawer for Staff Portal */}
+        {staffMobileMenuOpen && (
+          <nav
+            aria-label={lang === "th" ? "เมนูนำทางเจ้าหน้าที่บนมือถือ" : "Staff mobile navigation"}
+            className="flex flex-col gap-1 border-t border-border px-4 pb-4 pt-2.5 md:hidden"
+          >
+            {(
+              [
+                {
+                  id: "overview",
+                  th: "ภาพรวมเศรษฐกิจและติดตามนโยบาย",
+                  en: "Policy Overview & Watchlist",
+                },
+                {
+                  id: "modeling",
+                  th: "จำลองความเสี่ยงและจัดกลุ่มจังหวัด",
+                  en: "Risk Simulation & Clustering Lab",
+                },
+                {
+                  id: "health",
+                  th: "คุณภาพและฐานข้อมูล",
+                  en: "Data Health",
+                },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(item.id)
+                  setStaffMobileMenuOpen(false)
+                }}
+                className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-sm font-medium transition-colors ${
+                  activeTab === item.id
+                    ? "bg-foreground text-background"
+                    : "text-foreground hover:bg-secondary"
+                }`}
+              >
+                <span>{lang === "th" ? item.th : item.en}</span>
+                {activeTab === item.id && <Check aria-hidden="true" className="size-4" />}
+              </button>
+            ))}
+
+            <div className="mt-2 flex flex-col gap-1.5 border-t border-border/70 pt-2.5">
+              <button
+                type="button"
+                onClick={openBriefDialog}
+                className="flex items-center justify-between rounded-xl border border-border bg-secondary/45 px-3.5 py-2.5 text-left text-xs font-semibold text-foreground"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Download aria-hidden="true" className="size-3.5" />
+                  {lang === "th" ? "เปิดรายงานสรุปเชิงนโยบาย (1 หน้า)" : "Open 1-Page Policy Brief"}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffMobileMenuOpen(false)
+                  onExit()
+                }}
+                className="flex items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="size-1.5 rounded-full bg-emerald-600" aria-hidden="true" />
+                  {lang === "th" ? "กลับหน้าสาธารณะ / ออกจากโหมดเจ้าหน้าที่" : "Return to Public View / Exit Staff"}
+                </span>
+              </button>
+            </div>
+          </nav>
+        )}
       </header>
 
       <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -622,6 +706,7 @@ export function StaffWorkspace({
             selectedCode={selectedProvinceCode}
             detail={detail}
             detailError={detailError}
+            onRetryDetail={() => void loadProvinceDetailData(selectedProvinceCode)}
             months={months}
             refreshing={refreshing}
             onSelectCode={setSelectedProvinceCode}
@@ -811,10 +896,18 @@ export function StaffWorkspace({
                             {w.occupancy_pct}%
                           </td>
                           <td className="whitespace-nowrap px-2.5 py-2.5 text-right align-top tabular-nums">
-                            {w.dti_sme} {lang === "th" ? "เท่า" : "x"}
+                            {w.dti_sme != null
+                              ? `${w.dti_sme} ${lang === "th" ? "เท่า" : "x"}`
+                              : lang === "th"
+                                ? "ไม่มีข้อมูล"
+                                : "N/A"}
                           </td>
                           <td className="whitespace-nowrap px-2.5 py-2.5 text-right align-top font-semibold tabular-nums">
-                            {w.cash_cushion_sme.toFixed(0)}%
+                            {w.cash_cushion_sme != null
+                              ? `${w.cash_cushion_sme.toFixed(0)}%`
+                              : lang === "th"
+                                ? "ไม่มีข้อมูล"
+                                : "N/A"}
                           </td>
                           <td className="px-3 py-2.5 align-top leading-5 text-muted-foreground">{w.risk_reason}</td>
                           <td className="px-3 py-2.5 align-top leading-5 text-foreground">{w.recommended_action}</td>
@@ -911,6 +1004,7 @@ function PolicyOverviewPage({
   selectedCode,
   detail,
   detailError,
+  onRetryDetail,
   months,
   refreshing,
   onSelectCode,
@@ -924,6 +1018,7 @@ function PolicyOverviewPage({
   selectedCode: string
   detail: ProvinceDetailResponse | null
   detailError: string | null
+  onRetryDetail: () => void
   months: number
   refreshing: boolean
   onSelectCode: (code: string) => void
@@ -942,6 +1037,7 @@ function PolicyOverviewPage({
 
   const [provinceSearch, setProvinceSearch] = useState("")
   const [showAllWatchlist, setShowAllWatchlist] = useState(false)
+  const [showAllDistMobile, setShowAllDistMobile] = useState(false)
   const [distMetric, setDistMetric] = useState<"margin" | "debt" | "occupancy">("margin")
 
   // Deduplicated horizon options
@@ -1010,7 +1106,7 @@ function PolicyOverviewPage({
             ? p.cash_margin_pct
             : distMetric === "debt"
               ? p.sme_debt_ratio
-              : p.avg_occupancy_rate
+              : (p.latest_occupancy_rate ?? p.avg_occupancy_rate)
         return val != null && Number.isFinite(val) ? { ...p, metricValue: val } : null
       })
       .filter((r): r is RankedProvince & { metricValue: number } => r !== null)
@@ -1293,10 +1389,10 @@ function PolicyOverviewPage({
                 </div>
                 <div className="rounded-xl border border-border bg-background px-2.5 py-2">
                   <span className="block text-[11px] text-muted-foreground">
-                    {lang === "th" ? "อัตราเข้าพัก" : "Occupancy"}
+                    {lang === "th" ? "เข้าพักล่าสุด" : "Latest Occ."}
                   </span>
                   <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
-                    {selectedRanked.avg_occupancy_rate.toFixed(0)}%
+                    {(selectedRanked.latest_occupancy_rate ?? selectedRanked.avg_occupancy_rate).toFixed(1)}%
                   </span>
                 </div>
               </div>
@@ -1327,15 +1423,15 @@ function PolicyOverviewPage({
                       align="left"
                       text={
                         lang === "th"
-                          ? "คำนวณด้วยสูตรเดียวกับรายงานสรุป: ความเปราะบางด้านหนี้และท่องเที่ยว 38% + แรงกระแทกภายนอก 32% + เงินเหลือหลังหักรายจ่ายตึงตัว 15% + ภาระหนี้ SME 15%"
-                          : "Unified with Policy Brief: 38% exposure + 32% external shock + 15% tight cash margin + 15% SME debt ratio."
+                          ? "ใช้สูตรเดียวกับแผนที่หน้าสาธารณะและรายงานสรุป (Single Source of Truth): สภาพคล่องและภาระหนี้ 55% + อัตราเข้าพักและโครงสร้างท่องเที่ยว 25% + แรงกระแทกภัยพิบัติและข่าวภาคสนาม 20%"
+                          : "Unified with Public Map & Policy Brief (Single Source of Truth): 55% cashflow & debt tightness + 25% tourism demand exposure + 20% hazard & verified field news."
                       }
                     />
                   </h2>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {lang === "th"
-                      ? "เรียงตามความเปราะบาง ภาระหนี้ และแรงกระแทกภายนอก"
-                      : "Ranked by exposure, SME debt, cash margin, and external shock"}
+                      ? "เรียงตามระดับความเปราะบางทางการเงินและภัยพิบัติ"
+                      : "Ranked by unified vulnerability tier & score (synced with Public Map)"}
                   </p>
                 </div>
                 <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-semibold text-foreground">
@@ -1410,13 +1506,17 @@ function PolicyOverviewPage({
                       >
                         <span className="block font-medium">
                           {lang === "th"
-                            ? `เข้าพัก ${p.avg_occupancy_rate.toFixed(0)}%`
-                            : `Occ ${p.avg_occupancy_rate.toFixed(0)}%`}
+                            ? `เข้าพัก ${(p.latest_occupancy_rate ?? p.avg_occupancy_rate).toFixed(1)}%`
+                            : `Occ ${(p.latest_occupancy_rate ?? p.avg_occupancy_rate).toFixed(1)}%`}
                         </span>
                         <span className="block">
-                          {lang === "th"
-                            ? `แรงกระแทก ${p.shock_intensity != null ? p.shock_intensity.toFixed(0) : "—"}`
-                            : `Shock ${p.shock_intensity != null ? p.shock_intensity.toFixed(0) : "—"}`}
+                          {p.tier_short_th
+                            ? lang === "th"
+                              ? `${p.tier_short_th} · ${p.vulnerability_score != null ? `${p.vulnerability_score.toFixed(0)}/100` : "—"}`
+                              : `${p.tier_short_en} · ${p.vulnerability_score != null ? `${p.vulnerability_score.toFixed(0)}/100` : "—"}`
+                            : lang === "th"
+                              ? `แรงกระแทก ${p.shock_intensity != null ? p.shock_intensity.toFixed(0) : "—"}`
+                              : `Shock ${p.shock_intensity != null ? p.shock_intensity.toFixed(0) : "—"}`}
                         </span>
                       </span>
                     </button>
@@ -1515,13 +1615,13 @@ function PolicyOverviewPage({
                 <div>
                   <h2 className="text-sm font-semibold">
                     {lang === "th"
-                      ? "สถิติการประเมินภาระหนี้จากหน้าสาธารณะ (ไม่ระบุตัวตน)"
-                      : "Anonymized Public Debt-Check Activity"}
+                      ? "สถิติคำขอจำลองภาระหนี้จากหน้าสาธารณะ (นับตามจำนวนคำขอ ไม่ระบุตัวตน)"
+                      : "Anonymized Public Simulation Request Counts"}
                   </h2>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {lang === "th"
-                      ? `ยอดกดประเมินสะสม ${demand?.total_checks ?? 0} ครั้ง (สรุประดับจังหวัด ไม่มีข้อมูลส่วนบุคคล)`
-                      : `${demand?.total_checks ?? 0} aggregate checks (provincial totals with zero personal data)`}
+                      ? `จำนวนคำขอจำลองสะสม ${demand?.total_checks ?? 0} ครั้ง (นับจำนวนคำขอที่ส่งเข้ามา ไม่ใช่จำนวนผู้ใช้งานที่ไม่ซ้ำหรือตัวแทนความต้องการเชิงประชากร)`
+                      : `${demand?.total_checks ?? 0} simulation requests logged (counts total requests, not unique individuals or population demand)`}
                   </p>
                 </div>
                 <Gauge aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -1593,8 +1693,8 @@ function PolicyOverviewPage({
                           ? "การกระจายตัวของภาระหนี้ SME ต่อรายได้ต่อปี (เท่า)"
                           : "Distribution of SME Debt to Annual Income (x)"
                         : lang === "th"
-                          ? "การกระจายตัวของอัตราเข้าพักเฉลี่ยรายจังหวัด (%)"
-                          : "Distribution of Provincial Average Occupancy (%)"}
+                          ? "การกระจายตัวของอัตราเข้าพักล่าสุดรายจังหวัด (%)"
+                          : "Distribution of Latest Monthly Provincial Occupancy (%)"}
                   </h2>
                 </div>
 
@@ -1617,7 +1717,7 @@ function PolicyOverviewPage({
                       },
                       {
                         id: "occupancy",
-                        label: lang === "th" ? "อัตราเข้าพักเฉลี่ย (%)" : "Occupancy (%)",
+                        label: lang === "th" ? "อัตราเข้าพักล่าสุด (%)" : "Latest Occupancy (%)",
                       },
                     ] as const
                   ).map((tab) => (
@@ -1788,8 +1888,9 @@ function PolicyOverviewPage({
                 </div>
 
                 <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-                  {distributionStats.rows.map((r) => {
+                  {distributionStats.rows.map((r, idx) => {
                     const isSelected = r.province_code === selectedCode
+                    const hiddenOnMobile = !showAllDistMobile && idx >= 6 && !isSelected
                     const pct = Math.min(
                       100,
                       Math.max(4, (r.metricValue / distributionStats.maxScale) * 100),
@@ -1822,7 +1923,9 @@ function PolicyOverviewPage({
                         key={r.province_code}
                         type="button"
                         onClick={() => onSelectCode(r.province_code)}
-                        className={`group flex flex-col gap-1 rounded-xl border px-3 py-2 text-left transition-all ${
+                        className={`${
+                          hiddenOnMobile ? "hidden sm:flex" : "flex"
+                        } group flex-col gap-1 rounded-xl border px-3 py-2 text-left transition-all ${
                           isSelected
                             ? "border-foreground bg-secondary/80 ring-1 ring-foreground"
                             : "border-border/70 bg-background hover:border-foreground/40 hover:bg-secondary/40"
@@ -1870,6 +1973,27 @@ function PolicyOverviewPage({
                     )
                   })}
                 </div>
+                {distributionStats.rows.length > 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllDistMobile((prev) => !prev)}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary/40 py-2 text-xs font-medium text-foreground transition-colors hover:bg-secondary sm:hidden"
+                  >
+                    <span>
+                      {showAllDistMobile
+                        ? lang === "th"
+                          ? "ย่อเหลือ 6 จังหวัดแรก"
+                          : "Show top 6 only"
+                        : lang === "th"
+                          ? `ดูครบทั้ง ${distributionStats.rows.length} จังหวัด`
+                          : `Show all ${distributionStats.rows.length} provinces`}
+                    </span>
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`size-3.5 transition-transform ${showAllDistMobile ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                )}
                 {distributionStats.missingCount > 0 && (
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     {lang === "th"
@@ -1944,8 +2068,16 @@ function PolicyOverviewPage({
               </span>
             </div>
             {detailError ? (
-              <div className="mt-3 flex h-[240px] items-center justify-center rounded-xl border border-destructive/25 bg-destructive/5 px-4 text-center text-xs text-destructive">
-                {detailError}
+              <div className="mt-3 flex h-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-4 text-center text-xs text-destructive">
+                <p className="max-w-md leading-5">{detailError}</p>
+                <button
+                  type="button"
+                  onClick={onRetryDetail}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-destructive/30 bg-background px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                >
+                  <RefreshCw aria-hidden="true" className="size-3" />
+                  {lang === "th" ? "ลองโหลดข้อมูลใหม่" : "Retry Loading"}
+                </button>
               </div>
             ) : detail ? (
               <ProvinceHistoryChart series={detail.monthly_series} months={months} lang={lang} />
@@ -1973,7 +2105,17 @@ function PolicyOverviewPage({
             </div>
 
             {detailError ? (
-              <p className="mt-4 text-xs text-destructive">{detailError}</p>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/25 bg-destructive/5 px-3.5 py-2.5 text-xs text-destructive">
+                <span>{detailError}</span>
+                <button
+                  type="button"
+                  onClick={onRetryDetail}
+                  className="inline-flex h-7 items-center gap-1 rounded-full border border-destructive/30 bg-background px-3 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
+                >
+                  <RefreshCw aria-hidden="true" className="size-3" />
+                  {lang === "th" ? "ลองใหม่" : "Retry"}
+                </button>
+              </div>
             ) : !detail ? (
               <p className="mt-4 text-xs text-muted-foreground">
                 {lang === "th"
@@ -2115,13 +2257,7 @@ function RiskModelingAndClusteringPage({
           onUnauthorized()
           return
         }
-        setMcError(
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ไม่สามารถประมวลผลการจำลองมอนติคาร์โลได้"
-              : "Failed to run Monte Carlo simulation",
-        )
+        setMcError(formatFetchError(err, lang))
       } finally {
         if (mcAbortRef.current === controller) {
           setMcLoading(false)
@@ -2168,13 +2304,7 @@ function RiskModelingAndClusteringPage({
           onUnauthorized()
           return
         }
-        setClusterError(
-          err instanceof Error
-            ? err.message
-            : lang === "th"
-              ? "ไม่สามารถคำนวณการจัดกลุ่มจังหวัดได้"
-              : "Failed to run provincial clustering",
-        )
+        setClusterError(formatFetchError(err, lang))
       } finally {
         if (clusterAbortRef.current === controller) {
           setClusterLoading(false)
@@ -2234,96 +2364,168 @@ function RiskModelingAndClusteringPage({
         </p>
       </div>
 
-      {/* Section 1: Empirical Bootstrap Monte Carlo */}
+      {/* Section 1 Empirical Bootstrap Monte Carlo */}
       <section className="rounded-3xl border border-border bg-card p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
-          <div className="max-w-2xl">
+        <div className="space-y-4 border-b border-border pb-5">
+          <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-foreground">
               <Sparkles aria-hidden="true" className="size-3.5" />
               {lang === "th"
                 ? `โมเดลที่ 1 · มอนติคาร์โลแบบสุ่มซ้ำจากข้อมูลจริง / Empirical Bootstrap (${nSimulations.toLocaleString()} รอบ${mcData?.compute_ms != null ? ` · ${mcData.compute_ms} มิลลิวินาที` : ""})`
                 : `Model 1 · Empirical Bootstrap Monte Carlo (${nSimulations.toLocaleString()} draws${mcData?.compute_ms != null ? ` · ${mcData.compute_ms} ms` : ""})`}
             </span>
-            <h2 className="mt-2 font-display text-xl font-semibold text-foreground">
+            <h2 className="mt-2.5 font-display text-xl font-semibold text-foreground">
               {lang === "th"
-                ? "ประเมินโอกาสขาดสภาพคล่องรายจังหวัดและมูลค่าความเสี่ยงรายได้ (VaR / CVaR)"
-                : "Regional Revenue Value at Risk & Provincial Cashflow Deficit Probability"}
+                ? "สัดส่วนรอบจำลองที่ขาดดุลรายจังหวัดและมูลค่าความเสี่ยงรายได้ (VaR / CVaR)"
+                : "Regional Revenue Value at Risk & Simulated Deficit Iteration Ratio"}
             </h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            <p className="mt-1.5 max-w-5xl text-xs leading-6 text-muted-foreground sm:text-[13px]">
               {lang === "th"
-                ? `สุ่มซ้ำแบบ Bootstrap จากประวัติรายได้จริงในฐานข้อมูล${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} เดือน${mcData?.data_range_start && mcData?.data_range_end ? ` · ${formatThaiMonth(mcData.data_range_start, lang)} ถึง ${formatThaiMonth(mcData.data_range_end, lang)}` : ""})` : ""} ร่วมกับสัดส่วนรายจ่ายผู้ประกอบการ ปรับจำนวนรอบจำลองได้เอง (ยิ่งสุ่มมากความคลาดเคลื่อนเชิงสถิติยิ่งลดลง)`
-                : `Bootstraps real database revenue history${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} months)` : ""} paired with NSO expense ratios. Draw count is configurable (higher draws reduce quantile standard error).`}
+                ? `จำลองด้วยวิธี Regional Contiguous Block Bootstrap จากประวัติรายได้จริงในฐานข้อมูล${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} เดือน${mcData?.data_range_start && mcData?.data_range_end ? ` · ${formatThaiMonth(mcData.data_range_start, lang)} ถึง ${formatThaiMonth(mcData.data_range_end, lang)}` : ""})` : ""} โดยสุ่มช่วงเดือนต่อเนื่องชุดเดียวกันพร้อมกันทั้ง 17 จังหวัดเพื่อรักษาฤดูกาลและความสัมพันธ์ของแรงกระแทกข้ามจังหวัด ภายใต้โครงสร้างต้นทุนคงที่ 70% ผันแปร 30% จากสัดส่วนรายจ่าย สสช. (ผลลัพธ์คือสัดส่วนรอบจำลองที่ขาดดุลระดับพื้นที่ ไม่ใช่ความน่าจะเป็นผิดนัดชำระหนี้ของธุรกิจรายบุคคล)`
+                : `Uses Regional Contiguous Block Bootstrap over real database revenue history${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} months)` : ""}, drawing shared multi-month blocks across all 17 provinces simultaneously to preserve calendar seasonality and cross-province tail co-movement under observed NSO expense ratios (70% fixed / 30% variable). Reports simulated deficit ratios for regional surveillance, not calibrated firm default probability.`}
             </p>
+            {/* Mobile collapsible reading guide vs Desktop 3-column guide */}
+            <details className="mt-3 rounded-2xl border border-border/80 bg-secondary/35 p-3 text-xs leading-6 text-muted-foreground md:hidden">
+              <summary className="cursor-pointer font-semibold text-foreground">
+                {lang === "th"
+                  ? "วิธีอ่านผลจำลองมอนติคาร์โล (แตะเพื่อดูสรุป 3 ข้อ)"
+                  : "How to read Monte Carlo results (3 key points)"}
+              </summary>
+              <div className="mt-2 space-y-2 border-t border-border/70 pt-2">
+                <div>
+                  <strong className="font-semibold text-foreground">
+                    {lang === "th" ? "1. สิ่งที่จำลอง:" : "1. What is simulated:"}
+                  </strong>{" "}
+                  {lang === "th"
+                    ? "สุ่มช่วงเหตุการณ์ย้อนหลังซ้ำตามจำนวนรอบที่เลือก เพื่อทดสอบว่ารายได้ภาคเหนือจะหดตัวต่ำกว่าฐานฤดูกาลเท่าไรเมื่อรวมต้นทุนเพิ่มและข่าววิกฤต"
+                    : "Replays historical multi-month regional shock blocks to stress-test seasonal revenue shortfalls under added cost pressure and severe news events."}
+                </div>
+                <div>
+                  <strong className="font-semibold text-foreground">
+                    {lang === "th" ? "2. สิ่งที่เห็นในระดับภาค (VaR / CVaR):" : "2. Regional tail risk (VaR / CVaR):"}
+                  </strong>{" "}
+                  {lang === "th"
+                    ? "ขนาดรายได้ที่อาจหายไปในกลุ่มกรณีเลวร้าย 5% ท้ายสุด (แท่งสีแดง) เพื่อช่วยกะขนาดวงเงินพยุงสภาพคล่องระดับภูมิภาค"
+                    : "Magnitude of gross revenue shortfall in the worst 5% correlated tail (red bars) to help size regional emergency liquidity buffers."}
+                </div>
+                <div>
+                  <strong className="font-semibold text-foreground">
+                    {lang === "th" ? "3. สิ่งที่เห็นรายจังหวัด:" : "3. Provincial prioritization:"}
+                  </strong>{" "}
+                  {lang === "th"
+                    ? "ชี้เป้าว่าจังหวัดใดมีเงินเหลือเดิมบางและเสี่ยงขาดดุลก่อนเพื่อน เพื่อจัดลำดับลงพื้นที่และเตรียมมาตรการเชิงป้องกันได้ตรงจุด"
+                    : "Highlights which provinces have thin NSO cash cushions and hit deficit first so field teams can prioritize proactive intervention."}
+                </div>
+              </div>
+            </details>
+
+            <div className="mt-3 hidden gap-3 rounded-2xl border border-border/80 bg-secondary/35 p-3.5 text-xs leading-6 text-muted-foreground md:grid md:grid-cols-3">
+              <div>
+                <strong className="font-semibold text-foreground">
+                  {lang === "th" ? "1. สิ่งที่จำลอง:" : "1. What is simulated:"}
+                </strong>{" "}
+                {lang === "th"
+                  ? "สุ่มช่วงเหตุการณ์ย้อนหลังซ้ำตามจำนวนรอบที่เลือก เพื่อทดสอบว่ารายได้ภาคเหนือจะหดตัวต่ำกว่าฐานฤดูกาลเท่าไรเมื่อรวมต้นทุนเพิ่มและข่าววิกฤต"
+                  : "Replays historical multi-month regional shock blocks to stress-test seasonal revenue shortfalls under added cost pressure and severe news events."}
+              </div>
+              <div>
+                <strong className="font-semibold text-foreground">
+                  {lang === "th" ? "2. สิ่งที่เห็นในระดับภาค (VaR / CVaR):" : "2. Regional tail risk (VaR / CVaR):"}
+                </strong>{" "}
+                {lang === "th"
+                  ? "ขนาดรายได้ที่อาจหายไปในกลุ่มกรณีเลวร้าย 5% ท้ายสุด (แท่งสีแดง) เพื่อช่วยกะขนาดวงเงินพยุงสภาพคล่องระดับภูมิภาค"
+                  : "Magnitude of gross revenue shortfall in the worst 5% correlated tail (red bars) to help size regional emergency liquidity buffers."}
+              </div>
+              <div>
+                <strong className="font-semibold text-foreground">
+                  {lang === "th" ? "3. สิ่งที่เห็นรายจังหวัด:" : "3. Provincial prioritization:"}
+                </strong>{" "}
+                {lang === "th"
+                  ? "ชี้เป้าว่าจังหวัดใดมีเงินเหลือเดิมบางและเสี่ยงขาดดุลก่อนเพื่อน เพื่อจัดลำดับลงพื้นที่และเตรียมมาตรการเชิงป้องกันได้ตรงจุด"
+                  : "Highlights which provinces have thin NSO cash cushions and hit deficit first so field teams can prioritize proactive intervention."}
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs">
-              <span className="text-muted-foreground">{lang === "th" ? "จำนวนรอบ:" : "Draws:"}</span>
-              {[1000, 3000, 5000].map((draws) => (
-                <button
-                  key={draws}
-                  type="button"
-                  aria-pressed={nSimulations === draws}
-                  onClick={() => {
-                    setNSimulations(draws)
-                    void executeMonteCarlo(horizonMonths, costShockPct, includeNewsRegime, draws)
-                  }}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    nSimulations === draws
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {draws.toLocaleString()}
-                </button>
-              ))}
+          <div className="grid grid-cols-1 gap-2 rounded-2xl border border-border bg-secondary/25 p-3 md:flex md:flex-wrap md:items-center md:rounded-none md:border-0 md:bg-transparent md:p-0">
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs md:justify-start md:gap-1.5 md:rounded-full">
+              <span className="shrink-0 font-medium text-muted-foreground md:font-normal">
+                {lang === "th" ? "จำนวนรอบ:" : "Draws:"}
+              </span>
+              <div className="grid flex-1 grid-cols-3 gap-1 md:flex md:flex-none md:items-center md:gap-1.5">
+                {[1000, 3000, 5000].map((draws) => (
+                  <button
+                    key={draws}
+                    type="button"
+                    aria-pressed={nSimulations === draws}
+                    onClick={() => {
+                      setNSimulations(draws)
+                      void executeMonteCarlo(horizonMonths, costShockPct, includeNewsRegime, draws)
+                    }}
+                    className={`rounded-lg px-2 py-1 text-center text-xs font-medium md:rounded-full md:px-2.5 md:py-0.5 ${
+                      nSimulations === draws
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {draws.toLocaleString()}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs">
-              <span className="text-muted-foreground">{lang === "th" ? "ระยะเวลา:" : "Horizon:"}</span>
-              {[1, 3, 6].map((h) => (
-                <button
-                  key={h}
-                  type="button"
-                  aria-pressed={horizonMonths === h}
-                  onClick={() => {
-                    setHorizonMonths(h)
-                    void executeMonteCarlo(h, costShockPct, includeNewsRegime, nSimulations)
-                  }}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    horizonMonths === h
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {h} {lang === "th" ? "เดือน" : "mo"}
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs md:justify-start md:gap-1.5 md:rounded-full">
+              <span className="shrink-0 font-medium text-muted-foreground md:font-normal">
+                {lang === "th" ? "ระยะเวลา:" : "Horizon:"}
+              </span>
+              <div className="grid flex-1 grid-cols-3 gap-1 md:flex md:flex-none md:items-center md:gap-1.5">
+                {[1, 3, 6].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    aria-pressed={horizonMonths === h}
+                    onClick={() => {
+                      setHorizonMonths(h)
+                      void executeMonteCarlo(h, costShockPct, includeNewsRegime, nSimulations)
+                    }}
+                    className={`rounded-lg px-2 py-1 text-center text-xs font-medium md:rounded-full md:px-2.5 md:py-0.5 ${
+                      horizonMonths === h
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {h} {lang === "th" ? "เดือน" : "mo"}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs">
-              <span className="text-muted-foreground">{lang === "th" ? "ต้นทุนเพิ่ม:" : "Cost shock:"}</span>
-              {[0, 5, 10, 15].map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  aria-pressed={costShockPct === c}
-                  onClick={() => {
-                    setCostShockPct(c)
-                    void executeMonteCarlo(horizonMonths, c, includeNewsRegime, nSimulations)
-                  }}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    costShockPct === c
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  +{c}%
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs md:justify-start md:gap-1.5 md:rounded-full">
+              <span className="shrink-0 font-medium text-muted-foreground md:font-normal">
+                {lang === "th" ? "ต้นทุนเพิ่ม:" : "Cost shock:"}
+              </span>
+              <div className="grid flex-1 grid-cols-4 gap-1 md:flex md:flex-none md:items-center md:gap-1.5">
+                {[0, 5, 10, 15].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-pressed={costShockPct === c}
+                    onClick={() => {
+                      setCostShockPct(c)
+                      void executeMonteCarlo(horizonMonths, c, includeNewsRegime, nSimulations)
+                    }}
+                    className={`rounded-lg px-1.5 py-1 text-center text-xs font-medium md:rounded-full md:px-2.5 md:py-0.5 ${
+                      costShockPct === c
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    +{c}%
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Stable label + explicit ON/OFF pill + aria-pressed */}
             <button
               type="button"
               aria-pressed={includeNewsRegime}
@@ -2332,16 +2534,18 @@ function RiskModelingAndClusteringPage({
                 setIncludeNewsRegime(next)
                 void executeMonteCarlo(horizonMonths, costShockPct, next, nSimulations)
               }}
-              className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3.5 py-2 text-xs font-medium transition-colors md:inline-flex md:w-auto md:justify-start md:rounded-full md:py-1.5 ${
                 includeNewsRegime
                   ? "border-amber-600/40 bg-amber-500/15 text-amber-950 dark:text-amber-200"
                   : "border-border bg-background text-muted-foreground"
               }`}
             >
-              <AlertTriangle aria-hidden="true" className="size-3.5" />
-              <span>{lang === "th" ? "รวมผลข่าวเหตุการณ์รุนแรง" : "Include Severe News Events"}</span>
+              <span className="inline-flex items-center gap-2">
+                <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+                <span>{lang === "th" ? "รวมผลข่าวเหตุการณ์รุนแรง" : "Include Severe News Events"}</span>
+              </span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
                   includeNewsRegime
                     ? "bg-amber-700 text-white"
                     : "bg-secondary text-muted-foreground"
@@ -2381,108 +2585,150 @@ function RiskModelingAndClusteringPage({
             </span>
           </div>
         ) : mcData ? (
-          <div className={`relative transition-opacity ${mcLoading ? "opacity-55" : "opacity-100"}`}>
-            {mcLoading && (
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-foreground">
-                <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-                <span>
-                  {lang === "th"
-                    ? "กำลังคำนวณรอบจำลองใหม่ตามพารามิเตอร์ที่เลือก…"
-                    : "Recalculating simulation with updated parameters…"}
-                </span>
+          <div className={`relative transition-opacity ${mcLoading ? "opacity-70" : "opacity-100"}`}>
+            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4">
+              <div className="flex flex-col justify-between rounded-2xl border border-border bg-secondary/35 p-3 sm:p-4">
+                <p className="text-[11px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                  <span className="sm:hidden">
+                    {lang === "th" ? "รายได้หดตัวเฉลี่ย" : "Avg Shortfall"}
+                  </span>
+                  <span className="hidden sm:inline">
+                    {lang === "th"
+                      ? "รายได้ที่หดตัวเฉลี่ยเทียบฐานฤดูกาล (Revenue Shortfall)"
+                      : "Expected Monthly Revenue Shortfall (vs Seasonal Base)"}
+                  </span>
+                </p>
+                <div className="mt-1.5 sm:mt-2">
+                  <p className="font-display text-lg font-semibold tabular-nums text-foreground sm:text-2xl">
+                    {(
+                      mcData.regional_metrics.expected_monthly_shortfall_mthb ??
+                      mcData.regional_metrics.expected_monthly_loss_mthb
+                    ).toLocaleString()}{" "}
+                    <span className="text-xs font-medium sm:text-xl">
+                      {lang === "th" ? "ล้านบาท" : "M THB"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                    {lang === "th"
+                      ? `มัธยฐาน ${(mcData.regional_metrics.median_monthly_shortfall_mthb ?? mcData.regional_metrics.median_monthly_loss_mthb).toLocaleString()} ลบ.${mcData.regional_metrics.expected_operating_deficit_mthb != null ? ` · ขาดดุล ${mcData.regional_metrics.expected_operating_deficit_mthb.toLocaleString()} ลบ.` : ""}`
+                      : `Median ${(mcData.regional_metrics.median_monthly_shortfall_mthb ?? mcData.regional_metrics.median_monthly_loss_mthb).toLocaleString()} M${mcData.regional_metrics.expected_operating_deficit_mthb != null ? ` · Net deficit ${mcData.regional_metrics.expected_operating_deficit_mthb.toLocaleString()} M` : ""}`}
+                  </p>
+                </div>
               </div>
-            )}
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-border bg-secondary/35 p-4">
-                <p className="text-xs text-muted-foreground">
-                  {lang === "th" ? "ความสูญเสียรายได้เฉลี่ยต่อเดือน" : "Expected Monthly Revenue Loss"}
-                </p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-foreground">
-                  {mcData.regional_metrics.expected_monthly_loss_mthb.toLocaleString()}{" "}
-                  {lang === "th" ? "ล้านบาท" : "M THB"}
-                </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {lang === "th"
-                    ? `ค่ามัธยฐาน ${mcData.regional_metrics.median_monthly_loss_mthb.toLocaleString()} ล้านบาท/เดือน`
-                    : `Median ${mcData.regional_metrics.median_monthly_loss_mthb.toLocaleString()} M THB/mo`}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-amber-600/30 bg-amber-500/5 p-4">
-                <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
-                  {lang === "th"
-                    ? "ความเสียหายขั้นต่ำกรณีเลวร้าย 5% (VaR 95%)"
-                    : "95% Value at Risk (VaR 95%)"}
+              <div className="flex flex-col justify-between rounded-2xl border border-amber-600/30 bg-amber-500/5 p-3 sm:p-4">
+                <div className="flex items-start justify-between gap-1">
+                  <p className="text-[11px] font-medium leading-4 text-amber-900 dark:text-amber-300 sm:text-xs sm:leading-5">
+                    <span className="sm:hidden">
+                      {lang === "th" ? "ขั้นต่ำ 5% ท้าย (VaR 95%)" : "VaR 95% Shortfall"}
+                    </span>
+                    <span className="hidden sm:inline">
+                      {lang === "th"
+                        ? "รายได้หดตัวขั้นต่ำกรณีเลวร้าย 5% (VaR 95%)"
+                        : "95% Revenue Shortfall VaR (vs Seasonal Base)"}
+                    </span>
+                  </p>
                   <InfoTooltip
+                    align="right"
                     text={
                       lang === "th"
-                        ? "VaR 95% ไม่ใช่ความเสียหายสูงสุด แต่คือระดับความเสียหายขั้นต่ำที่ 5% ของกรณีเลวร้ายที่สุดจะเกินกว่านี้ (โอกาสเกิด 1 ใน 20)"
-                        : "VaR 95% is not a maximum cap; it is the loss threshold exceeded in the worst 5% of scenarios."
+                        ? "วัดเฉพาะรายได้ที่ลดลงต่ำกว่าฐานฤดูกาล (Revenue Shortfall) ไม่ใช่ขาดทุนสุทธิทางบัญชี คำนวณด้วย Regional Block Bootstrap ที่รักษาฤดูกาลและความสัมพันธ์ข้ามจังหวัด"
+                        : "Measures gross revenue shortfall below seasonal baseline (distinct from net accounting loss) using a regional contiguous block bootstrap."
                     }
                   />
-                </p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-amber-900 dark:text-amber-300">
-                  {mcData.regional_metrics.var95_monthly_loss_mthb.toLocaleString()}{" "}
-                  {lang === "th" ? "ล้านบาท" : "M THB"}
-                </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {lang === "th"
-                    ? "ระดับความเสียหายที่จะถูกเกินในกรณีเลวร้าย 5% ท้ายสุด"
-                    : "Loss threshold exceeded in the worst 5% of monthly draws"}
-                </p>
+                </div>
+                <div className="mt-1.5 sm:mt-2">
+                  <p className="font-display text-lg font-semibold tabular-nums text-amber-900 dark:text-amber-300 sm:text-2xl">
+                    {(
+                      mcData.regional_metrics.var95_monthly_shortfall_mthb ??
+                      mcData.regional_metrics.var95_monthly_loss_mthb
+                    ).toLocaleString()}{" "}
+                    <span className="text-xs font-medium sm:text-xl">
+                      {lang === "th" ? "ล้านบาท" : "M THB"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                    {lang === "th"
+                      ? "ระดับรายได้หดตัวในกรณีเลวร้าย 5% ท้ายสุด"
+                      : "Gross revenue shortfall threshold in worst 5% blocks"}
+                  </p>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-red-600/30 bg-red-500/5 p-4">
-                <p className="text-xs font-medium text-red-900 dark:text-red-300">
-                  {lang === "th"
-                    ? "ความสูญเสียเฉลี่ยในกรณีเลวร้าย 5% ท้ายสุด (CVaR 95%)"
-                    : "95% Expected Shortfall (CVaR 95%)"}
+              <div className="flex flex-col justify-between rounded-2xl border border-red-600/30 bg-red-500/5 p-3 sm:p-4">
+                <div className="flex items-start justify-between gap-1">
+                  <p className="text-[11px] font-medium leading-4 text-red-900 dark:text-red-300 sm:text-xs sm:leading-5">
+                    <span className="sm:hidden">
+                      {lang === "th" ? "เฉลี่ย 5% ท้าย (CVaR 95%)" : "CVaR 95% Shortfall"}
+                    </span>
+                    <span className="hidden sm:inline">
+                      {lang === "th"
+                        ? "รายได้หดตัวเฉลี่ยในกลุ่มเลวร้าย 5% ท้าย (CVaR 95%)"
+                        : "95% Tail Revenue Shortfall (CVaR 95%)"}
+                    </span>
+                  </p>
                   <InfoTooltip
+                    align="right"
                     text={
                       lang === "th"
-                        ? "ค่าเฉลี่ยความเสียหายเมื่อสถานการณ์หลุดเข้าไปอยู่ในกลุ่มเลวร้าย 5% ท้ายสุด เหมาะใช้ประเมินวงเงินรองรับกรณีฉุกเฉิน"
-                        : "Average monthly loss conditional on falling inside the worst 5% tail scenarios."
+                        ? "ค่าเฉลี่ยของรายได้ที่หดตัวต่ำกว่าฐานฤดูกาลเมื่อหลายจังหวัดเผชิญแรงกระแทกร่วมกันใน 5% ท้ายสุด (ไม่ใช่ขาดทุนสุทธิหลังหักต้นทุนผันแปร)"
+                        : "Average gross revenue shortfall conditional on the worst 5% correlated regional shock blocks."
                     }
                   />
-                </p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-red-800 dark:text-red-300">
-                  {mcData.regional_metrics.cvar95_monthly_loss_mthb.toLocaleString()}{" "}
-                  {lang === "th" ? "ล้านบาท" : "M THB"}
-                </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {lang === "th"
-                    ? "ค่าเฉลี่ยความเสียหายเมื่อเกิดแรงกระแทกซ้อนทับรุนแรง"
-                    : "Average monthly loss inside the worst 5% tail scenarios"}
-                </p>
+                </div>
+                <div className="mt-1.5 sm:mt-2">
+                  <p className="font-display text-lg font-semibold tabular-nums text-red-800 dark:text-red-300 sm:text-2xl">
+                    {(
+                      mcData.regional_metrics.cvar95_monthly_shortfall_mthb ??
+                      mcData.regional_metrics.cvar95_monthly_loss_mthb
+                    ).toLocaleString()}{" "}
+                    <span className="text-xs font-medium sm:text-xl">
+                      {lang === "th" ? "ล้านบาท" : "M THB"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                    {lang === "th"
+                      ? "รายได้หดตัวเฉลี่ยเมื่อเกิดแรงกระแทกพร้อมกัน"
+                      : "Mean shortfall inside worst 5% correlated tail"}
+                  </p>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-border bg-secondary/35 p-4">
-                <p className="text-xs text-muted-foreground">
-                  {lang === "th"
-                    ? "จังหวัดที่เสี่ยงขาดสภาพคล่อง (กรณีเลวร้าย 5% ท้าย)"
-                    : "Provinces in Cashflow Deficit (95th Pct)"}
+              <div className="flex flex-col justify-between rounded-2xl border border-border bg-secondary/35 p-3 sm:p-4">
+                <p className="text-[11px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                  <span className="sm:hidden">
+                    {lang === "th" ? "จังหวัดที่ขาดดุล (P95)" : "Deficit Provinces (P95)"}
+                  </span>
+                  <span className="hidden sm:inline">
+                    {lang === "th"
+                      ? "จำนวนจังหวัดที่จำลองแล้วขาดดุล (เปอร์เซ็นไทล์ 95)"
+                      : "Simulated Deficit Provinces (95th Pct)"}
+                  </span>
                 </p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-foreground">
-                  {mcData.regional_metrics.p95_breaching_provinces} / {totalProvDisplay}{" "}
-                  {lang === "th" ? "จังหวัด" : "provinces"}
-                </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {lang === "th"
-                    ? `จังหวัดที่รายจ่ายรวมสูงกว่ารายได้จากการสุ่ม ${mcData.n_simulations.toLocaleString()} รอบ`
-                    : `Provinces where expenses exceed revenue across ${mcData.n_simulations.toLocaleString()} draws`}
-                </p>
+                <div className="mt-1.5 sm:mt-2">
+                  <p className="font-display text-lg font-semibold tabular-nums text-foreground sm:text-2xl">
+                    {mcData.regional_metrics.p95_breaching_provinces} / {totalProvDisplay}{" "}
+                    <span className="text-xs font-medium sm:text-xl">
+                      {lang === "th" ? "จังหวัด" : "provinces"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground sm:text-xs sm:leading-5">
+                    {lang === "th"
+                      ? "นับเฉพาะจังหวัดที่มีข้อมูลรายจ่าย สสช. จริง"
+                      : "Counts only provinces with observed NSO expense data"}
+                  </p>
+                </div>
               </div>
             </div>
 
             <div className="mt-5 grid gap-5 lg:grid-cols-[5fr_7fr]">
               <div className="rounded-2xl border border-border bg-background p-4">
-                <p className="text-xs font-semibold text-foreground">
+                <p className="text-sm font-semibold text-foreground">
                   {lang === "th"
-                    ? "กราฟการแจกแจงโอกาสเกิดความสูญเสียรายได้ทั้งภาคเหนือ (ล้านบาท/เดือน)"
-                    : "Regional Monthly Revenue Loss Distribution (M THB)"}
+                    ? "กราฟการแจกแจงรายได้ที่หดตัวเทียบฐานฤดูกาลทั้งภาคเหนือ (ล้านบาท/เดือน)"
+                    : "Regional Monthly Revenue Shortfall Distribution vs Seasonal Base (M THB)"}
                 </p>
-                <p className="mb-3 mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mb-3 mt-1 text-xs leading-5 text-muted-foreground">
                   {lang === "th"
                     ? "แท่งสีแดงคือกลุ่มสถานการณ์เลวร้าย 5% ท้ายสุด (เกินระดับ VaR 95%) ที่ควรเตรียมวงเงินมาตรการรองรับ"
                     : "Crimson bars indicate the worst 5% tail risk exceeding VaR 95%."}
@@ -2558,15 +2804,15 @@ function RiskModelingAndClusteringPage({
               </div>
 
               <div className="rounded-2xl border border-border bg-background p-4">
-                <p className="text-xs font-semibold text-foreground">
+                <p className="text-sm font-semibold text-foreground">
                   {lang === "th"
-                    ? `จัดอันดับจังหวัดตามโอกาสที่ผู้ประกอบการจะขาดสภาพคล่อง (จากการจำลอง ${mcData.n_simulations.toLocaleString()} รอบ)`
-                    : `Provincial Cashflow Deficit Probability Ranking (${mcData.n_simulations.toLocaleString()} Draws)`}
+                    ? `จัดอันดับจังหวัดตามสัดส่วนรอบจำลองที่ขาดดุล (จากการจำลอง ${mcData.n_simulations.toLocaleString()} รอบ)`
+                    : `Provincial Simulated Deficit Iteration Ratio (${mcData.n_simulations.toLocaleString()} Draws)`}
                 </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {lang === "th"
-                    ? "ช่วยจัดลำดับความสำคัญว่าควรส่งมาตรการปรับโครงสร้างหนี้และพักชำระเงินต้นลงพื้นที่ใดก่อน"
-                    : "Identifies priority provinces requiring immediate liquidity and debt restructuring deployment."}
+                    ? "แสดงสัดส่วนรอบจำลองที่ขาดดุลจากการสุ่มช่วงเดือนต่อเนื่องตามฤดูกาลร่วมกันทั้งภาคและต้นทุนคงที่ 70% (ใช้เฝ้าระวังระดับพื้นที่ ไม่ใช่ความน่าจะเป็นจริงของธุรกิจรายบุคคล)"
+                    : "Reports fraction of simulated draws in deficit under shared regional seasonal block bootstrap and 70% fixed cost assumptions (regional surveillance only)."}
                 </p>
                 <div className="mt-3 max-h-[245px] overflow-y-auto">
                   <table className="w-full text-left text-xs">
@@ -2577,13 +2823,13 @@ function RiskModelingAndClusteringPage({
                           {lang === "th" ? "เงินเหลือเดิม" : "Base Margin"}
                         </th>
                         <th className="px-2 py-2 text-right font-medium">
-                          {lang === "th" ? "โอกาสเงินสดติดลบ" : "Deficit Prob."}
+                          {lang === "th" ? "สัดส่วนรอบที่ขาดดุล" : "Simulated Deficit Ratio"}
                         </th>
                         <th className="px-2 py-2 text-right font-medium">
                           {lang === "th" ? "เงินเหลือ (5% ท้าย)" : "Worst 5% Margin"}
                         </th>
                         <th className="px-2.5 py-2 text-right font-medium">
-                          {lang === "th" ? "ความเสียหาย (VaR 95%)" : "VaR 95% Loss"}
+                          {lang === "th" ? "รายได้หดตัว (VaR 95%)" : "VaR 95% Shortfall"}
                         </th>
                       </tr>
                     </thead>
@@ -2599,33 +2845,47 @@ function RiskModelingAndClusteringPage({
                             )}
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
-                            {p.baseline_margin_pct.toFixed(1)}%
+                            {p.baseline_margin_pct != null
+                              ? `${p.baseline_margin_pct.toFixed(1)}%`
+                              : lang === "th"
+                                ? "ไม่มีข้อมูล"
+                                : "N/A"}
                           </td>
                           <td className="px-2 py-2 text-right font-semibold tabular-nums">
-                            <span
-                              className={
-                                p.deficit_probability_pct >= 50
-                                  ? "text-red-700 dark:text-red-400"
-                                  : p.deficit_probability_pct >= 20
-                                    ? "text-amber-700 dark:text-amber-400"
-                                    : "text-teal-700 dark:text-teal-400"
-                              }
-                            >
-                              {p.deficit_probability_pct.toFixed(1)}%
-                            </span>
+                            {p.deficit_probability_pct != null ? (
+                              <span
+                                className={
+                                  p.deficit_probability_pct >= 50
+                                    ? "text-red-700 dark:text-red-400"
+                                    : p.deficit_probability_pct >= 20
+                                      ? "text-amber-700 dark:text-amber-400"
+                                      : "text-teal-700 dark:text-teal-400"
+                                }
+                              >
+                                {p.deficit_probability_pct.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="font-normal text-muted-foreground">
+                                {lang === "th" ? "ยังไม่ได้ตรวจ" : "Not eval."}
+                              </span>
+                            )}
                           </td>
                           <td
                             className={`px-2 py-2 text-right tabular-nums ${
-                              p.p95_worst_margin_pct < 0
+                              p.p95_worst_margin_pct != null && p.p95_worst_margin_pct < 0
                                 ? "font-semibold text-red-700 dark:text-red-400"
                                 : "text-muted-foreground"
                             }`}
                           >
-                            {p.p95_worst_margin_pct >= 0 ? "+" : ""}
-                            {p.p95_worst_margin_pct.toFixed(1)}%
+                            {p.p95_worst_margin_pct != null
+                              ? `${p.p95_worst_margin_pct >= 0 ? "+" : ""}${p.p95_worst_margin_pct.toFixed(1)}%`
+                              : lang === "th"
+                                ? "ไม่มีข้อมูล"
+                                : "N/A"}
                           </td>
                           <td className="px-2.5 py-2 text-right tabular-nums text-foreground">
-                            {p.var95_revenue_loss_mthb.toLocaleString()} {lang === "th" ? "ล้าน" : "M"}
+                            {(p.var95_revenue_shortfall_mthb ?? p.var95_revenue_loss_mthb).toLocaleString()}{" "}
+                            {lang === "th" ? "ล้าน" : "M"}
                           </td>
                         </tr>
                       ))}
@@ -2638,75 +2898,81 @@ function RiskModelingAndClusteringPage({
         ) : null}
       </section>
 
-      {/* Section 2: Interactive KMeans Provincial Clustering & Live VIF */}
+      {/* Section 2 Interactive KMeans Provincial Clustering and Live VIF */}
       <section className="rounded-3xl border border-border bg-card p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
-          <div className="max-w-2xl">
+        <div className="space-y-4 border-b border-border pb-5">
+          <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-foreground">
               <Layers aria-hidden="true" className="size-3.5" />
               {lang === "th"
                 ? "โมเดลที่ 2 · ระบบจัดกลุ่มจังหวัดและตรวจสอบความซ้ำซ้อนของตัวแปร (KMeans & VIF)"
                 : "Model 2 · Interactive KMeans Provincial Clustering & Live VIF"}
             </span>
-            <h2 className="mt-2 font-display text-xl font-semibold text-foreground">
+            <h2 className="mt-2.5 font-display text-xl font-semibold text-foreground">
               {lang === "th"
                 ? "ปรับจำนวนกลุ่มและเลือกตัวแปรเพื่อจัดกลุ่มจังหวัดและออกแบบชุดมาตรการ"
                 : "Customize Provincial Groups, Check Variable Collinearity & Generate Targeted Playbooks"}
             </h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            <p className="mt-1.5 max-w-5xl text-xs leading-6 text-muted-foreground sm:text-[13px]">
               {lang === "th"
                 ? "เลือกตัวแปรอย่างน้อย 3 ตัวแปรแล้วกดคำนวณ ระบบจะคำนวณค่าความซ้ำซ้อนของตัวแปร (VIF) และแจ้งเตือนด้วยป้ายสีเหลืองเมื่อเกิน 5.0"
                 : "Select at least 3 variables and click Run Clustering. Live VIF scores are computed and flagged in amber when exceeding 5.0."}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs">
-              <span className="text-muted-foreground">{lang === "th" ? "จำนวนกลุ่ม:" : "Groups:"}</span>
-              {[3, 4, 5].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  aria-pressed={kVal === num}
-                  onClick={() => setKVal(num)}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    kVal === num
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {num} {lang === "th" ? "กลุ่ม" : "groups"}
-                </button>
-              ))}
+          <div className="grid grid-cols-1 gap-2 rounded-2xl border border-border bg-secondary/25 p-3 md:flex md:flex-wrap md:items-center md:rounded-none md:border-0 md:bg-transparent md:p-0">
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs md:justify-start md:gap-1.5 md:rounded-full">
+              <span className="shrink-0 font-medium text-muted-foreground md:font-normal">
+                {lang === "th" ? "จำนวนกลุ่ม:" : "Groups:"}
+              </span>
+              <div className="grid flex-1 grid-cols-3 gap-1 md:flex md:flex-none md:items-center md:gap-1.5">
+                {[3, 4, 5].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    aria-pressed={kVal === num}
+                    onClick={() => setKVal(num)}
+                    className={`rounded-lg px-2 py-1 text-center text-xs font-medium md:rounded-full md:px-2.5 md:py-0.5 ${
+                      kVal === num
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {num} {lang === "th" ? "กลุ่ม" : "groups"}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <button
-              type="button"
-              disabled={clusterLoading}
-              onClick={() => void executeRecluster(kVal, selectedFeatures, false)}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-4 text-xs font-medium transition-colors disabled:opacity-60 ${
-                hasPendingClusterChanges
-                  ? "border-amber-600 bg-amber-500/15 text-amber-950 hover:bg-amber-500/25 dark:text-amber-200"
-                  : "border-border bg-background text-foreground hover:bg-secondary"
-              }`}
-            >
-              {clusterLoading ? (
-                <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-              ) : (
-                <Play aria-hidden="true" className="size-3.5" />
-              )}
-              {lang === "th" ? "คำนวณการจัดกลุ่มใหม่" : "Run Clustering"}
-            </button>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:contents">
+              <button
+                type="button"
+                disabled={clusterLoading}
+                onClick={() => void executeRecluster(kVal, selectedFeatures, false)}
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border px-4 text-xs font-medium transition-colors disabled:opacity-60 md:h-9 md:rounded-full ${
+                  hasPendingClusterChanges
+                    ? "border-amber-600 bg-amber-500/15 text-amber-950 hover:bg-amber-500/25 dark:text-amber-200"
+                    : "border-border bg-background text-foreground hover:bg-secondary"
+                }`}
+              >
+                {clusterLoading ? (
+                  <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+                ) : (
+                  <Play aria-hidden="true" className="size-3.5" />
+                )}
+                {lang === "th" ? "คำนวณการจัดกลุ่มใหม่" : "Run Clustering"}
+              </button>
 
-            <button
-              type="button"
-              disabled={clusterLoading}
-              onClick={() => void executeRecluster(kVal, selectedFeatures, true)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-foreground px-4 text-xs font-medium text-background hover:opacity-85 disabled:opacity-60"
-            >
-              <Save aria-hidden="true" className="size-3.5" />
-              {lang === "th" ? "บันทึกไปใช้เป็นกลุ่มหลักของระบบ" : "Publish to Primary Map"}
-            </button>
+              <button
+                type="button"
+                disabled={clusterLoading}
+                onClick={() => void executeRecluster(kVal, selectedFeatures, true)}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-xs font-medium text-background hover:opacity-85 disabled:opacity-60 md:h-9 md:rounded-full"
+              >
+                <Save aria-hidden="true" className="size-3.5" />
+                {lang === "th" ? "บันทึกไปใช้เป็นกลุ่มหลักของระบบ" : "Publish to Primary Map"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2746,83 +3012,123 @@ function RiskModelingAndClusteringPage({
           <div className={`transition-opacity ${clusterLoading ? "opacity-55" : "opacity-100"}`}>
             <div className="mt-4 rounded-2xl border border-border bg-secondary/30 p-4">
               <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-foreground">
+                <div>
+                  <p className="text-xs font-semibold text-foreground">
+                    {lang === "th" ? "เลือกตัวแปรสำหรับจัดกลุ่ม" : "Choose variables for clustering"}
+                    <InfoTooltip
+                      align="left"
+                      text={
+                        lang === "th"
+                          ? "เลือกอย่างน้อย 3 ตัวแปร ค่า VIF ใช้ดูว่าตัวแปรที่เลือกซ้ำซ้อนกันหรือไม่ หากเกิน 5 ควรทบทวนตัวแปรนั้น ค่า VIF เป็นผลจากการคำนวณรอบล่าสุด"
+                          : "Choose at least 3 variables. VIF indicates overlap between selected variables; values above 5 should be reviewed. VIF values come from the latest run."
+                      }
+                    />
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {lang === "th"
+                      ? "คลิกที่รายการเพื่อเลือกหรือเอาออก ต้องเลือกอย่างน้อย 3 ตัวแปร"
+                      : "Click an item to select or remove it. Keep at least 3 selected."}
+                  </p>
+                </div>
+                <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-foreground">
                   {lang === "th"
-                    ? "เลือกตัวแปรที่ใช้จัดกลุ่ม (อย่างน้อย 3 ตัวแปร · แจ้งเตือนเมื่อค่าความซ้ำซ้อน VIF เกิน 5.0)"
-                    : "Select clustering variables (minimum 3 · alerts when VIF exceeds 5.0)"}
-                  <InfoTooltip
-                    align="left"
-                    text={
-                      lang === "th"
-                        ? "VIF (Variance Inflation Factor) ใช้วัดว่าตัวแปรที่เลือกซ้ำซ้อนกันเองหรือไม่ หากเกิน 5.0 ควรพิจารณาตัดตัวแปรที่ซ้ำออกเพื่อไม่ให้โมเดลถ่วงน้ำหนักเอียง"
-                        : "VIF measures multicollinearity among chosen variables. Values above 5.0 indicate redundancy."
-                    }
-                  />
-                </p>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="rounded-full bg-background px-3 py-1 font-medium text-foreground">
-                    {lang === "th"
-                      ? `ความชัดเจนของการแยกกลุ่ม (Silhouette) ${clusterData.silhouette_score.toFixed(4)}`
-                      : `Silhouette ${clusterData.silhouette_score.toFixed(4)}`}
-                    <InfoTooltip
-                      text={
-                        lang === "th"
-                          ? "ค่าเต็ม 1.0 ยิ่งสูงยิ่งดี แสดงว่าแต่ละกลุ่มแยกออกจากกันได้ชัดเจน"
-                          : "Ranges from -1 to 1; higher values indicate better-defined clusters."
-                      }
-                    />
-                  </span>
-                  <span className="rounded-full bg-background px-3 py-1 text-muted-foreground">
-                    {lang === "th"
-                      ? `ดัชนีความซ้อนทับระหว่างกลุ่ม (DBI · ยิ่งต่ำยิ่งดี) ${clusterData.davies_bouldin_index.toFixed(4)}`
-                      : `DBI (lower is better) ${clusterData.davies_bouldin_index.toFixed(4)}`}
-                    <InfoTooltip
-                      align="right"
-                      text={
-                        lang === "th"
-                          ? "Davies-Bouldin Index (DBI) วัดความซ้อนทับระหว่างกลุ่ม ยิ่งเข้าใกล้ 0 แปลว่าแต่ละกลุ่มแยกขาดจากกันดี"
-                          : "Davies-Bouldin Index measures inter-cluster overlap; values closer to 0 are better."
-                      }
-                    />
-                  </span>
+                    ? `เลือกแล้ว ${selectedFeatures.length} จาก ${clusterData.available_catalog.length} ตัวแปร`
+                    : `${selectedFeatures.length} of ${clusterData.available_catalog.length} selected`}
+                </span>
+              </div>
+
+              <div
+                role="group"
+                tabIndex={0}
+                aria-label={lang === "th" ? "รายการตัวแปรสำหรับจัดกลุ่ม เลื่อนเพื่อดูรายการทั้งหมด" : "Clustering variables. Scroll to see all items."}
+                className="max-h-64 overflow-y-auto overscroll-contain rounded-xl border border-border bg-background p-2 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {clusterData.available_catalog.map((cat) => {
+                    const isChecked = selectedFeatures.includes(cat.feature_key)
+                    const vifObj = clusterData.selected_features.find(
+                      (f) => f.feature_key === cat.feature_key,
+                    )
+                    const categoryLabel =
+                      cat.group === "vulnerability"
+                        ? lang === "th" ? "การเงิน" : "Finance"
+                        : cat.group === "exposure"
+                          ? lang === "th" ? "การท่องเที่ยว" : "Tourism"
+                          : lang === "th" ? "ภัยพิบัติ" : "Hazards"
+                    return (
+                      <button
+                        key={cat.feature_key}
+                        type="button"
+                        aria-pressed={isChecked}
+                        onClick={() => toggleFeature(cat.feature_key)}
+                        className={`flex min-h-14 w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                          isChecked
+                            ? "border-slate-400 bg-slate-50 text-foreground"
+                            : "border-border bg-background text-muted-foreground hover:border-slate-300 hover:bg-secondary/40 hover:text-foreground"
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border ${
+                            isChecked
+                              ? "border-slate-700 bg-slate-700 text-white"
+                              : "border-slate-400 bg-background text-transparent"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {isChecked && <Check className="size-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block leading-4">{lang === "th" ? cat.label_th : cat.label_en}</span>
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              {categoryLabel}
+                            </span>
+                            {vifObj && (
+                              <span
+                                className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  vifObj.is_collinear
+                                    ? "bg-amber-200 text-amber-950"
+                                    : "bg-slate-100 text-slate-700"
+                                }`}
+                              >
+                                VIF {vifObj.vif_score}
+                                {vifObj.is_collinear && (lang === "th" ? " · ทบทวน" : " · Review")}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {clusterData.available_catalog.map((cat) => {
-                  const isChecked = selectedFeatures.includes(cat.feature_key)
-                  const vifObj = clusterData.selected_features.find(
-                    (f) => f.feature_key === cat.feature_key,
-                  )
-                  return (
-                    <button
-                      key={cat.feature_key}
-                      type="button"
-                      aria-pressed={isChecked}
-                      onClick={() => toggleFeature(cat.feature_key)}
-                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                        isChecked
-                          ? "border-foreground bg-foreground text-background"
-                          : "border-border bg-background text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <span>{lang === "th" ? cat.label_th : cat.label_en}</span>
-                      {vifObj && (
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
-                            vifObj.is_collinear
-                              ? "bg-amber-400 text-black"
-                              : isChecked
-                                ? "bg-background/20 text-background"
-                                : "bg-secondary text-foreground"
-                          }`}
-                        >
-                          VIF {vifObj.vif_score}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full bg-background px-3 py-1 font-medium text-foreground">
+                  {lang === "th"
+                    ? `ความชัดเจนของการแยกกลุ่ม (Silhouette) ${clusterData.silhouette_score.toFixed(4)}`
+                    : `Silhouette ${clusterData.silhouette_score.toFixed(4)}`}
+                  <InfoTooltip
+                    text={
+                      lang === "th"
+                        ? "ค่าอยู่ระหว่าง -1 ถึง 1 ยิ่งสูงยิ่งแสดงว่ากลุ่มแยกจากกันชัดเจน"
+                        : "Ranges from -1 to 1; higher values indicate better-defined clusters."
+                    }
+                  />
+                </span>
+                <span className="rounded-full bg-background px-3 py-1 text-muted-foreground">
+                  {lang === "th"
+                    ? `ดัชนีความซ้อนทับระหว่างกลุ่ม (DBI ยิ่งต่ำยิ่งดี) ${clusterData.davies_bouldin_index.toFixed(4)}`
+                    : `DBI (lower is better) ${clusterData.davies_bouldin_index.toFixed(4)}`}
+                  <InfoTooltip
+                    align="right"
+                    text={
+                      lang === "th"
+                        ? "Davies-Bouldin Index (DBI) วัดความซ้อนทับระหว่างกลุ่ม ค่ายิ่งใกล้ 0 ยิ่งดี"
+                        : "Davies-Bouldin Index measures inter-cluster overlap; values closer to 0 are better."
+                    }
+                  />
+                </span>
               </div>
             </div>
 
@@ -2908,21 +3214,21 @@ function RiskModelingAndClusteringPage({
           <div>
             <h2 className="font-display text-lg font-semibold">
               {lang === "th"
-                ? "ตารางผลการคัดเลือกตัวแปรทางสถิติอัตโนมัติ (อัปเดตตามข้อมูลใหม่ในระบบ)"
-                : "Automated Empirical Feature Screening Table"}
+                ? "ตารางการคัดกรองความสัมพันธ์เชิงสำรวจเบื้องต้น (Exploratory Feature Screening)"
+                : "Exploratory Within-Province Lag Correlation Screening"}
               <InfoTooltip
                 align="left"
                 text={
                   lang === "th"
-                    ? "Spearman r วัดความสัมพันธ์ร่วมกันของ 2 ตัวแปร (ไม่ใช่การพิสูจน์สาเหตุโดยตรง) โดยคัดเฉพาะตัวแปรที่ p-value < 0.05 และ VIF < 5.0"
-                    : "Spearman r measures statistical correlation (not direct causation), screened at p < 0.05 and VIF < 5.0."
+                    ? "เป็นการวิเคราะห์เชิงสำรวจ (Exploratory Analysis) ปรับค่าการทดสอบหลายสมมติฐานด้วย Benjamini-Hochberg FDR และคัด VIF < 5.0 ไม่ใช่ผลยืนยันเชิงสาเหตุหรือพยากรณ์"
+                    : "Exploratory screening with Benjamini-Hochberg FDR multiple testing adjustment and VIF < 5.0 pruning; not causal or predictive proof."
                 }
               />
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
               {lang === "th"
-                ? "คัดเฉพาะตัวแปรที่มีความสัมพันธ์เชิงสถิติกับภาคบริการอย่างมีนัยสำคัญ (p-value < 0.05) และไม่ซ้ำซ้อนกันเอง (VIF < 5.0)"
-                : "Screened via within-province lag correlation (p < 0.05) and low multicollinearity (VIF < 5.0)."}
+                ? "หมายเหตุระเบียบวิธี: ข้อมูลรายจังหวัดรายเดือนมีความต่อเนื่องตามเวลา ตารางนี้จึงใช้เพื่อการสำรวจความสัมพันธ์เบื้องต้น (Exploratory Analysis) คู่กับการปรับแก้การทดสอบหลายตัวแปร (FDR) ไม่ใช่การยืนยันเชิงสาเหตุ"
+                : "Methodology note: Panel observations exhibit temporal autocorrelation; results represent exploratory lag screening with FDR control rather than causal confirmation."}
             </p>
           </div>
           <div className="mt-3 overflow-x-auto">
@@ -3156,115 +3462,6 @@ function DataHealthView({
     },
   ]
 
-  const hitTop5 = eval7d?.dim1_retrieval?.hybrid_rrf?.hit_rate_top5_pct
-  const mrrScore = eval7d?.dim1_retrieval?.hybrid_rrf?.mrr
-  const citeAcc = eval7d?.dim2_rag_qa?.citation_accuracy_pct
-  const refusalAcc = eval7d?.dim2_rag_qa?.refusal_accuracy_pct
-  const inScopeAns = eval7d?.dim2_rag_qa?.in_scope_answer_rate_pct
-  const piiRecall = eval7d?.dim5_security_guardrails?.pii_redaction_recall_pct
-  const injBlock = eval7d?.dim5_security_guardrails?.injection_block_rate_pct
-  const ariScore = eval7d?.dim6_stability?.kmeans_k4_perturbation_ari
-  const silEval = eval7d?.dim4_analytics?.silhouette_score
-  const quoteMatch = eval7d?.dim3_news_extraction?.verbatim_quote_match_pct
-  const shockF1 = eval7d?.dim3_news_extraction?.shock_type_macro_f1_pct
-
-  // Dynamic qualitative interpretation based strictly on live benchmark numbers
-  const silBandTh =
-    silEval == null ? "" : silEval >= 0.5 ? "สูง" : silEval >= 0.25 ? "ปานกลาง" : "ค่อนข้างต่ำ"
-  const silBandEn =
-    silEval == null ? "" : silEval >= 0.5 ? "Strong" : silEval >= 0.25 ? "Moderate" : "Weak"
-
-  const evalCards = [
-    {
-      label:
-        lang === "th"
-          ? "ความแม่นยำการค้นคืนเอกสารทางการ 5 อันดับแรก (Hit Rate @ 5)"
-          : "Official PDF Retrieval Hit Rate @ Top 5",
-      value: hitTop5 != null ? `${hitTop5}%` : "—",
-      tone:
-        hitTop5 == null
-          ? "text-muted-foreground"
-          : hitTop5 >= 85
-            ? "text-emerald-700 dark:text-emerald-400"
-            : "text-amber-700 dark:text-amber-400",
-      detail:
-        hitTop5 != null
-          ? lang === "th"
-            ? `คะแนนลำดับเฉลี่ย (MRR) ${mrrScore ?? "—"} จากชุดคำถามทดสอบ ${eval7d?.dim1_retrieval?.hybrid_rrf?.n_queries ?? "—"} ข้อ`
-            : `MRR ${mrrScore ?? "—"} across ${eval7d?.dim1_retrieval?.hybrid_rrf?.n_queries ?? "—"} benchmark queries`
-          : lang === "th"
-            ? "ไม่มีผลทดสอบในฐานข้อมูล"
-            : "No benchmark recorded",
-      icon: ClipboardList,
-    },
-    {
-      label:
-        lang === "th"
-          ? "ความถูกต้องของการอ้างอิง / ปฏิเสธนอกขอบเขต / ตอบในขอบเขต"
-          : "Citation / Refusal / In-Scope Answer Rate",
-      value:
-        citeAcc != null && refusalAcc != null
-          ? `${citeAcc}% / ${refusalAcc}% / ${inScopeAns != null ? `${inScopeAns}%` : "—"}`
-          : "—",
-      tone:
-        inScopeAns != null && inScopeAns < 90
-          ? "text-amber-700 dark:text-amber-400"
-          : citeAcc != null
-            ? "text-emerald-700 dark:text-emerald-400"
-            : "text-muted-foreground",
-      detail:
-        citeAcc != null
-          ? lang === "th"
-            ? `อ้างอิงตรงเอกสาร ${citeAcc}% · ปฏิเสธคำถามนอกขอบเขต ${refusalAcc}% · อัตราตอบคำถามในขอบเขต ${inScopeAns ?? "—"}%`
-            : `Citation accuracy ${citeAcc}% · out-of-scope refusal ${refusalAcc}% · in-scope answer rate ${inScopeAns ?? "—"}%`
-          : lang === "th"
-            ? "ไม่มีผลทดสอบในฐานข้อมูล"
-            : "No benchmark recorded",
-      icon: BadgeCheck,
-    },
-    {
-      label:
-        lang === "th"
-          ? "การปกปิดข้อมูลส่วนบุคคล (PII) และป้องกันคำสั่งโจมตี"
-          : "PII Redaction & Prompt Injection Defense",
-      value: piiRecall != null && injBlock != null ? `${piiRecall}% / ${injBlock}%` : "—",
-      tone:
-        piiRecall === 100 && injBlock === 100
-          ? "text-emerald-700 dark:text-emerald-400"
-          : "text-amber-700 dark:text-amber-400",
-      detail:
-        piiRecall != null
-          ? lang === "th"
-            ? `ทดสอบปิดบังข้อมูลส่วนบุคคล ${eval7d?.dim5_security_guardrails?.pii_cases_tested ?? "—"} กรณี และป้องกันคำสั่งโจมตี ${eval7d?.dim5_security_guardrails?.injection_cases_tested ?? "—"} กรณี`
-            : `Tested across ${eval7d?.dim5_security_guardrails?.pii_cases_tested ?? "—"} PII and ${eval7d?.dim5_security_guardrails?.injection_cases_tested ?? "—"} injection cases`
-          : lang === "th"
-            ? "ไม่มีผลทดสอบในฐานข้อมูล"
-            : "No benchmark recorded",
-      icon: ShieldCheck,
-    },
-    {
-      label:
-        lang === "th"
-          ? "ความชัดเจนกลุ่มจังหวัด (Silhouette) / เสถียรภาพ (ARI) / ความแม่นยำข่าว (F1)"
-          : "Cluster Separation (Silhouette) / Stability (ARI) / News F1",
-      value:
-        silEval != null && ariScore != null
-          ? `${silEval} / ${ariScore} / ${shockF1 != null ? `${shockF1}%` : "—"}`
-          : "—",
-      tone:
-        silEval != null && silEval < 0.35 ? "text-amber-700 dark:text-amber-400" : "text-foreground",
-      detail:
-        silEval != null
-          ? lang === "th"
-            ? `ความชัดเจนการแยกกลุ่มระดับ${silBandTh} (Silhouette ${silEval}) · เสถียรภาพเมื่อสุ่มรบกวนข้อมูล (ARI) ${ariScore} · จำแนกประเภทข่าวได้ F1 ${shockF1 ?? "—"}% (ตรงข้อความต้นฉบับ ${quoteMatch ?? "—"}%)`
-            : `${silBandEn} cluster separation (Silhouette ${silEval}) · perturbation stability ARI ${ariScore} · news classification F1 ${shockF1 ?? "—"}% (verbatim quote match ${quoteMatch ?? "—"}%)`
-          : lang === "th"
-            ? "ไม่มีผลทดสอบในฐานข้อมูล"
-            : "No benchmark recorded",
-      icon: ChartNoAxesCombined,
-    },
-  ]
-
   return (
     <div className="space-y-8">
       <div>
@@ -3356,36 +3553,506 @@ function DataHealthView({
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold">
-          {lang === "th"
-            ? "ผลประเมินความแม่นยำและข้อจำกัดตามจริง (7 มิติ)"
-            : "Actual 7-Dimension Evaluation Results"}
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {evalCards.map((item) => (
-            <article key={item.label} className="rounded-2xl border border-border bg-card p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-xs font-medium text-muted-foreground">{item.label}</h3>
-                  <p
-                    className={`mt-3 font-display text-2xl font-semibold tracking-tight tabular-nums ${item.tone}`}
-                  >
-                    {item.value}
-                  </p>
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">
+              {lang === "th"
+                ? "ระบบตรวจสอบคุณภาพ 4 ชั้น แยกการตรวจอัตโนมัติออกจากการตรวจร่วมกับผู้เชี่ยวชาญ"
+                : "4-Layer Verification System (Deterministic Gates vs AI-Assisted Review)"}
+            </h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {lang === "th"
+                ? `แสดงสถานะตามจริง 6 ระดับ (ผ่าน / ไม่ผ่าน / เตือน / ยังไม่ได้ตรวจ / ผลเก่า / กำลังตรวจ) พร้อมจำนวนตัวอย่าง เกณฑ์ผ่าน และวันตรวจล่าสุด · รุ่นชุดตัวแปร v${health?.layered_evaluation?.feature_spec_version ?? "1.0.0"}`
+                : `Each layer reports honest 6-state status (passed / failed / warn / not evaluated / stale / running) with sample size, thresholds, timestamps, and lineage · Feature Spec v${health?.layered_evaluation?.feature_spec_version ?? "1.0.0"}${health?.rag_index_version ? ` · RAG Index ${health.rag_index_version}` : ""}`}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-400">
+              {lang === "th" ? "ผ่าน" : "Passed"}
+            </span>
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 font-medium text-amber-700 dark:text-amber-400">
+              {lang === "th" ? "เตือน" : "Warn"}
+            </span>
+            <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-0.5 font-medium text-orange-700 dark:text-orange-400">
+              {lang === "th" ? "ผลเก่า" : "Stale"}
+            </span>
+            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-0.5 font-medium text-red-700 dark:text-red-400">
+              {lang === "th" ? "ไม่ผ่าน" : "Failed"}
+            </span>
+            <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 font-medium text-muted-foreground">
+              {lang === "th" ? "ยังไม่ได้ตรวจ" : "Not Evaluated"}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {(health?.layered_evaluation?.layers ?? []).map((layer) => {
+            const layerTitles: Record<string, { th: string; en: string }> = {
+              code_tests: {
+                th: "ชั้นที่ 1 การทดสอบโค้ดและเกณฑ์ความปลอดภัย",
+                en: "Layer 1: Code & Safety Tests",
+              },
+              data_quality: {
+                th: "ชั้นที่ 2 คุณภาพและความสดใหม่ของข้อมูล",
+                en: "Layer 2: Data Quality & Freshness",
+              },
+              statistical_validation: {
+                th: "ชั้นที่ 3 การตรวจสอบทางสถิติและเสถียรภาพโมเดล",
+                en: "Layer 3: Statistical & Model Validation",
+              },
+              rag_evaluation: {
+                th: "ชั้นที่ 4 การประเมินระบบค้นเอกสารและผู้ช่วยนโยบาย",
+                en: "Layer 4: Policy Assistant & Retrieval Evaluation",
+              },
+            }
+            const metricDictionary: Record<
+              string,
+              { th: string; en: string; unitTh?: string; unitEn?: string }
+            > = {
+              failed_cases: { th: "เคสที่ไม่ผ่าน", en: "Failed Cases", unitTh: " เคส" },
+              passed_cases: { th: "เคสที่ผ่าน", en: "Passed Cases", unitTh: " เคส" },
+              pass_rate_pct: { th: "อัตราผ่านทั้งหมด", en: "Pass Rate", unitTh: "%", unitEn: "%" },
+              checks_total: { th: "รายการตรวจทั้งหมด", en: "Total Checks", unitTh: " รายการ" },
+              checks_passed: { th: "รายการที่ผ่าน", en: "Passed Checks", unitTh: " รายการ" },
+              nso_provinces_covered: { th: "จังหวัดที่มีข้อมูล สสช.", en: "NSO Provinces", unitTh: " จังหวัด" },
+              air_fresh_provinces_3d: { th: "จังหวัดค่าฝุ่นอัปเดตใน 3 วัน", en: "Fresh Air (3d)", unitTh: " จังหวัด" },
+              quarantine_rows_caught: { th: "แถวผิดปกติที่กักกันไว้", en: "Quarantined Rows", unitTh: " รายการ" },
+              silhouette_score: { th: "ความชัดการแยกกลุ่ม (Silhouette)", en: "Silhouette Score" },
+              davies_bouldin_index: { th: "ดัชนีทับซ้อนกลุ่ม (Davies–Bouldin)", en: "Davies–Bouldin Index" },
+              perturbation_ari: { th: "ความเสถียรเมื่อข้อมูลคลาดเคลื่อน (ARI)", en: "Perturbation ARI" },
+              cross_scaler_ari: { th: "ความสอดคล้องข้ามตัวปรับสเกล (ARI)", en: "Cross-Scaler ARI" },
+              kmeans_vs_ward_ari: { th: "ความสอดคล้อง KMeans กับ Ward", en: "KMeans vs Ward ARI" },
+              kruskal_occ_yoy_p: { th: "นัยสำคัญความต่างระหว่างกลุ่ม (p)", en: "Kruskal YoY p-value" },
+              hit_rate_top5_pct: { th: "ค้นพบเอกสารตรงใน 5 อันดับแรก", en: "Top-5 Hit Rate", unitTh: "%", unitEn: "%" },
+              mrr: { th: "อันดับเฉลี่ยเอกสารที่ตรง (MRR)", en: "Mean Reciprocal Rank" },
+              citation_provenance_pct: { th: "อ้างอิงเอกสารและเลขหน้าตรงจริง", en: "Citation Provenance", unitTh: "%", unitEn: "%" },
+              refusal_accuracy_pct: { th: "ปฏิเสธคำถามนอกขอบเขตถูกต้อง", en: "Refusal Accuracy", unitTh: "%", unitEn: "%" },
+              in_scope_answer_rate_pct: { th: "อัตราตอบคำถามในขอบเขตได้ครบ", en: "In-Scope Answer Rate", unitTh: "%", unitEn: "%" },
+              in_scope_tested: { th: "คำถามในขอบเขตที่ทดสอบ", en: "In-Scope Tested", unitTh: " ข้อ" },
+              oos_tested: { th: "คำถามนอกขอบเขตที่ทดสอบ", en: "Out-of-Scope Tested", unitTh: " ข้อ" },
+              lag_fdr_significant_count: { th: "ตัวแปรผ่านเกณฑ์ FDR", en: "FDR-Significant Vars", unitTh: " ตัวแปร" },
+              shock_oos_r2: { th: "ความแม่นยำนอกช่วงฝึก (OOS R²)", en: "Out-of-Sample R²" },
+            }
+            const thresholdRulesMap: Record<string, { th: string[]; en: string[] }> = {
+              code_tests: {
+                th: [
+                  "ชุดทดสอบโค้ด โครงสร้างข้อมูล การป้องกันข้อมูลส่วนบุคคล และการจัดระดับความเสี่ยงต้องผ่านครบ 100%",
+                ],
+                en: [
+                  "100% of unit, schema, PII, prompt defense, and tiering tests must pass",
+                ],
+              },
+              data_quality: {
+                th: [
+                  "โครงสร้างตาราง ความครบ 17 จังหวัด และช่วงค่าที่สมเหตุสมผลต้องผ่านทั้งหมด",
+                  "หากข้อมูลสภาพอากาศหรือฝุ่นอัปเดตล่าช้าจะขึ้นสถานะเตือน",
+                ],
+                en: [
+                  "All critical schema, 17-province coverage, and bounds checks must pass",
+                  "Freshness gaps trigger a warning status",
+                ],
+              },
+              statistical_validation: {
+                th: [
+                  "ค่า Silhouette ตั้งแต่ 0.25 ขึ้นไป (ขึ้นเตือนหากต่ำกว่า 0.40)",
+                  "ความเสถียรเมื่อข้อมูลคลาดเคลื่อน (ARI) ตั้งแต่ 0.70 ขึ้นไป",
+                  "คัดตัวแปรด้วยเกณฑ์ BH FDR (q น้อยกว่า 0.05) และแบ่งช่วงเวลาโดยไม่รั่วข้อมูลอนาคต",
+                ],
+                en: [
+                  "Silhouette ≥ 0.25 (warn if below 0.40)",
+                  "Perturbation ARI ≥ 0.70",
+                  "Strict BH FDR (q < 0.05) with leak-free chronological split",
+                ],
+              },
+              rag_evaluation: {
+                th: [
+                  "ค้นพบเอกสารตรงใน 5 อันดับแรกอย่างน้อย 85%",
+                  "อ้างอิงชื่อเอกสารและเลขหน้าตรงจริง 100%",
+                  "ปฏิเสธคำถามนอกขอบเขตได้ถูกต้อง 100% (ความถูกต้องเชิงเนื้อหายังต้องสุ่มตรวจโดยเจ้าหน้าที่)",
+                ],
+                en: [
+                  "Top-5 document hit rate ≥ 85%",
+                  "Citation document and page provenance 100%",
+                  "Out-of-scope refusal 100% (semantic accuracy requires human spot-check)",
+                ],
+              },
+            }
+            const statusMeta: Record<
+              string,
+              { labelTh: string; labelEn: string; pill: string; border: string }
+            > = {
+              passed: {
+                labelTh: "ผ่าน",
+                labelEn: "Passed",
+                pill: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                border: "border-border",
+              },
+              failed: {
+                labelTh: "ไม่ผ่าน",
+                labelEn: "Failed",
+                pill: "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-400",
+                border: "border-red-500/30",
+              },
+              warn: {
+                labelTh: "เตือน",
+                labelEn: "Warning",
+                pill: "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                border: "border-amber-500/25",
+              },
+              stale: {
+                labelTh: "ผลเก่า",
+                labelEn: "Stale",
+                pill: "border-orange-500/35 bg-orange-500/10 text-orange-700 dark:text-orange-400",
+                border: "border-orange-500/25",
+              },
+              running: {
+                labelTh: "กำลังตรวจ",
+                labelEn: "Running",
+                pill: "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                border: "border-sky-500/25",
+              },
+              not_evaluated: {
+                labelTh: "ยังไม่ได้ตรวจ",
+                labelEn: "Not Evaluated",
+                pill: "border-border bg-secondary text-muted-foreground",
+                border: "border-border",
+              },
+            }
+            const meta = statusMeta[layer.status] ?? statusMeta.not_evaluated
+            const ranLabel = layer.ran_at
+              ? (() => {
+                  const dt = new Date(layer.ran_at)
+                  if (Number.isNaN(dt.getTime())) return layer.ran_at.slice(0, 16).replace("T", " ")
+                  return lang === "th"
+                    ? dt.toLocaleString("th-TH", {
+                        timeZone: "Asia/Bangkok",
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }) + " น."
+                    : dt.toLocaleString("en-GB", {
+                        timeZone: "Asia/Bangkok",
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }) + " ICT"
+                })()
+              : lang === "th"
+                ? "ยังไม่เคยตรวจ"
+                : "Never run"
+            const metricEntries = Object.entries(layer.metrics || {}).filter(
+              ([, v]) => v !== null && v !== undefined && typeof v !== "object",
+            )
+            const thresholdRules =
+              thresholdRulesMap[layer.layer]?.[lang] ??
+              (layer.threshold_summary ? [layer.threshold_summary] : [])
+            const roleLabel =
+              layer.role === "baseline"
+                ? lang === "th"
+                  ? "รุ่นอ้างอิงหลัก"
+                  : "Baseline"
+                : layer.role === "candidate"
+                  ? lang === "th"
+                    ? "รุ่นทดสอบใหม่"
+                    : "Candidate"
+                  : layer.role
+            const LayerIcon =
+              layer.layer === "code_tests"
+                ? ShieldCheck
+                : layer.layer === "data_quality"
+                  ? Database
+                  : layer.layer === "statistical_validation"
+                    ? ChartNoAxesCombined
+                    : ClipboardList
+
+            return (
+              <article
+                key={layer.layer}
+                className={`flex min-w-0 flex-col justify-between rounded-2xl border bg-card p-4 sm:p-5 ${meta.border}`}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-secondary">
+                        <LayerIcon aria-hidden="true" className="size-4 text-foreground" />
+                      </span>
+                      <div>
+                        <h3 className="text-sm font-semibold leading-5 text-foreground">
+                          {layerTitles[layer.layer]?.[lang] ??
+                            (lang === "th" ? layer.title_th : layer.title_en)}
+                        </h3>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className={`rounded-full border px-2 py-0.5 font-semibold ${meta.pill}`}>
+                            {lang === "th" ? meta.labelTh : meta.labelEn}
+                            {layer.is_stale && layer.age_hours != null
+                              ? lang === "th"
+                                ? ` (${Math.round(layer.age_hours)} ชม. / เกิน ${Math.round(layer.stale_after_hours)} ชม.)`
+                                : ` (${Math.round(layer.age_hours)}h > ${Math.round(layer.stale_after_hours)}h)`
+                              : ""}
+                          </span>
+                          <span className="rounded-full border border-border bg-secondary/70 px-2 py-0.5 font-medium text-muted-foreground">
+                            {layer.review_mode === "deterministic"
+                              ? lang === "th"
+                                ? "ตรวจอัตโนมัติตามเกณฑ์"
+                                : "Deterministic Test"
+                              : lang === "th"
+                                ? "ตรวจอัตโนมัติร่วมกับผู้เชี่ยวชาญ"
+                                : "Deterministic + Human Review"}
+                          </span>
+                          {roleLabel && (
+                            <span className="rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                              {roleLabel}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {metricEntries.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {metricEntries.slice(0, 6).map(([k, v]) => {
+                        const def = metricDictionary[k]
+                        const metricLabel = def ? def[lang] : k.replaceAll("_", " ")
+                        const unit = def ? (lang === "th" ? def.unitTh ?? "" : def.unitEn ?? "") : ""
+                        const formattedVal =
+                          typeof v === "boolean"
+                            ? v
+                              ? lang === "th"
+                                ? "ผ่าน"
+                                : "Yes"
+                              : lang === "th"
+                                ? "ไม่ผ่าน"
+                                : "No"
+                            : `${v}${unit}`
+                        return (
+                          <div key={k} className="rounded-xl border border-border/70 bg-secondary/35 px-3 py-2">
+                            <p className="text-[11px] leading-4 text-muted-foreground">{metricLabel}</p>
+                            <p className="mt-1 font-display text-sm font-semibold tabular-nums text-foreground">
+                              {formattedVal}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
+                      {lang === "th"
+                        ? "ยังไม่มีบันทึกผลการตรวจสอบในชั้นนี้ ไม่ควรตีความว่าผ่านเกณฑ์"
+                        : "No recorded evaluation run for this layer yet; must not be interpreted as passed."}
+                    </p>
+                  )}
+
+                  {layer.ai_assisted_review && (
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs leading-5 text-amber-900 dark:text-amber-300">
+                      <span className="font-semibold">
+                        {lang === "th" ? "หมายเหตุการตรวจร่วมกับผู้เชี่ยวชาญ: " : "Human Review Note: "}
+                      </span>
+                      {lang === "th"
+                        ? "การตรวจอ้างอิงเอกสารเป็นการยืนยันชื่อเอกสารและเลขหน้าเท่านั้น ส่วนความถูกต้องเชิงเนื้อหาคำตอบด้านสิทธิ์หนี้ต้องมีเจ้าหน้าที่สุ่มตรวจประกอบ ไม่ถือเป็นตรารับรองอัตโนมัติ"
+                        : "Citation checks verify document/page provenance only; semantic accuracy of debt-relief claims requires human spot-checking and is not an automated certification."}
+                    </div>
+                  )}
+
+                  {(layer.failures.length > 0 || layer.warnings.length > 0) && (
+                    <details className="rounded-xl border border-border/80 bg-secondary/30 px-3 py-2 text-xs">
+                      <summary className="cursor-pointer font-medium text-foreground">
+                        {lang === "th"
+                          ? `ดูข้อผิดพลาดและข้อจำกัด (${layer.failures.length} ข้อผิดพลาด · ${layer.warnings.length} คำเตือน)`
+                          : `View failures & caveats (${layer.failures.length} failures · ${layer.warnings.length} warnings)`}
+                      </summary>
+                      <ul className="mt-2 space-y-1.5 text-xs leading-5">
+                        {layer.failures.map((f, idx) => (
+                          <li key={`f-${idx}`} className="text-red-700 dark:text-red-400">
+                            • [{f.check || f.case || "failure"}] {f.reason || `observed=${f.observed}, expected=${f.expected}`}
+                          </li>
+                        ))}
+                        {layer.warnings.map((w, idx) => (
+                          <li key={`w-${idx}`} className="text-amber-700 dark:text-amber-400">
+                            • [{w.check || w.case || "warning"}] {w.reason || `observed=${w.observed}, expected=${w.expected}`}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                 </div>
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary">
-                  <item.icon aria-hidden="true" className="size-4" />
-                </span>
-              </div>
-              <p className="mt-2.5 text-xs leading-5 text-muted-foreground">{item.detail}</p>
-            </article>
-          ))}
+
+                <div className="mt-4 space-y-2.5 border-t border-border/70 pt-3.5">
+                  <div className="rounded-xl border border-border/70 bg-secondary/30 px-3.5 py-2.5 text-xs leading-5">
+                    <p className="font-semibold text-foreground">
+                      {lang === "th" ? "เกณฑ์ผ่านของชั้นนี้" : "Pass Criteria"}
+                    </p>
+                    <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                      {thresholdRules.map((rule, i) => (
+                        <li key={i} className="flex items-start gap-1.5">
+                          <span aria-hidden="true" className="mt-0.5 text-foreground/60">•</span>
+                          <span>{rule}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 border-t border-border/60 pt-1.5 text-[11px] text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {lang === "th" ? "รอบการตรวจ:" : "Schedule:"}
+                      </span>{" "}
+                      {lang === "th" ? layer.trigger_policy_th : layer.trigger_policy_en}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="tabular-nums">
+                      {lang === "th"
+                        ? `จำนวนตัวอย่าง ${layer.sample_size ?? 0} · ตรวจล่าสุด ${ranLabel}`
+                        : `Samples ${layer.sample_size ?? 0} · Last run ${ranLabel}`}
+                    </span>
+                    <details className="group">
+                      <summary className="cursor-pointer list-none font-medium text-foreground/80 underline decoration-border underline-offset-2 hover:text-foreground">
+                        {lang === "th" ? "ดูรหัสรอบตรวจและรุ่นข้อมูล" : "Audit lineage"}
+                      </summary>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] tabular-nums">
+                        {layer.run_id && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `รหัสรอบ: ${layer.run_id}` : `run: ${layer.run_id}`}
+                          </span>
+                        )}
+                        {layer.git_commit && layer.git_commit !== "unrecorded" && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `รหัสโค้ด: ${layer.git_commit}` : `commit: ${layer.git_commit}`}
+                          </span>
+                        )}
+                        {layer.feature_spec_version && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `รุ่นตัวแปร: v${layer.feature_spec_version}` : `spec: v${layer.feature_spec_version}`}
+                          </span>
+                        )}
+                        {layer.prompt_version && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `ชุดคำสั่ง: ${layer.prompt_version}` : `prompt: ${layer.prompt_version}`}
+                          </span>
+                        )}
+                        {layer.rag_index_version && layer.rag_index_version !== "unrecorded" && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `ดัชนีเอกสาร: ${layer.rag_index_version}` : `index: ${layer.rag_index_version}`}
+                          </span>
+                        )}
+                        {layer.dataset_cutoff && (
+                          <span className="rounded-md bg-secondary px-2 py-0.5">
+                            {lang === "th" ? `วันตัดยอดข้อมูล: ${layer.dataset_cutoff}` : `cutoff: ${layer.dataset_cutoff}`}
+                          </span>
+                        )}
+                      </div>
+                    </details>
+                  </div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold">
+                {lang === "th"
+                  ? "การเทียบผลรุ่นอ้างอิงหลักกับรุ่นทดสอบใหม่"
+                  : "Baseline vs Candidate Experiment Comparison"}
+              </h3>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {lang === "th"
+                  ? "ทุกครั้งที่ปรับตัวแปรหรืออัปเดตคลังเอกสาร ให้ทดสอบเป็นรุ่นทดสอบใหม่เพื่อเทียบผลต่างกับรุ่นหลักก่อนอนุมัติใช้งานจริง"
+                  : "Whenever modifying feature_specs.yaml or RAG prompt/index, run with --role candidate to inspect deltas before promotion."}
+              </p>
+            </div>
+          </div>
+
+          {(health?.layered_evaluation?.baseline_vs_candidate?.length ?? 0) > 0 ? (
+            <div className="mt-4 space-y-3">
+              {health!.layered_evaluation!.baseline_vs_candidate.map((cmp) => (
+                <div key={cmp.layer} className="rounded-xl border border-border bg-secondary/25 p-3.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{cmp.layer}</span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                        cmp.promotion_ready
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400"
+                      }`}
+                    >
+                      {cmp.promotion_ready
+                        ? lang === "th"
+                          ? "ผ่านเกณฑ์พร้อมพิจารณาอนุมัติ"
+                          : "Eligible for Promotion"
+                        : lang === "th"
+                          ? "ยังไม่ผ่านเกณฑ์ — คงรุ่นเดิมไว้"
+                          : "Blocked — Keep Baseline"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {lang === "th"
+                      ? `รุ่นหลัก (${cmp.baseline_run_id}) เทียบกับ รุ่นทดสอบ (${cmp.candidate_run_id})`
+                      : `Baseline (${cmp.baseline_run_id}, ${cmp.baseline_status}) vs Candidate (${cmp.candidate_run_id}, ${cmp.candidate_status})`}
+                  </p>
+                  <div className="mt-2.5 overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <th className="py-1.5 pr-3">{lang === "th" ? "ตัวชี้วัด" : "Metric"}</th>
+                          <th className="py-1.5 px-2 text-right">{lang === "th" ? "รุ่นหลัก" : "Baseline"}</th>
+                          <th className="py-1.5 px-2 text-right">{lang === "th" ? "รุ่นทดสอบ" : "Candidate"}</th>
+                          <th className="py-1.5 pl-2 text-right">{lang === "th" ? "ส่วนต่าง" : "Delta"}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cmp.metric_deltas.map((d) => (
+                          <tr key={d.metric} className="border-b border-border/50 last:border-0 tabular-nums">
+                            <td className="py-1 pr-3 font-medium text-foreground">{d.metric}</td>
+                            <td className="py-1 px-2 text-right">{d.baseline}</td>
+                            <td className="py-1 px-2 text-right">{d.candidate}</td>
+                            <td
+                              className={`py-1 pl-2 text-right font-semibold ${
+                                d.delta > 0
+                                  ? "text-emerald-700 dark:text-emerald-400"
+                                  : d.delta < 0
+                                    ? "text-amber-700 dark:text-amber-400"
+                                    : "text-muted-foreground"
+                              }`}
+                            >
+                              {d.delta > 0 ? `+${d.delta}` : d.delta}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 rounded-xl border border-dashed border-border px-3.5 py-3 text-xs leading-5 text-muted-foreground">
+              <p>
+                {lang === "th"
+                  ? "ขณะนี้ยังไม่มีชุดทดสอบใหม่รอเปรียบเทียบ (ระบบกำลังใช้งานรุ่นอ้างอิงหลักอยู่)"
+                  : "No active candidate run is pending comparison (production is currently using the baseline run)."}
+              </p>
+              <details className="mt-1.5">
+                <summary className="cursor-pointer text-[11px] font-medium text-foreground/80 underline decoration-border underline-offset-2 hover:text-foreground">
+                  {lang === "th" ? "ดูคำสั่งสำหรับสร้างรอบทดสอบเปรียบเทียบ" : "Show CLI command to create a candidate run"}
+                </summary>
+                <code className="mt-1.5 block break-all rounded-lg bg-secondary px-2.5 py-1.5 font-mono text-[11px] text-foreground">
+                  python -m src.evaluation.layered_eval --layer all_deterministic --role candidate
+                </code>
+              </details>
+            </div>
+          )}
         </div>
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-2xl border border-border bg-card p-5">
+        <section className="min-w-0 rounded-2xl border border-border bg-card p-4 sm:p-5">
           <h2 className="text-sm font-semibold">
             {lang === "th"
               ? `คลังเอกสารทางการที่ใช้ตอบคำถาม (${health?.indexed_official_documents.length ?? 0} ฉบับ)`
@@ -3395,17 +4062,17 @@ function DataHealthView({
             {(health?.indexed_official_documents ?? []).map((doc) => (
               <li
                 key={doc.doc_title}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border px-3.5 py-2.5 text-xs"
+                className="flex flex-col items-start justify-between gap-1.5 rounded-xl border border-border px-3.5 py-2.5 text-xs sm:flex-row sm:items-center sm:gap-3"
               >
                 <a
                   href={doc.doc_url || "#"}
                   target="_blank"
                   rel="noreferrer"
-                  className="min-w-0 truncate font-medium text-foreground hover:underline"
+                  className="min-w-0 break-words font-medium leading-5 text-foreground hover:underline sm:truncate"
                 >
-                  {doc.doc_title}
+                  {lang === "th" ? doc.doc_title.replace(/\s*\(Responsible Lending\)/gi, "") : doc.doc_title}
                 </a>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                <span className="shrink-0 rounded-full bg-secondary/70 px-2.5 py-0.5 text-[11px] tabular-nums text-muted-foreground sm:bg-transparent sm:p-0">
                   {lang === "th"
                     ? `${doc.page_count} หน้า · ${doc.chunk_count} ส่วนข้อความ`
                     : `${doc.page_count}p · ${doc.chunk_count} chunks`}
@@ -3415,7 +4082,7 @@ function DataHealthView({
           </ul>
         </section>
 
-        <section className="rounded-2xl border border-border bg-card p-5">
+        <section className="min-w-0 rounded-2xl border border-border bg-card p-4 sm:p-5">
           <h2 className="text-sm font-semibold">
             {lang === "th"
               ? "รายการข้อมูลที่ระบบคัดแยกออกเนื่องจากไม่เข้าเกณฑ์"
@@ -3425,10 +4092,10 @@ function DataHealthView({
             {(health?.quarantine_breakdown ?? []).map((q, idx) => (
               <li
                 key={idx}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border px-3.5 py-2.5 text-xs"
+                className="flex items-start justify-between gap-3 rounded-xl border border-border px-3.5 py-2.5 text-xs sm:items-center"
               >
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-foreground">
+                <div className="min-w-0 flex-1">
+                  <p className="break-words font-medium leading-5 text-foreground sm:truncate">
                     {translateQuarantineReason(q.error_reason, lang)}
                   </p>
                 </div>

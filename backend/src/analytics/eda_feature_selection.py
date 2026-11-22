@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,12 @@ from scipy import stats
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from src.db.connection import bulk_execute, fetch_all, get_connection
+from src.config.feature_registry import (
+    get_git_commit_short,
+    get_spec_version,
+    get_validation_policy,
+)
+from src.db.connection import atomic_replace_table, bulk_execute, fetch_all, get_connection
 from src.transform.panel_builder import (
     build_monthly_analysis_panel,
     build_provincial_structural_profile,
@@ -111,10 +117,13 @@ def screen_monthly_panel_features(
     panel: pd.DataFrame,
     target_col: str = "occupancy_deseason",
     max_lag: int = 2,
-    alpha: float = 0.05,
-    max_vif: float = 5.0,
+    alpha: float | None = None,
+    max_vif: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Run within province lag correlation, controlled fixed effects OLS, and VIF pruning."""
+    policy = get_validation_policy()
+    alpha = float(policy["alpha_threshold"]) if alpha is None else float(alpha)
+    max_vif = float(policy["max_vif"]) if max_vif is None else float(max_vif)
     df = panel.sort_values(["province_code", "period_date"]).copy()
     records: list[dict[str, Any]] = []
     lag_matrix_rows: list[dict[str, Any]] = []
@@ -123,7 +132,6 @@ def screen_monthly_panel_features(
         if feat not in df.columns:
             continue
         missing_pct = round(float(df[feat].isna().mean() * 100.0), 2)
-        best_row: dict[str, Any] | None = None
 
         for lag in range(max_lag + 1):
             # Shift strictly within each province to prevent cross province leakage
@@ -132,7 +140,7 @@ def screen_monthly_panel_features(
             if len(pair) < 30 or pair["x"].nunique() < 3:
                 continue
 
-            pr, pp = stats.pearsonr(pair["x"], pair["y"])
+            pr, _ = stats.pearsonr(pair["x"], pair["y"])
             sr, sp = stats.spearmanr(pair["x"], pair["y"])
             lag_matrix_rows.append(
                 {
@@ -142,24 +150,45 @@ def screen_monthly_panel_features(
                     "pearson_r": float(pr),
                     "spearman_r": float(sr),
                     "p_value": float(sp),
+                    "missing_pct": missing_pct,
                     "n_obs": int(len(pair)),
                 }
             )
-            score = abs(float(sr))
-            if best_row is None or score > abs(best_row["spearman_r"]):
-                best_row = {
-                    "feature_name": feat,
-                    "dataset_name": dataset,
-                    "target_name": target_col,
-                    "best_lag_months": lag,
-                    "pearson_r": round(float(pr), 4),
-                    "spearman_r": round(float(sr), 4),
-                    "p_value": round(float(sp), 6),
-                    "missing_pct": missing_pct,
-                }
 
-        if best_row is not None:
-            records.append(best_row)
+    # Apply true Benjamini Hochberg FDR across ALL feature lag hypotheses BEFORE selecting best lag
+    lag_df_all = pd.DataFrame(lag_matrix_rows)
+    if not lag_df_all.empty:
+        raw_p_all = lag_df_all["p_value"].to_numpy(dtype=float)
+        m_total = len(raw_p_all)
+        order = np.argsort(raw_p_all)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(1, m_total + 1)
+        fdr_vals = np.minimum(1.0, raw_p_all * (float(m_total) / ranks))
+        fdr_sorted = np.minimum.accumulate(fdr_vals[order][::-1])[::-1]
+        fdr_final = np.empty_like(fdr_vals)
+        fdr_final[order] = np.round(fdr_sorted, 6)
+        lag_df_all["p_value_fdr"] = fdr_final
+
+        for feat, grp_f in lag_df_all.groupby("feature_name", sort=False):
+            best = grp_f.sort_values(
+                by=["p_value_fdr", "spearman_r"],
+                key=lambda col: col.abs() if col.name == "spearman_r" else col,
+                ascending=[True, False],
+            ).iloc[0]
+            records.append(
+                {
+                    "feature_name": str(feat),
+                    "dataset_name": str(best["dataset_name"]),
+                    "target_name": target_col,
+                    "best_lag_months": int(best["lag"]),
+                    "pearson_r": round(float(best["pearson_r"]), 4),
+                    "spearman_r": round(float(best["spearman_r"]), 4),
+                    "p_value": round(float(best["p_value"]), 6),
+                    "p_value_fdr": round(float(best["p_value_fdr"]), 6),
+                    "missing_pct": float(best["missing_pct"]),
+                }
+            )
+    n_tests = len(lag_matrix_rows)
 
     # Permanently audit sparse news coverage to enforce media bias guardrail
     news_prov_rows = fetch_all("SELECT count(DISTINCT province_code) AS n FROM silver.news_events")
@@ -174,16 +203,17 @@ def screen_monthly_panel_features(
             "pearson_r": None,
             "spearman_r": None,
             "p_value": None,
+            "p_value_fdr": None,
             "missing_pct": round(100.0 - news_cov_pct, 2),
         }
     )
 
     res_df = pd.DataFrame(records)
 
-    # Filter statistically significant dynamic candidates with acceptable coverage
+    # Strictly require Benjamini Hochberg FDR pass across all feature lag hypotheses
     sig_mask = (
-        res_df["p_value"].notna()
-        & (res_df["p_value"] < alpha)
+        res_df["p_value_fdr"].notna()
+        & (res_df["p_value_fdr"] < alpha)
         & (res_df["missing_pct"] <= 30.0)
     )
     sig_df = res_df[sig_mask].sort_values("spearman_r", key=lambda s: s.abs(), ascending=False)
@@ -206,6 +236,7 @@ def screen_monthly_panel_features(
 
     for rec in res_df.to_dict(orient="records"):
         feat = rec["feature_name"]
+        p_fdr = rec.get("p_value_fdr")
         if feat == "news_shock_count":
             vifs_col.append(None)
             sel_col.append(False)
@@ -219,26 +250,36 @@ def screen_monthly_panel_features(
         elif rec["p_value"] is None or rec["p_value"] >= alpha:
             vifs_col.append(None)
             sel_col.append(False)
-            reason_col.append(f"Dropped because not statistically significant (p={rec['p_value']})")
+            reason_col.append(f"Exploratory screen dropped (raw p={rec['p_value']}, FDR q={p_fdr})")
+        elif p_fdr is None or p_fdr >= alpha:
+            vifs_col.append(None)
+            sel_col.append(False)
+            reason_col.append(
+                f"Exploratory only passed raw p ({rec['p_value']}) but failed Benjamini Hochberg FDR (q={p_fdr})"
+            )
         elif feat in dropped_vifs:
             vifs_col.append(dropped_vifs[feat])
             sel_col.append(False)
-            reason_col.append(f"Dropped due to multicollinearity (VIF={dropped_vifs[feat]})")
+            reason_col.append(f"Dropped due to multicollinearity (VIF={dropped_vifs[feat]}, FDR q={p_fdr})")
         elif feat in selected_set:
             vifs_col.append(final_vifs.get(feat, 1.0))
             sel_col.append(True)
-            reason_col.append(f"Selected (p={rec['p_value']}, VIF={final_vifs.get(feat, 1.0)})")
+            reason_col.append(f"Exploratory selected (raw p={rec['p_value']}, FDR q={p_fdr}, VIF={final_vifs.get(feat, 1.0)})")
         else:
             vifs_col.append(None)
             sel_col.append(False)
-            reason_col.append("Not selected")
+            reason_col.append(f"Exploratory screen not selected (FDR q={p_fdr})")
 
     res_df["vif_score"] = vifs_col
     res_df["is_selected"] = sel_col
     res_df["decision_reason"] = reason_col
 
-    # Run province clustered OLS controlling for macro variables simultaneously
+    # Run true within province fixed effects OLS controlling for macro variables simultaneously
     ols_summary = _run_controlled_panel_ols(df, target_col, selected_feats, lag_lookup)
+    ols_summary["analysis_scope"] = "exploratory_within_province_screening_not_causal"
+    ols_summary["multiple_testing_correction"] = "benjamini_hochberg_fdr_all_feature_lag_hypotheses"
+    ols_summary["autocorrelation_caveat"] = "Univariate Spearman p values assume iid observations; rely on province FE clustered OLS for panel dependence"
+    ols_summary["total_lag_hypotheses_tested"] = int(n_tests)
     return res_df, pd.DataFrame(lag_matrix_rows), ols_summary
 
 
@@ -248,7 +289,7 @@ def _run_controlled_panel_ols(
     selected_feats: list[str],
     lag_lookup: dict[str, int],
 ) -> dict[str, Any]:
-    """Estimate standardized OLS with province clustered standard errors controlling for macro shocks."""
+    """Estimate within province fixed effects OLS with small sample province clustered standard errors."""
     control_cols = ["th_cpi_yoy_pct", "oil_brent_yoy_pct", "usdthb_yoy_pct", "thai_rice_usd_yoy_pct"]
     model_cols = list(dict.fromkeys(selected_feats + [c for c in control_cols if c in df.columns]))
 
@@ -259,36 +300,48 @@ def _run_controlled_panel_ols(
     reg_df = reg_df.dropna()
 
     if len(reg_df) < 50 or not model_cols:
-        return {"n_obs": int(len(reg_df)), "r2": 0.0, "terms": {}}
+        return {"n_obs": int(len(reg_df)), "r2_within": 0.0, "province_fixed_effects": True, "terms": {}}
 
     # Prune macro collinearity inside OLS design matrix for clean inference
     clean_cols, _, _ = _iterative_vif_prune(reg_df, model_cols, max_vif=6.0)
-    x_raw = reg_df[clean_cols]
-    x_std = (x_raw - x_raw.mean()) / x_raw.std(ddof=0).replace(0, 1.0)
-    x_mat = np.column_stack([np.ones(len(x_std), dtype=float), x_std.to_numpy(dtype=float)])
-    y_vec = reg_df["y"].to_numpy(dtype=float)
-    n_obs, k_params = x_mat.shape
+    if not clean_cols:
+        return {"n_obs": int(len(reg_df)), "r2_within": 0.0, "province_fixed_effects": True, "terms": {}}
 
-    # Vectorized OLS with Liang Zeger province clustered sandwich covariance
-    bread = np.linalg.pinv(x_mat.T @ x_mat)
-    beta = bread @ (x_mat.T @ y_vec)
-    resid = y_vec - (x_mat @ beta)
+    # Apply within province entity demeaning to absorb all time invariant province fixed effects
+    fe_grp = reg_df.groupby("province_code", sort=False)
+    y_within = (reg_df["y"] - fe_grp["y"].transform("mean")).to_numpy(dtype=float)
+    x_within_df = pd.DataFrame(index=reg_df.index)
+    for col in clean_cols:
+        demeaned = reg_df[col] - fe_grp[col].transform("mean")
+        std_val = float(demeaned.std(ddof=0))
+        x_within_df[col] = demeaned / (std_val if std_val > 1e-9 else 1.0)
 
-    ss_res = float(np.sum(resid**2))
-    ss_tot = float(np.sum((y_vec - np.mean(y_vec)) ** 2))
-    r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-    adj_r2 = 1.0 - (1.0 - r2) * (n_obs - 1) / max(n_obs - k_params, 1)
+    x_mat = x_within_df.to_numpy(dtype=float)
+    n_obs, k_slopes = x_mat.shape
 
     groups = reg_df["province_code"].to_numpy()
     unique_groups = np.unique(groups)
     n_groups = len(unique_groups)
-    meat = np.zeros((k_params, k_params), dtype=float)
+
+    # Vectorized within estimator with Liang Zeger province clustered sandwich covariance
+    bread = np.linalg.pinv(x_mat.T @ x_mat)
+    beta = bread @ (x_mat.T @ y_within)
+    resid = y_within - (x_mat @ beta)
+
+    ss_res = float(np.sum(resid**2))
+    ss_tot = float(np.sum(y_within**2))
+    r2_within = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+    dof_denom = max(n_obs - k_slopes - n_groups, 1)
+    adj_r2_within = 1.0 - (1.0 - r2_within) * max(n_obs - n_groups, 1) / dof_denom
+
+    meat = np.zeros((k_slopes, k_slopes), dtype=float)
     for g in unique_groups:
         mask = groups == g
         score_g = x_mat[mask].T @ resid[mask]
         meat += np.outer(score_g, score_g)
 
-    dof_scale = (n_groups / max(n_groups - 1, 1)) * ((n_obs - 1) / max(n_obs - k_params, 1))
+    # Small sample cluster correction accounting for absorbed province fixed effects
+    dof_scale = (n_groups / max(n_groups - 1, 1)) * ((n_obs - 1) / dof_denom)
     cov_cluster = dof_scale * (bread @ meat @ bread)
     se = np.sqrt(np.maximum(np.diag(cov_cluster), 1e-12))
     t_stats = beta / se
@@ -296,17 +349,22 @@ def _run_controlled_panel_ols(
 
     terms = {
         col: {
-            "std_beta": round(float(beta[idx + 1]), 4),
-            "p_value": round(float(p_vals[idx + 1]), 5),
+            "std_beta": round(float(beta[idx]), 4),
+            "se_cluster": round(float(se[idx]), 4),
+            "p_value": round(float(p_vals[idx]), 5),
         }
         for idx, col in enumerate(clean_cols)
     }
     return {
         "target": target_col,
+        "estimator": "within_province_fixed_effects_ols",
+        "province_fixed_effects": True,
         "n_obs": int(n_obs),
         "n_clusters": int(n_groups),
-        "r2": round(float(r2), 4),
-        "adj_r2": round(float(adj_r2), 4),
+        "small_cluster_count_warning": n_groups < 30,
+        "r2": round(float(r2_within), 4),
+        "r2_within": round(float(r2_within), 4),
+        "adj_r2": round(float(adj_r2_within), 4),
         "terms": terms,
     }
 
@@ -392,12 +450,8 @@ def screen_structural_clustering_features(
 
 
 def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[str, Any]) -> int:
-    """Persist empirical screening audit table into gold.feature_screening_results."""
-    with get_connection() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM gold.feature_screening_results")
-        cur.close()
-
+    """Persist empirical screening audit table atomically into gold.feature_screening_results with run lineage."""
+    run_id = f"eda_{uuid.uuid4().hex[:12]}"
     rows = []
     for rec in combined_df.to_dict(orient="records"):
         rows.append(
@@ -427,8 +481,17 @@ def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[
             :is_selected, :decision_reason
         )
     """
-    inserted = bulk_execute(insert_sql, rows)
+    inserted = atomic_replace_table("DELETE FROM gold.feature_screening_results", insert_sql, rows)
 
+    lineage_payload = {
+        "run_id": run_id,
+        "git_commit": get_git_commit_short(),
+        "feature_spec_version": get_spec_version(),
+        "validation_policy": get_validation_policy(),
+        "analysis_scope": "exploratory_within_province_screening_not_causal",
+        "strict_fdr_enforced": True,
+        **ols_summary,
+    }
     bulk_execute(
         """
         INSERT INTO gold.pipeline_eval_runs (run_type, metrics_json, token_count, estimated_cost_thb)
@@ -437,7 +500,7 @@ def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[
         [
             {
                 "run_type": "eda_feature_screening",
-                "metrics_json": json.dumps(ols_summary, ensure_ascii=False),
+                "metrics_json": json.dumps(lineage_payload, ensure_ascii=False),
             }
         ],
     )
@@ -577,22 +640,33 @@ def run_full_eda_screening() -> dict[str, Any]:
     )
     figures = plot_eda_figures(panel, struct, lag_occ_df, struct_screen)
 
+    def json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+        """Return records with missing pandas values represented as JSON null, not NaN."""
+        clean = frame.astype(object).where(pd.notna(frame), None)
+        return clean.to_dict(orient="records")
+
     return {
         "neon_rows_saved": saved_rows,
-        "selected_dynamic_occ": occ_screen[occ_screen["is_selected"]][
-            ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
-        ].to_dict(orient="records"),
-        "selected_dynamic_rev": rev_screen[rev_screen["is_selected"]][
-            ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
-        ].to_dict(orient="records"),
-        "selected_dynamic_yoy": yoy_screen[yoy_screen["is_selected"]][
-            ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
-        ].to_dict(orient="records"),
+        "selected_dynamic_occ": json_records(
+            occ_screen[occ_screen["is_selected"]][
+                ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
+            ]
+        ),
+        "selected_dynamic_rev": json_records(
+            rev_screen[rev_screen["is_selected"]][
+                ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
+            ]
+        ),
+        "selected_dynamic_yoy": json_records(
+            yoy_screen[yoy_screen["is_selected"]][
+                ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]
+            ]
+        ),
         "ols_occupancy": ols_occ,
         "ols_revenue": ols_rev,
         "selected_structural_clustering": selected_struct,
-        "structural_table": struct_screen[["feature_name", "vif_score", "is_selected", "decision_reason"]].to_dict(
-            orient="records"
+        "structural_table": json_records(
+            struct_screen[["feature_name", "vif_score", "is_selected", "decision_reason"]]
         ),
         "figures": [str(p) for p in figures],
     }

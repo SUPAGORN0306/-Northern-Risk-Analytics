@@ -18,10 +18,14 @@ services:
       - key: GEMINI_EMBEDDING_MODEL
         value: gemini-embedding-001
       - key: ALLOWED_ORIGINS
-        value: http://localhost:3000
+        value: https://northrisk.vercel.app,http://localhost:3000
+      - key: ALLOWED_ORIGIN_REGEX
+        value: https://(northrisk|northern-risk-analytics)[a-z0-9-]*\.vercel\.app
+      - key: ALLOW_DEMO_STAFF_ACCESS
+        value: "false"
       - key: STAFF_AUTH_SECRET
         generateValue: true
       - key: STAFF_DEMO_USERNAME
-        value: analyst
+        sync: false
       - key: STAFF_DEMO_PASSWORD
         sync: false

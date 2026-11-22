@@ -10,7 +10,8 @@ export type FinancialDiagnostic = {
   cashReserve: number
   operatingCashflow: number
   netMonthlyCashflow: number
-  dsrPct: number
+  dsrPct: number | null
+  dsrZeroIncomeCritical: boolean
   dscr: number | null
   dscrStatus: "safe" | "tight" | "critical" | "na"
   runwayOpexMonths: number | null
@@ -19,7 +20,7 @@ export type FinancialDiagnostic = {
   stressedRevenue: number
   stressedOperatingCashflow: number
   stressedDscr: number | null
-  stressedDsrPct: number
+  stressedDsrPct: number | null
   stressedNetMonthlyCashflow: number
   stressedRunwayMonths: number | null
 }
@@ -40,7 +41,9 @@ export type LoanComparisonResult = {
   ruleCaptionTh: string
   ruleCaptionEn: string
   principalUsed: number
+  usesEstimatedPrincipal: boolean
   originalRatePct: number
+  usesAssumedRate: boolean
   policyRateLabel: string
   originalMonthlyPayment: number
   policyYear1Payment: number
@@ -119,7 +122,8 @@ export function computeFinancialDiagnostic(params: {
 
   const operatingCashflow = rev - opex
   const netMonthlyCashflow = operatingCashflow - debt
-  const dsrPct = rev > 0 ? Number(((debt / rev) * 100).toFixed(1)) : 0
+  const dsrZeroIncomeCritical = rev === 0 && debt > 0
+  const dsrPct = rev > 0 ? Number(((debt / rev) * 100).toFixed(1)) : debt > 0 ? null : 0
   const dscr = debt > 0 ? Number((operatingCashflow / debt).toFixed(2)) : null
 
   let dscrStatus: "safe" | "tight" | "critical" | "na" = "na"
@@ -136,7 +140,8 @@ export function computeFinancialDiagnostic(params: {
   const stressedRevenue = Math.round(rev * (1 - stressDropPct / 100))
   const stressedOperatingCashflow = stressedRevenue - opex
   const stressedDscr = debt > 0 ? Number((stressedOperatingCashflow / debt).toFixed(2)) : null
-  const stressedDsrPct = stressedRevenue > 0 ? Number(((debt / stressedRevenue) * 100).toFixed(1)) : 999
+  const stressedDsrPct =
+    stressedRevenue > 0 ? Number(((debt / stressedRevenue) * 100).toFixed(1)) : debt > 0 ? null : 0
   const stressedNetMonthlyCashflow = stressedOperatingCashflow - debt
   const stressedRunwayMonths =
     stressedNetMonthlyCashflow < 0
@@ -152,6 +157,7 @@ export function computeFinancialDiagnostic(params: {
     operatingCashflow,
     netMonthlyCashflow,
     dsrPct,
+    dsrZeroIncomeCritical,
     dscr,
     dscrStatus,
     runwayOpexMonths,
@@ -172,6 +178,7 @@ export function buildLoanComparison(params: {
   monthlyRevenue: number
   monthlyDebt: number
   totalPrincipalInput: number
+  customAnnualRatePct?: number
   borrowerAge: number
   clinicMonths: number
   deferMonths: number
@@ -184,6 +191,7 @@ export function buildLoanComparison(params: {
     monthlyRevenue,
     monthlyDebt,
     totalPrincipalInput,
+    customAnnualRatePct,
     borrowerAge,
     clinicMonths,
     deferMonths,
@@ -192,23 +200,26 @@ export function buildLoanComparison(params: {
   } = params
   if (monthlyDebt <= 0 && totalPrincipalInput <= 0) return null
 
-const defaultRatePct =
-  status === "overdue_120_plus" ? 18.0
-  : status === "overdue_31_120" ? 8.0
-  : status === "persistent" ? 25.0
-  : status === "disaster" ? 8.5
-  : isSme ? 9.5
-  : 10.5
+  const hasCustomRate = typeof customAnnualRatePct === "number" && Number.isFinite(customAnnualRatePct) && customAnnualRatePct > 0
+  const defaultRatePct =
+    status === "overdue_120_plus" ? 18.0
+    : status === "overdue_31_120" ? 8.0
+    : status === "persistent" ? 25.0
+    : status === "disaster" ? 8.5
+    : isSme ? 9.5
+    : 10.5
 
-const rEst = defaultRatePct / 100 / 12
-const estMonths = 48
-const estimatedPrincipal =
-  rEst > 0
-    ? Math.round(monthlyDebt * ((1 - Math.pow(1 + rEst, -estMonths)) / rEst))
-    : Math.round(monthlyDebt * estMonths)
+  const resolvedBaseRate = hasCustomRate ? Math.min(36.0, Math.max(0.5, customAnnualRatePct)) : defaultRatePct
+  const rEst = resolvedBaseRate / 100 / 12
+  const estMonths = 48
+  const estimatedPrincipal =
+    rEst > 0
+      ? Math.round(monthlyDebt * ((1 - Math.pow(1 + rEst, -estMonths)) / rEst))
+      : Math.round(monthlyDebt * estMonths)
 
-const principal = totalPrincipalInput > 0 ? totalPrincipalInput : estimatedPrincipal
-if (principal <= 0) return null
+  const usesEstimatedPrincipal = !(totalPrincipalInput > 0)
+  const principal = totalPrincipalInput > 0 ? totalPrincipalInput : estimatedPrincipal
+  if (principal <= 0) return null
 
   const userMonths =
     customHorizonYears && customHorizonYears > 0
@@ -217,68 +228,70 @@ if (principal <= 0) return null
 
   let mode: LoanComparisonResult["mode"] = "responsible_lending"
   let horizonMonths = userMonths
-  let origRate = 9.5
+  let origRate = resolvedBaseRate
   let policyRateLabel = ""
   let policyTitleTh = ""
   let policyTitleEn = ""
   let ruleCaptionTh = ""
   let ruleCaptionEn = ""
 
+  const rateSrcTh = hasCustomRate
+    ? `ตามอัตราดอกเบี้ยที่คุณกรอก ${origRate.toFixed(1)}% ต่อปี`
+    : `ภายใต้สมมติฐานดอกเบี้ยสัญญาเดิม ${origRate.toFixed(1)}% ต่อปี (ยังไม่ได้กรอกดอกเบี้ยจริง)`
+  const rateSrcEn = hasCustomRate
+    ? `using your entered ${origRate.toFixed(1)}% p.a. rate`
+    : `under an assumed ${origRate.toFixed(1)}% p.a. baseline rate (actual contract rate not entered)`
+
   if (status === "overdue_120_plus") {
     mode = "debt_clinic"
     horizonMonths = Math.max(12, Math.min(120, clinicMonths))
-    origRate = 18.0
     const clinicRate = horizonMonths <= 48 ? 3 : horizonMonths <= 84 ? 4 : 5
     policyRateLabel = `${clinicRate}%`
-    policyTitleTh = `คลินิกแก้หนี้ (ดอกเบี้ย ${clinicRate}% · ผ่อน ${horizonMonths} งวด)`
-    policyTitleEn = `Debt Clinic by SAM (${clinicRate}% p.a. · ${horizonMonths} mos)`
-    ruleCaptionTh = "เปรียบเทียบสัญญาบัตรเครดิต/สินเชื่อเดิม (ดอกเบี้ย 18%) กับคลินิกแก้หนี้ ดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี"
-    ruleCaptionEn = "Compares typical 18% unsecured loan against Debt Clinic by SAM 3 to 5% p.a. schedule."
+    policyTitleTh = `ตัวอย่างแผนคลินิกแก้หนี้ (ดอกเบี้ย ${clinicRate}% · ผ่อน ${horizonMonths} งวด)`
+    policyTitleEn = `Illustrative Debt Clinic Schedule (${clinicRate}% p.a. · ${horizonMonths} mos)`
+    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับเกณฑ์คลินิกแก้หนี้ 3 ถึง 5% ต่อปี (ต้องตรวจสอบคุณสมบัติจริงกับ SAM)`
+    ruleCaptionEn = `Illustrative comparison ${rateSrcEn} against Debt Clinic 3 to 5% p.a. schedule (actual eligibility verified by SAM).`
   } else if (status === "overdue_31_120") {
     mode = "khunsoo"
     horizonMonths = userMonths
-    origRate = 8.0
-    policyRateLabel = lang === "th" ? "พักดอกเบี้ย 3 ปี" : "3yr Interest Suspended"
-    policyTitleTh = "โครงการคุณสู้ เราช่วย (จ่ายค่างวด 50% / 70% / 90% · พักดอกเบี้ย 3 ปี)"
-    policyTitleEn = "Khun Soo Rao Chuay (50% / 70% / 90% · 3yr Interest Freeze)"
-    ruleCaptionTh = "ลดค่างวด 3 ปีแรกเพื่อให้ต่ำกว่ากำไรที่หาได้จริง พร้อมพักดอกเบี้ย 3 ปีโดยนำค่างวดทั้งหมดไปหักเงินต้น 100%"
-    ruleCaptionEn = "Years 1 to 3 suspend interest so 100% of stepped payments directly cut principal."
+    policyRateLabel = lang === "th" ? "ตัวอย่างขั้นบันได 3 ปี" : "Illustrative 3yr Step-Up"
+    policyTitleTh = "ตัวอย่างสถานการณ์ปรับค่างวดขั้นบันไดเพื่อเจรจากับเจ้าหนี้ (จ่าย 50% / 70% / 90%)"
+    policyTitleEn = "Illustrative Stepped Restructuring Scenario for Lender Negotiation (50% / 70% / 90%)"
+    ruleCaptionTh = `เป็นตัวอย่างแนวทางเจรจาลดค่างวดขั้นบันได (${rateSrcTh}) ไม่ใช่เงื่อนไขโครงการที่ธนาคารต้องอนุมัติอัตโนมัติ ทั้งนี้โครงการคุณสู้ เราช่วย ปิดรับสมัครใหม่แล้วเมื่อ 30 ก.ย. 2568`
+    ruleCaptionEn = `Illustrative 3 year negotiation scenario (${rateSrcEn}), not an automatic bank commitment. Khun Soo Rao Chuay closed new registration on 30 Sep 2025.`
   } else if (status === "persistent") {
     mode = "persistent_5y"
-    horizonMonths = userMonths
-    origRate = 25.0
-    policyRateLabel = lang === "th" ? "ดอกเบี้ยไม่เกิน 15%" : "Max 15%"
-    policyTitleTh = `มาตรการแก้หนี้เรื้อรังปิดจบใน ${Math.round(userMonths / 12)} ปี (ลดเพดานดอกเบี้ยไม่เกิน 15% ต่อปี)`
-    policyTitleEn = `Persistent Debt ${Math.round(userMonths / 12)} Year Exit (Max 15% p.a.)`
-    ruleCaptionTh = `เปลี่ยนหนี้หมุนเวียนดอกเบี้ย 25% ที่จ่ายแต่ดอกเบี้ยไม่จบ ให้เป็นค่างวดคงที่ปิดจบหนี้ได้จริงภายใน ${Math.round(userMonths / 12)} ปี`
-    ruleCaptionEn = `Compares 25% revolving minimum payments against ${userMonths} month payoff capped at 15% p.a.`
+    const pdMonths = Math.min(84, userMonths)
+    horizonMonths = pdMonths
+    policyRateLabel = lang === "th" ? "ดอกเบี้ยไม่เกิน 15% (สูงสุด 7 ปี)" : "Max 15% (Up to 7 yrs)"
+    policyTitleTh = `ตัวอย่างแผนปิดจบหนี้เรื้อรังภายในสูงสุด ${Math.round(pdMonths / 12)} ปี (เกณฑ์ปรับปรุง 1 ม.ค. 2568 · ดอกเบี้ยไม่เกิน 15%)`
+    policyTitleEn = `Illustrative Persistent Debt Exit up to ${Math.round(pdMonths / 12)} Years (2025 Rule · Max 15% p.a.)`
+    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับสินเชื่อผ่อนงวดดอกเบี้ยไม่เกิน 15% ปิดจบภายใน ${Math.round(pdMonths / 12)} ปี (เฉพาะสินเชื่อหมุนเวียน Non-NPL ที่เข้าเกณฑ์รายได้ ธปท.)`
+    ruleCaptionEn = `Illustrative comparison ${rateSrcEn} against ${pdMonths} month payoff capped at 15% p.a. (revolving Non-NPL borrowers meeting BOT income criteria).`
   } else if (status === "disaster") {
     mode = "disaster_defer"
     horizonMonths = userMonths
-    origRate = 8.5
     policyRateLabel = lang === "th" ? `พักเงินต้น ${deferMonths} เดือน` : `${deferMonths}m Deferral`
-    policyTitleTh = `มาตรการผู้ประสบภัยพิบัติ ธปท.ว. 2302/2568 (พักชำระเงินต้น ${deferMonths} เดือน)`
-    policyTitleEn = `2568 Disaster Relief Circular (${deferMonths}m Principal Deferral)`
-    ruleCaptionTh = `พักชำระเงินต้น ${deferMonths} เดือนแรก (จ่ายเฉพาะดอกเบี้ย) เพื่อให้มีเงินสดเหลือผ่านช่วงวิกฤตน้ำท่วม ฝุ่น หรือมลพิษทางน้ำ`
-    ruleCaptionEn = `Interest only relief for first ${deferMonths} months to protect cashflow during recovery.`
+    policyTitleTh = `ตัวอย่างแผนพักชำระเงินต้นผู้ประสบภัย (${deferMonths} เดือน · อ้างอิง ธปท.ว. 2302/2568)`
+    policyTitleEn = `Illustrative Disaster Principal Deferral (${deferMonths}m · Ref. Circular 2302/2568)`
+    ruleCaptionTh = `ประมาณการพักชำระเงินต้น ${deferMonths} เดือนแรก (${rateSrcTh}) เงื่อนไขจริงขึ้นอยู่กับการพิจารณาของเจ้าหนี้`
+    ruleCaptionEn = `Illustrative ${deferMonths} month interest only relief (${rateSrcEn}); final terms subject to lender approval.`
   } else if (isSme) {
     mode = "sme_3reduce"
     horizonMonths = userMonths
-    origRate = 9.5
     policyRateLabel = lang === "th" ? "หักเงินต้น 100% (2 ปีแรก)" : "100% Principal Cut (2 yrs)"
-    policyTitleTh = "มาตรการ 3 ลด ธนาคารพัฒนาวิสาหกิจขนาดกลางและขนาดย่อม (หักเงินต้น 100% นาน 2 ปี)"
-    policyTitleEn = "SME D Bank 3 Reduce Relief (100% Principal First for 2 Years)"
-    ruleCaptionTh = "ลดค่างวดลง 15% เพื่อให้จ่ายไหวตามกำไรจริง และนำค่างวด 24 เดือนแรกไปหักเงินต้น 100% พร้อมลดดอกเบี้ยในปีถัดไป"
-    ruleCaptionEn = "Simulates 100% principal first allocation for 24 months plus 15% payment ease and 6.5% rate after."
+    policyTitleTh = "ตัวอย่างแผนหักเงินต้นก่อนสำหรับผู้ประกอบการ SME (อ้างอิงรูปแบบ 3 ลด)"
+    policyTitleEn = "Illustrative SME Principal First Scenario (Ref. 3 Reduce Model)"
+    ruleCaptionTh = `ประมาณการลดค่างวด 15% และนำค่างวด 24 เดือนแรกหักเงินต้นก่อน (${rateSrcTh}) โปรดตรวจสอบเงื่อนไขจริงกับธนาคารเจ้าของบัญชี`
+    ruleCaptionEn = `Illustrative 24 month principal first schedule (${rateSrcEn}); verify actual terms with your lender.`
   } else {
     mode = "responsible_lending"
     horizonMonths = userMonths
-    origRate = 10.5
-    policyRateLabel = lang === "th" ? "ลดดอกเบี้ย 2% + ขยายงวด" : "Rate Reduced 2%"
-    policyTitleTh = "ปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (ตามหลักเกณฑ์ปี 2568)"
-    policyTitleEn = "Pre Emptive Restructuring (Responsible Lending 2568)"
-    ruleCaptionTh = "ปรับลดค่างวดรายเดือนให้อยู่ในระดับไม่เกิน 38% ของรายได้ พร้อมลดอัตราดอกเบี้ยโดยไม่มีค่าธรรมเนียม"
-    ruleCaptionEn = "Simulates payment alignment within a 38% DSR ceiling with lower interest and zero fee."
+    policyRateLabel = lang === "th" ? "ตัวอย่างลดดอกเบี้ย 2%" : "Illustrative -2% Rate"
+    policyTitleTh = "ตัวอย่างสถานการณ์ปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (Responsible Lending 2568)"
+    policyTitleEn = "Illustrative Pre Emptive Restructuring Scenario (Responsible Lending 2568)"
+    ruleCaptionTh = `ประมาณการปรับลดค่างวดและอัตราดอกเบี้ย (${rateSrcTh}) เพื่อใช้ประกอบการเจรจากับเจ้าหนี้ ไม่ใช่ข้อผูกพันอนุมัติ`
+    ruleCaptionEn = `Illustrative payment and rate reduction (${rateSrcEn}) to support lender negotiation, not an approval guarantee.`
   }
 
   const origMonthlyPay = monthlyDebt > 0 ? monthlyDebt : Math.round(calcAnnuityPayment(principal, origRate, horizonMonths))
@@ -479,7 +492,9 @@ let policyY1Pay = origMonthlyPay
     ruleCaptionTh,
     ruleCaptionEn,
     principalUsed: Math.round(principal),
+    usesEstimatedPrincipal,
     originalRatePct: origRate,
+    usesAssumedRate: !hasCustomRate,
     policyRateLabel,
     originalMonthlyPayment: Math.round(origMonthlyPay),
     policyYear1Payment: Math.round(policyY1Pay),
@@ -773,7 +788,7 @@ export function buildFinancialDossierHtml(params: {
     <div class="kpi">
       <div class="kpi-label">${lang === "th" ? "ค่างวดหนี้เดิม/เดือน" : "Current Debt Service"}</div>
       <div class="kpi-val">${fmt(diag.monthlyDebt)}</div>
-      <div class="kpi-sub">${lang === "th" ? `สัดส่วนหนี้ต่อรายได้ ${diag.dsrPct.toFixed(1)}%` : `DSR ${diag.dsrPct.toFixed(1)}%`}</div>
+      <div class="kpi-sub">${diag.dsrPct != null ? (lang === "th" ? `สัดส่วนค่างวดต่อรายได้รวม (Gross DSR) ${diag.dsrPct.toFixed(1)}%` : `Gross-Income DSR ${diag.dsrPct.toFixed(1)}%`) : (lang === "th" ? "สัดส่วนค่างวดต่อรายได้รวม คำนวณไม่ได้ (รายได้เป็น 0 · วิกฤต)" : "Gross-Income DSR Undefined (Zero Income · Critical)")}</div>
     </div>
     <div class="kpi">
       <div class="kpi-label">${lang === "th" ? "สถานะเงินเหลือหลังหักค่างวด" : "Net Monthly Cash Status"}</div>
@@ -798,7 +813,7 @@ export function buildFinancialDossierHtml(params: {
     comparison
       ? `
   <h2>${lang === "th" ? `2. ตารางเปรียบเทียบค่างวดและยอดหนี้คงเหลือ (${comparison.policyTitleTh})` : `2. Proposed Repayment Schedule (${comparison.policyTitleEn})`}</h2>
-  <div style="font-size:9.5px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)} · ประหยัดดอกเบี้ยจ่ายจริงเทียบสัญญาเดิม ${fmt(comparison.totalInterestSaved)}${comparison.grossWaivedInterest ? ` · มูลค่าดอกเบี้ยยกเว้น ${fmt(comparison.grossWaivedInterest)}` : ""}${comparison.payoffMonthPol ? ` · ปิดจบหนี้ใน ${Math.ceil(comparison.payoffMonthPol / 12)} ปี` : ""}` : `Principal ${fmt(comparison.principalUsed)} · Est. Interest Saved ${fmt(comparison.totalInterestSaved)}`})</div>
+  <div style="font-size:9.5px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (ประมาณการ)" : ""} · ประมาณการส่วนต่างดอกเบี้ย ${fmt(comparison.totalInterestSaved)}${comparison.usesAssumedRate ? ` (สมมติฐานดอกเบี้ยเดิม ${comparison.originalRatePct.toFixed(1)}%/ปี)` : ` (ดอกเบี้ยที่กรอก ${comparison.originalRatePct.toFixed(1)}%/ปี)`}${comparison.grossWaivedInterest ? ` · มูลค่าดอกเบี้ยยกเว้นตามตัวอย่าง ${fmt(comparison.grossWaivedInterest)}` : ""}${comparison.payoffMonthPol ? ` · คาดปิดจบใน ${Math.ceil(comparison.payoffMonthPol / 12)} ปี` : ""}` : `Principal ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (est.)" : ""} · Est. Interest Difference ${fmt(comparison.totalInterestSaved)} (${comparison.usesAssumedRate ? "assumed" : "entered"} ${comparison.originalRatePct.toFixed(1)}% p.a.)`})</div>
   <table>
     <thead>
       <tr>

@@ -26,12 +26,15 @@ class CitedSource:
 
 @dataclass(frozen=True)
 class VerificationResult:
-    """Outcome of groundedness and citation verification."""
+    """Outcome of citation provenance and retrieval threshold verification."""
 
     is_valid: bool
     should_refuse: bool
     reason: str
     verified_citations: tuple[CitedSource, ...]
+    citation_provenance_verified: bool = False
+    claim_factual_entailment_verified: bool = False
+    verification_scope: str = "retrieval_similarity_and_citation_provenance_only"
 
 
 def verify_rag_grounding(
@@ -93,6 +96,9 @@ def verify_rag_grounding(
     return VerificationResult(
         is_valid=True,
         should_refuse=False,
-        reason="All citations verified against retrieved policy chunks",
+        reason="Citation source existence verified against retrieved policy chunks (claim semantic entailment not evaluated)",
         verified_citations=tuple(verified),
+        citation_provenance_verified=True,
+        claim_factual_entailment_verified=False,
+        verification_scope="retrieval_similarity_and_citation_provenance_only",
     )

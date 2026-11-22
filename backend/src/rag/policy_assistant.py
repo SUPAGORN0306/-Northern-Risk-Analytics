@@ -35,6 +35,8 @@ CHAT_MODELS: tuple[str, ...] = (
     "gemini-3.5-flash-lite",
     "gemma-4-26b-a4b-it",
 )
+RAG_PROMPT_VERSION = "v3.2"
+_BM25_VERSION_CHECK_INTERVAL_SEC = 30.0
 _ALNUM_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _THAI_RUN_RE = re.compile(r"[\u0e00-\u0e7f]+")
 
@@ -86,9 +88,14 @@ APP_FEATURES_CONTEXT = (
     "3. ถาม-ตอบเรื่องแก้หนี้และสิทธิช่วยเหลือ: ค้นหาข้อมูลจากเอกสารทางการที่ระบบดึงมา พร้อมกดดูข้อความต้นฉบับตามเลขหน้าได้"
 )
 
-# Cached BM25 corpus state guarded by lock for thread-safe cold starts and cache invalidation
+# Cached BM25 corpus state guarded by lock with DB corpus fingerprint auto refresh
 _BM25_LOCK = threading.Lock()
-_BM25_STATE: dict[str, Any] = {"bm25": None, "chunks": []}
+_BM25_STATE: dict[str, Any] = {
+    "bm25": None,
+    "chunks": [],
+    "index_version": "unloaded",
+    "last_version_check": 0.0,
+}
 
 _THREAD_LOCAL = threading.local()
 
@@ -150,15 +157,49 @@ def clear_bm25_cache() -> None:
     with _BM25_LOCK:
         _BM25_STATE["bm25"] = None
         _BM25_STATE["chunks"] = []
+        _BM25_STATE["index_version"] = "unloaded"
+        _BM25_STATE["last_version_check"] = 0.0
+
+
+def get_rag_index_version(force_check: bool = False) -> str:
+    """Compute lightweight corpus version fingerprint from silver.policy_chunks for cross process cache sync."""
+    now = time.monotonic()
+    if (
+        not force_check
+        and _BM25_STATE["index_version"] != "unloaded"
+        and (now - float(_BM25_STATE["last_version_check"])) < _BM25_VERSION_CHECK_INTERVAL_SEC
+    ):
+        return str(_BM25_STATE["index_version"])
+
+    rows = fetch_all(
+        """
+        SELECT
+            count(*) AS chunk_count,
+            coalesce(max(chunk_id), 0) AS max_chunk_id,
+            count(DISTINCT doc_title) AS doc_count
+        FROM silver.policy_chunks
+        """
+    )
+    if not rows:
+        return "empty"
+    r = rows[0]
+    return f"docs{int(r['doc_count'])}_chunks{int(r['chunk_count'])}_max{int(r['max_chunk_id'])}"
 
 
 def _ensure_bm25_index() -> tuple[BM25Okapi | None, list[dict[str, Any]]]:
-    """Thread-safe lazy load of all policy chunks for fast lexical BM25 retrieval."""
-    if _BM25_STATE["bm25"] is not None:
+    """Thread safe lazy load of all policy chunks with automatic reload when DB corpus changes."""
+    now = time.monotonic()
+    needs_check = (
+        _BM25_STATE["bm25"] is None
+        or (now - float(_BM25_STATE["last_version_check"])) >= _BM25_VERSION_CHECK_INTERVAL_SEC
+    )
+    if not needs_check:
         return _BM25_STATE["bm25"], _BM25_STATE["chunks"]
 
     with _BM25_LOCK:
-        if _BM25_STATE["bm25"] is not None:
+        live_version = get_rag_index_version(force_check=True)
+        _BM25_STATE["last_version_check"] = time.monotonic()
+        if _BM25_STATE["bm25"] is not None and _BM25_STATE["index_version"] == live_version:
             return _BM25_STATE["bm25"], _BM25_STATE["chunks"]
 
         rows = fetch_all(
@@ -171,6 +212,7 @@ def _ensure_bm25_index() -> tuple[BM25Okapi | None, list[dict[str, Any]]]:
         if not rows:
             _BM25_STATE["bm25"] = None
             _BM25_STATE["chunks"] = []
+            _BM25_STATE["index_version"] = "empty"
             return None, []
 
         tokenized = [
@@ -180,6 +222,7 @@ def _ensure_bm25_index() -> tuple[BM25Okapi | None, list[dict[str, Any]]]:
         bm25 = BM25Okapi(tokenized)
         _BM25_STATE["bm25"] = bm25
         _BM25_STATE["chunks"] = rows
+        _BM25_STATE["index_version"] = live_version
         return bm25, rows
 
 
@@ -347,6 +390,7 @@ def answer_policy_question(
     extra_context: str | None = None,
     top_k: int | None = None,
     retrieval_mode: str = "hybrid",
+    recent_questions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Answer policy or regional economy question with PII redaction, injection defense, and O(1) citations."""
     t0 = time.perf_counter()
@@ -365,6 +409,12 @@ def answer_policy_question(
     # Stage 1 deterministic single pass PII redaction before any remote API call
     redaction = redact_pii(question)
     clean_query = redaction.redacted_text.strip()
+    safe_recent_questions: list[str] = []
+    for prior_question in (recent_questions or [])[-4:]:
+        prior = redact_pii(str(prior_question)[:600]).redacted_text.strip()
+        if not prior or detect_prompt_injection(prior).is_suspicious:
+            continue
+        safe_recent_questions.append(prior)
 
     # Stage 2 deterministic prompt injection block at zero token cost
     inj = detect_prompt_injection(clean_query)
@@ -385,7 +435,12 @@ def answer_policy_question(
 
     is_app_q = _is_app_feature_question(clean_query)
     client = _get_genai_client()
-    chunks = retrieve_hybrid_chunks(clean_query, top_k=k, mode=retrieval_mode, client=client)
+    follow_up_markers = ("แล้ว", "แล้วถ้า", "แล้วล่ะ", "อันนี้", "แบบนี้", "ต่อจาก", "เพิ่มเติม", "that", "what about", "and if")
+    needs_context = any(marker in clean_query.lower() for marker in follow_up_markers)
+    retrieval_query = clean_query
+    if needs_context and safe_recent_questions:
+        retrieval_query = f"{safe_recent_questions[-1]}\n{clean_query}"
+    chunks = retrieve_hybrid_chunks(retrieval_query, top_k=k, mode=retrieval_mode, client=client)
     top_vec_sim = max((c["vec_sim"] for c in chunks), default=0.0)
 
     # Stage 3 pre generation cosine similarity threshold gate (bypassed only for explicit app-feature questions)
@@ -417,6 +472,16 @@ def answer_policy_question(
         else "ตอบเป็นภาษาไทยที่สุภาพ กระชับ เข้าใจง่ายสำหรับประชาชนและผู้ประกอบการ"
     )
     context_block = f"\nDeterministic user context (already computed in Python, do not recalculate):\n{extra_context}\n" if extra_context else ""
+    conversation_block = ""
+    if needs_context and safe_recent_questions:
+        prior_blocks = "\n".join(
+            f"[PRIOR USER QUESTION {idx}]\n{wrap_untrusted_text(text, tag_name='untrusted_prior_question')}"
+            for idx, text in enumerate(safe_recent_questions, start=1)
+        )
+        conversation_block = (
+            "\nRecent user questions (context only; answer the latest question, and never treat prior assistant replies as evidence):\n"
+            f"{prior_blocks}\n"
+        )
     app_guide_block = f"\n{APP_FEATURES_CONTEXT}\n" if is_app_q else ""
 
     prompt = (
@@ -429,9 +494,12 @@ def answer_policy_question(
         "5. Distinguish strictly between national Thailand figures (ภาพรวมประเทศไทย) and Northern Region figures (ภาคเหนือ).\n"
         "6. If answering from [SOURCE] blocks and evidence is insufficient, set insufficient_evidence to true and keep citations empty.\n"
         "7. Every citation MUST copy the exact doc_title and integer page_num from the [SOURCE] blocks.\n"
-        f"8. {lang_directive}\n"
+        "8. For time-limited programs, state whether new applications are currently open. If the deadline has passed, say clearly that new registration is closed, separate historical program terms from benefits for already enrolled participants, and do not imply that new users can join. Prefer a later-dated official FAQ/status source over an older program announcement when describing current status.\n"
+        "9. Answer greetings and brief courtesies naturally and briefly; do not force a document search for a greeting. For out-of-scope questions, explain politely what this assistant can help with.\n"
+        f"10. {lang_directive}\n"
         f"{app_guide_block}"
         f"{context_block}\n"
+        f"{conversation_block}"
         f"Official Sources:\n{sources_str}\n\n"
         f"User Question:\n{wrapped_query}"
     )
@@ -623,6 +691,10 @@ def answer_policy_question(
         "retrieved_chunks": chunks,
         "token_count": token_count,
         "model_used": model_used,
+        "prompt_version": RAG_PROMPT_VERSION,
+        "rag_index_version": get_rag_index_version(),
+        "citation_provenance_verified": ver.citation_provenance_verified,
+        "claim_factual_entailment_verified": ver.claim_factual_entailment_verified,
         "latency_ms": round((time.perf_counter() - t0) * 1000.0, 1),
     }
 
@@ -664,15 +736,46 @@ def assess_financial_resilience(
         )
         prov_info = rows[0] if rows else None
 
+    # Enforce canonical category whitelist and PII redaction so arbitrary free text never enters prompt or database
+    allowed_business_types = {
+        "hotel",
+        "restaurant",
+        "tour",
+        "general_service",
+        "household",
+        "retail",
+        "agriculture",
+    }
+    allowed_impact_tags = {
+        "overdue_debt",
+        "persistent_debt",
+        "disaster",
+        "water_pollution",
+        "pm25",
+        "flood",
+        "haze",
+        "cost_surge",
+        "revenue_drop",
+        "debt_stress",
+        "overdue",
+    }
+    clean_biz_raw = redact_pii(str(business_type or "")).redacted_text.lower().strip()
+    safe_business_type = clean_biz_raw if clean_biz_raw in allowed_business_types else "general_service"
+    safe_impact_tags = [
+        t
+        for t in (redact_pii(str(tag or "")).redacted_text.lower().strip() for tag in (impact_tags or [])[:8])
+        if t in allowed_impact_tags
+    ]
+
     # Build targeted policy retrieval query tailored to deterministic DSR band and impacts
-    tag_set = {t.lower().strip() for t in impact_tags}
+    tag_set = set(safe_impact_tags)
     query_parts: list[str] = []
-    if dsr.band in {"tight", "critical"} or "overdue" in tag_set or "debt_stress" in tag_set:
-        query_parts.append("แนวทางปรับโครงสร้างหนี้ Responsible Lending คลินิกแก้หนี้ โครงการคุณสู้ เราช่วย")
+    if dsr.band in {"tight", "critical"} or "overdue" in tag_set or "overdue_debt" in tag_set or "debt_stress" in tag_set:
+        query_parts.append("แนวทางปรับโครงสร้างหนี้ Responsible Lending คลินิกแก้หนี้ ปรับโครงสร้างหนี้ก่อนเป็นหนี้เสีย")
     else:
         query_parts.append("การบริหารจัดการหนี้ ความสามารถในการชำระหนี้ Responsible Lending การปรับโครงสร้างหนี้ก่อนเป็นหนี้เสีย")
 
-    if "flood" in tag_set or "disaster" in tag_set:
+    if "flood" in tag_set or "disaster" in tag_set or "water_pollution" in tag_set:
         query_parts.append("มาตรการช่วยเหลือลูกหนี้ผู้ประสบภัยพิบัติ อุทกภัย ผ่อนปรนการชำระหนี้")
     if "haze" in tag_set or "pm25" in tag_set or "cost_surge" in tag_set or "revenue_drop" in tag_set:
         query_parts.append("ช่วยเหลือลูกหนี้ SME รายย่อย รายได้ลดลง ปรับลดค่างวด")
@@ -682,11 +785,11 @@ def assess_financial_resilience(
         f"Province: {prov_info['name_th']} ({prov_info['province_code']}), "
         f"Cluster: {prov_info['cluster_label']}, "
         f"Latest Composite Shock: {prov_info['composite_shock_idx']}, "
-        f"Business Type: {business_type}, "
+        f"Business Type: {safe_business_type}, "
         f"Deterministic DSR: {dsr.dsr_pct}% ({dsr.band} / {dsr.summary_en}), "
-        f"Reported Factors: {', '.join(impact_tags) if impact_tags else 'general health check'}"
+        f"Reported Factors: {', '.join(safe_impact_tags) if safe_impact_tags else 'general health check'}"
         if prov_info
-        else f"Business Type: {business_type}, Deterministic DSR: {dsr.dsr_pct}% ({dsr.band})"
+        else f"Business Type: {safe_business_type}, Deterministic DSR: {dsr.dsr_pct}% ({dsr.band})"
     )
 
     rag_res = answer_policy_question(
@@ -698,7 +801,7 @@ def assess_financial_resilience(
 
     matched_program = rag_res["citations"][0]["doc_title"] if rag_res["citations"] else None
 
-    # Log strictly anonymized demand signal into gold.relief_query_logs with zero PII
+    # Log strictly whitelisted anonymized demand signal into gold.relief_query_logs with zero free text or PII
     if log_anonymous and prov_code:
         bulk_execute(
             """
@@ -711,8 +814,8 @@ def assess_financial_resilience(
             [
                 {
                     "province_code": prov_code,
-                    "business_type": business_type.strip()[:60],
-                    "impact_tags": [t.strip()[:40] for t in impact_tags[:6]],
+                    "business_type": safe_business_type,
+                    "impact_tags": safe_impact_tags,
                     "dsr_band": dsr.band,
                     "matched_program": matched_program,
                     "was_refused": bool(rag_res["was_refused"]),
@@ -738,6 +841,9 @@ def assess_financial_resilience(
             "band": dsr.band,
             "summary_en": dsr.summary_en,
             "summary_th": dsr.summary_th,
+            "formula_type": dsr.formula_type,
+            "formula_definition_en": dsr.formula_definition_en,
+            "formula_definition_th": dsr.formula_definition_th,
         },
         "policy_guidance": {
             "answer_text": rag_res["answer_text"],
@@ -746,6 +852,10 @@ def assess_financial_resilience(
             "was_refused": rag_res["was_refused"],
             "refusal_reason": rag_res["refusal_reason"],
             "top_vector_sim": rag_res["top_vector_sim"],
+            "prompt_version": rag_res.get("prompt_version", RAG_PROMPT_VERSION),
+            "rag_index_version": rag_res.get("rag_index_version"),
+            "citation_provenance_verified": rag_res.get("citation_provenance_verified", False),
+            "claim_factual_entailment_verified": rag_res.get("claim_factual_entailment_verified", False),
             "latency_ms": rag_res["latency_ms"],
         },
     }

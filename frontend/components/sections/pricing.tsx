@@ -146,7 +146,7 @@ function matchOfficialPrograms(params: {
   status: DebtStatusKey
   isSme: boolean
   dscr: number | null
-  dsrPct: number
+  dsrPct: number | null
   hasWaterOrDisaster: boolean
 }): ProgramMatch[] {
   const { status, isSme, dscr, dsrPct, hasWaterOrDisaster } = params
@@ -155,90 +155,107 @@ function matchOfficialPrograms(params: {
   if (status === "overdue_120_plus") {
     list.push({
       id: "debt_clinic",
-      badge_th: "ส่งต่อหน่วยงานกลางโดยตรง",
-      badge_en: "Official External Referral",
-      title_th: "คลินิกแก้หนี้ (บริษัท บริหารสินทรัพย์สุขุมวิท จำกัด · โทร 1443)",
-      title_en: "Debt Clinic by SAM (Official NPL Referral)",
-      benefit_th: "ช่องทางกลางสำหรับรวมหนี้บัตรเครดิตและสินเชื่อส่วนบุคคลที่ไม่มีหลักประกัน ดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี",
-      benefit_en: "Centralized program consolidating unsecured credit cards and personal loans at 3 to 5% p.a. Apply directly via SAM.",
-      criteria_th: "บุคคลธรรมดา ค้างชำระเกิน 120 วัน เงินต้นรวมไม่เกิน 2 ล้านบาท และอายุรวมระยะเวลาผ่อนไม่เกิน 70 ปี",
-      criteria_en: "Individuals overdue >120 days, combined principal <= 2M THB, and age + term <= 70 years.",
-      action_label_th: "ไปที่เว็บไซต์คลินิกแก้หนี้ (โทร 1443)",
-      action_label_en: "Go to Debt Clinic by SAM (1443)",
+      badge_th: "แนวทางคัดกรองเบื้องต้น · ตรวจสอบสิทธิ์กับ SAM",
+      badge_en: "Initial Screening · Verify with SAM",
+      title_th: "คลินิกแก้หนี้ by SAM (โทร 1443)",
+      title_en: "Debt Clinic by SAM (Call 1443)",
+      benefit_th: "รวมหนี้เสียบัตรเครดิต บัตรกดเงินสด และสินเชื่อส่วนบุคคลที่ไม่มีหลักประกัน ปรับดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี ผ่อนสูงสุด 10 ปี",
+      benefit_en: "Consolidates unsecured credit cards, cash cards, and personal loan NPLs at 3 to 5% p.a. for up to 10 years.",
+      criteria_th: "บุคคลธรรมดา ค้างชำระเกิน 120 วัน และต้องตรวจสอบคุณสมบัติเพิ่มเติมเรื่องประเภทสินเชื่อ เงินต้นรวมไม่เกิน 2 ล้านบาท อายุ และรายได้กับ SAM โดยตรง",
+      criteria_en: "Individuals overdue >120 days; additional criteria on loan type, <= 2M THB principal, age, and income must be verified directly with SAM.",
+      action_label_th: "ตรวจสอบสิทธิ์ที่เว็บไซต์คลินิกแก้หนี้",
+      action_label_en: "Verify Eligibility at Debt Clinic",
       action_href: "https://www.debtclinicbysam.com/",
-      source_th: "เอกสารรู้ก่อน รอดก่อน 2569 หน้า 14",
-      source_en: "Official Debt Relief Guide 2569, p.14",
+      source_th: "แนวทางแก้หนี้ยั่งยืน ธปท. และ SAM (โปรดตรวจสอบสิทธิ์จริง)",
+      source_en: "BOT Sustainable Debt Relief & SAM (Verify Actual Eligibility)",
+    })
+    list.push({
+      id: "fast_debt_exit_sam",
+      badge_th: "โครงการเฉพาะกิจ · ตรวจสอบสิทธิ์กับ ธปท./SAM",
+      badge_en: "Special Program · Verify via BOT/SAM",
+      title_th: "โครงการปิดหนี้ไว ไปต่อได้ (SAM Social AMC · โทร 1213 / 1443 กด 6)",
+      title_en: "Fast-Close Move-Forward Program (SAM Social AMC · 1213 / 1443 ext. 6)",
+      benefit_th: "สำหรับลูกหนี้รายย่อยที่เป็นหนี้เสียไม่มีหลักประกัน รับโอนหนี้มาปรับโครงสร้างโดยเลือกจ่ายปิดจบบางส่วนทันที หรือผ่อนสูงสุด 3 ปี ดอกเบี้ย 0% หากปฏิบัติตามเงื่อนไข",
+      benefit_en: "Transfers eligible unsecured retail NPLs to SAM Social AMC with options for partial lump-sum settlement or up to 3-year installment at 0% interest.",
+      criteria_th: "บุคคลธรรมดาที่มีภาระหนี้เสีย (NPL) ทุกประเภทสินเชื่อรวมทุกแห่งไม่เกิน 100,000 บาท ณ วันที่ 30 กันยายน 2568 (เปิดลงทะเบียนตั้งแต่ 5 ม.ค. 2569 — โปรดตรวจสอบสิทธิ์ที่ช่องทางทางการ)",
+      criteria_en: "Individuals with combined NPLs across all lenders <= 100,000 THB as of 30 Sep 2025 (registration opened 5 Jan 2026 — verify eligibility via official channels).",
+      action_label_th: "ตรวจสอบสิทธิ์ที่ bot.or.th/cleardebt",
+      action_label_en: "Check Eligibility at bot.or.th/cleardebt",
+      action_href: "https://www.bot.or.th/cleardebt",
+      source_th: "ข่าว ธปท. ฉบับที่ 1/2569 (5 ม.ค. 2569) · LINE @samsocialamc",
+      source_en: "BOT Press Release 1/2569 (5 Jan 2026) · LINE @samsocialamc",
     })
   } else if (status === "persistent") {
     list.push({
       id: "persistent_debt",
-      badge_th: "สิทธิปิดจบหนี้หมุนเวียน",
-      badge_en: "Revolving Debt Exit",
-      title_th: "มาตรการแก้หนี้เรื้อรัง (ผ่อนปิดจบใน 5 ปี ดอกเบี้ยไม่เกิน 15%)",
-      title_en: "Persistent Debt 5 Year Exit (Max 15%)",
-      benefit_th: "เปลี่ยนสินเชื่อหมุนเวียนที่จ่ายขั้นต่ำและดอกเบี้ยสูงให้เป็นสินเชื่อผ่อนรายงวด ปิดจบภายใน 5 ปี ดอกเบี้ยไม่เกิน 15% ต่อปี",
-      benefit_en: "Converts revolving personal loans into fixed 5 year installments capped at 15% annual interest.",
-      criteria_th: "ลูกหนี้สินเชื่อหมุนเวียนที่จ่ายดอกเบี้ยสะสมมากกว่าเงินต้นต่อเนื่องตามหลักเกณฑ์ปี 2568",
-      criteria_en: "Revolving borrowers whose cumulative interest paid exceeds principal under 2568 rules.",
-      action_label_th: "เปิดอ่านประกาศหลักเกณฑ์ฉบับเต็ม",
-      action_label_en: "Open Official Guideline (PDF)",
+      badge_th: "แนวทางคัดกรองเบื้องต้น · ตรวจสอบสิทธิ์กับเจ้าหนี้",
+      badge_en: "Initial Screening · Verify with Lender",
+      title_th: "มาตรการปิดจบหนี้เรื้อรัง (ขยายสูงสุด 7 ปี เริ่ม 1 ม.ค. 2568 · ดอกเบี้ยไม่เกิน 15%)",
+      title_en: "Persistent Debt Exit (Up to 7 Years Effective 1 Jan 2025 · Max 15% p.a.)",
+      benefit_th: "เปลี่ยนสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียนเป็นสินเชื่อผ่อนรายงวด อัตราดอกเบี้ยที่แท้จริงไม่เกิน 15% ต่อปี ปิดจบภายในสูงสุด 7 ปี (ขยายจากเดิม 5 ปี เริ่ม 1 ม.ค. 2568)",
+      benefit_en: "Converts revolving personal loans into fixed installments capped at 15% p.a. for up to 7 years (expanded from 5 to 7 years effective 1 Jan 2025).",
+      criteria_th: "เฉพาะสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียน (ยังไม่เป็น NPL ไม่รวมบัตรเครดิต/จำนำทะเบียน) ที่จ่ายดอกเบี้ยรวมมากกว่าเงินต้นย้อนหลัง 5 ปี และเข้าเกณฑ์รายได้ ธปท. (< 20,000 บาท/เดือน สำหรับธนาคาร/กลุ่มธุรกิจ หรือ < 10,000 บาท/เดือน สำหรับ Non-bank อื่น)",
+      criteria_en: "Revolving personal loans (Non-NPL, excluding credit cards/auto-title) paying more interest than principal for 5+ years and meeting BOT income criteria (<20,000 THB/mo bank/group or <10,000 THB/mo other non-bank).",
+      action_label_th: "เปิดอ่านประกาศหลักเกณฑ์ ธปท.",
+      action_label_en: "Open Official BOT Guideline (PDF)",
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
-      source_th: "ประกาศหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568",
-      source_en: "Responsible Lending Guideline 2568",
+      source_th: "ประกาศ Responsible Lending ปรับปรุง 2568 (โปรดตรวจสอบสิทธิ์กับเจ้าหนี้)",
+      source_en: "Updated Responsible Lending 2568 (Verify with Lender)",
     })
   } else if (status === "overdue_31_120") {
     list.push({
       id: "khunsoo",
-      badge_th: "รักษาทรัพย์และกิจการ",
-      badge_en: "Asset & SME Retention",
-      title_th: "โครงการคุณสู้ เราช่วย (จ่ายตรง คงทรัพย์)",
-      title_en: "Khun Soo Rao Chuay",
-      benefit_th: "ลดค่างวด 3 ปี (ปีที่ 1 จ่าย 50%, ปีที่ 2 จ่าย 70%, ปีที่ 3 จ่าย 90%) พร้อมพักดอกเบี้ย 3 ปีโดยนำค่างวดไปหักเงินต้นทั้งหมด 100%",
-      benefit_en: "Stepped 3 year payments (50%, 70%, 90%) with 3 year interest suspension applied 100% to principal.",
-      criteria_th: "รองรับสินเชื่อบ้าน รถยนต์ และสินเชื่อธุรกิจ SME ที่ค้างชำระ 31 ถึง 365 วัน (กรณีบัตรเครดิต/สินเชื่อบุคคล ใช้เกณฑ์ปรับโครงสร้างหนี้เชิงป้องกันตามหลักเกณฑ์ของ ธปท.)",
-      criteria_en: "Covers home, auto, and small SME loans overdue 31 to 365 days (unsecured cards/personal loans use Responsible Lending restructuring).",
-      action_label_th: "เปิดอ่านเอกสารโครงการฉบับเต็ม",
-      action_label_en: "Open Official Program PDF",
-      action_href: "https://www.bot.or.th/content/dam/bot/documents/th/research-and-publications-pdf/articles-and-publications/articles/download/2024/article-2024dec24.pdf",
-      source_th: "เอกสารโครงการคุณสู้ เราช่วย หน้า 1 ถึง 2",
-      source_en: "Khun Soo Rao Chuay Publication, pp.1 to 2",
+      badge_th: "ตัวอย่างแนวทางเจรจา (คุณสู้ เราช่วย ปิดรับสมัครใหม่แล้ว)",
+      badge_en: "Negotiation Reference (Khun Soo Closed to New Signups)",
+      title_th: "ติดต่อเจ้าหนี้เดิมเพื่อขอปรับโครงสร้างหนี้ (ใช้แผนขั้นบันไดเป็นตัวอย่างประกอบการเจรจา)",
+      title_en: "Contact Original Lender for Restructuring (Use Stepped Plan as Illustrative Reference)",
+      benefit_th: "สามารถใช้ตารางลดค่างวดขั้นบันได (เช่น 50% / 70% / 90%) เป็นตัวอย่างสถานการณ์ประกอบการเจรจากับเจ้าหนี้ตามเกณฑ์ Responsible Lending ทั้งนี้เงื่อนไขจริงขึ้นอยู่กับการพิจารณาของแต่ละสถาบันการเงิน",
+      benefit_en: "Use the stepped payment schedule (50% / 70% / 90%) as an illustrative scenario when negotiating with your lender under Responsible Lending; actual approval and terms depend on the lender.",
+      criteria_th: "โครงการคุณสู้ เราช่วย ปิดลงทะเบียนใหม่แล้วตั้งแต่วันที่ 30 กันยายน 2568 (ผู้ลงทะเบียนเดิมยังดำเนินการต่อได้ ส่วนลูกหนี้ใหม่ให้ติดต่อเจรจาปรับโครงสร้างหนี้กับเจ้าหนี้โดยตรง)",
+      criteria_en: "Khun Soo Rao Chuay closed new registration on 30 Sep 2025 (existing registrants continue; new applicants must negotiate restructuring directly with their lender).",
+      action_label_th: "เปิดอ่านหลักเกณฑ์ปรับโครงสร้างหนี้ 2568",
+      action_label_en: "Open 2568 Restructuring Guideline (PDF)",
+      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
+      source_th: "หลักเกณฑ์ Responsible Lending 2568 (ไม่ใช่การยืนยันอนุมัติอัตโนมัติ)",
+      source_en: "Responsible Lending 2568 (Not an Automatic Approval)",
     })
   } else if (status === "disaster") {
     list.push({
       id: "disaster_2568",
-      badge_th: "มาตรการพื้นที่ประสบภัย/มลพิษ",
-      badge_en: "Regional Hazard Relief",
+      badge_th: "แนวทางคัดกรองเบื้องต้น · พื้นที่ประสบภัย",
+      badge_en: "Initial Screening · Hazard Relief",
       title_th: "มาตรการช่วยเหลือลูกหนี้ผู้ประสบสาธารณภัย 2568",
       title_en: "2568 Disaster Borrower Relief",
-      benefit_th: "ขอพักชำระเงินต้นชั่วคราว ลดค่างวด หรือขอวงเงินฟื้นฟูกิจการกับเจ้าหนี้เดิมโดยไม่เสียประวัติเครดิต",
-      benefit_en: "Request temporary principal deferral, payment step down, or recovery credit without NPL downgrade.",
-      criteria_th: "เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น บิลยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อประกอบการพิจารณาของธนาคาร",
-      criteria_en: "Prepare evidence of income drop or impact (past sales receipts, bank statements, or site photos) for bank review.",
+      benefit_th: "ขอพักชำระเงินต้นชั่วคราว ลดค่างวด หรือขอวงเงินฟื้นฟูกิจการกับเจ้าหนี้เดิมตามเงื่อนไขของสถาบันการเงิน",
+      benefit_en: "Request temporary principal deferral, payment step down, or recovery credit subject to lender review.",
+      criteria_th: "เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น บิลยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อยื่นตรวจสอบสิทธิ์กับเจ้าหนี้",
+      criteria_en: "Prepare evidence of income drop or impact (sales receipts, bank statements, or site photos) for lender verification.",
       action_label_th: "เปิดอ่านหนังสือเวียน ธปท.ว. 2302/2568",
       action_label_en: "Open Circular 2302/2568 (PDF)",
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680065.pdf",
-      source_th: "หนังสือเวียน ธปท.ว. 2302/2568 หน้า 1",
-      source_en: "Official Circular 2302/2568, p.1",
+      source_th: "หนังสือเวียน ธปท.ว. 2302/2568 (โปรดตรวจสอบเงื่อนไขกับเจ้าหนี้)",
+      source_en: "Official Circular 2302/2568 (Verify with Lender)",
     })
   } else if (isSme) {
     list.push({
       id: "sme_3reduce",
-      badge_th: dscr != null && dscr < 1.25 ? "แนะนำสำหรับผู้ประกอบการตึงมือ" : "มาตรการหักเงินต้นผู้ประกอบการ",
-      badge_en: dscr != null && dscr < 1.25 ? "Priority SME Relief" : "SME Principal Cut",
+      badge_th: dscr != null && dscr < 1.25 ? "แนวทางสำหรับ SME ตึงมือ" : "แนวทางหักเงินต้น SME",
+      badge_en: dscr != null && dscr < 1.25 ? "SME Screening Option" : "SME Principal Cut Option",
       title_th: "มาตรการ 3 ลด (ธนาคารพัฒนาวิสาหกิจขนาดกลางและขนาดย่อม · โทร 1357)",
       title_en: "SME D Bank 3 Reduce Program (Call 1357)",
       benefit_th: "ลดเงินต้น (นำค่างวดไปหักเงินต้นก่อนสูงสุด 100% นาน 2 ปี) ลดอัตราดอกเบี้ย และปรับลดค่างวดให้สอดคล้องกำไรจริง",
       benefit_en: "Applies up to 100% of payments directly to principal for 2 years plus interest and installment relief.",
-      criteria_th: "ผู้ประกอบการที่ได้รับผลกระทบต้นทุนหรือรายได้ผันผวนตามฤดูกาล (ยื่นขอได้ทุกสาขาถึง ก.ย. 2570)",
-      criteria_en: "SMEs facing cost pressure or seasonal revenue swings (active through Sep 2027).",
+      criteria_th: "เฉพาะลูกหนี้หรือผู้ประกอบการที่เข้าเกณฑ์ของ SME D Bank โปรดตรวจสอบคุณสมบัติและเงื่อนไขสัญญาจริงกับสาขาหรือโทร 1357",
+      criteria_en: "Subject to SME D Bank borrower eligibility criteria; verify actual contract terms via branch or call 1357.",
       action_label_th: "เปิดอ่านหลักเกณฑ์ปรับโครงสร้างหนี้",
       action_label_en: "Review Restructuring Rules (PDF)",
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
-      source_th: "มาตรการ 3 ลด และหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568",
-      source_en: "SME D Bank 3 Reduce & Responsible Lending 2568",
+      source_th: "มาตรการ 3 ลด และ Responsible Lending 2568 (ตรวจสอบสิทธิ์จริงกับธนาคาร)",
+      source_en: "SME D Bank 3 Reduce & Responsible Lending 2568 (Verify with Bank)",
     })
   }
 
+  // Only show pre-NPL Responsible Lending or SME Working Capital options when borrower is NOT already overdue/persistent
   if (isSme && (status === "current" || status === "disaster") && (dscr == null || dscr >= 1.0)) {
     list.push({
       id: "credit_boost_tcg",
@@ -248,25 +265,25 @@ function matchOfficialPrograms(params: {
       title_en: "SMEs Credit Boost & TCG PGS 11 Guarantee",
       benefit_th: "กลไกช่วยค้ำประกันและแบ่งเบาความเสี่ยงสำหรับสินเชื่อหมุนเวียนธุรกิจท่องเที่ยวและบริการ พร้อมสิทธิฟรีค่าธรรมเนียมค้ำประกันช่วง 2 ถึง 3 ปีแรก",
       benefit_en: "Credit risk sharing for new working capital loans in tourism and services, plus TCG PGS 11 fee waivers.",
-      criteria_th: "ผู้ประกอบการภาคบริการที่มีศักยภาพดำเนินธุรกิจต่อและต้องการวงเงินหมุนเวียนรับช่วงผู้เข้าพักน้อย",
-      criteria_en: "Viable tourism and service SMEs seeking working capital via commercial banks and TCG.",
+      criteria_th: "ผู้ประกอบการภาคบริการที่มีศักยภาพดำเนินธุรกิจต่อและผ่านเกณฑ์พิจารณาสินเชื่อของธนาคารพาณิชย์และ บสย.",
+      criteria_en: "Viable tourism and service SMEs subject to commercial bank and TCG credit underwriting.",
       action_label_th: "เปิดดูรายงานเศรษฐกิจภาคเหนือ (ธปท.)",
       action_label_en: "Open Northern Economy Portal",
       action_href: "https://www.bot.or.th/th/thai-economy/regional-economy/northern-economy.html",
       source_th: "มาตรการสินเชื่อฟื้นฟูและค้ำประกันสินเชื่อ บสย.",
       source_en: "SMEs Credit Boost & TCG PGS 11 Framework",
     })
-  } else {
+  } else if (status === "current" || status === "disaster") {
     list.push({
       id: "responsible_lending",
-      badge_th: dsrPct >= 40 || (dscr != null && dscr < 1.25) ? "สิทธิเจรจาเจ้าหนี้เดิม" : "วางแผนเชิงป้องกัน",
-      badge_en: dsrPct >= 40 ? "Direct Lender Right" : "Preventive Option",
-      title_th: "สิทธิปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (หลักเกณฑ์ปี 2568)",
-      title_en: "Pre Emptive Restructuring (Responsible Lending 2568)",
-      benefit_th: "เจ้าหนี้มีหน้าที่เสนอแนวทางปรับโครงสร้างหนี้ที่เหมาะกับรายได้จริงอย่างน้อย 1 ครั้งก่อนเป็นหนี้เสีย โดยไม่เรียกเก็บค่าธรรมเนียม",
+      badge_th: dsrPct == null || dsrPct >= 40 || (dscr != null && dscr < 1.25) ? "แนวทางเจรจาเจ้าหนี้เดิม" : "วางแผนเชิงป้องกัน",
+      badge_en: dsrPct == null || dsrPct >= 40 ? "Direct Lender Option" : "Preventive Option",
+      title_th: "สิทธิขอปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (Responsible Lending 2568)",
+      title_en: "Pre Emptive Restructuring Before NPL (Responsible Lending 2568)",
+      benefit_th: "เจ้าหนี้มีหน้าที่เสนอแนวทางปรับโครงสร้างหนี้ที่เหมาะกับความสามารถชำระจริงอย่างน้อย 1 ครั้งก่อนเป็นหนี้เสีย โดยไม่เรียกเก็บค่าธรรมเนียม",
       benefit_en: "Lenders must offer tailored restructuring at least once before NPL with zero restructuring fee.",
-      criteria_th: "ลูกหนี้ทุกประเภทที่ยังไม่เป็นหนี้เสียแต่การเงินเริ่มตึงมือ หรือต้องการปรับตารางผ่อนให้สอดคล้องฤดูกาลท่องเที่ยว",
-      criteria_en: "Performing borrowers facing tighter cashflow or seasonal tourism swings across all loan types.",
+      criteria_th: "ลูกหนี้ที่ยังไม่เป็นหนี้เสียแต่การเงินเริ่มตึงมือ หรือต้องการปรับตารางผ่อนให้สอดคล้องฤดูกาล (เงื่อนไขจริงขึ้นอยู่กับการเจรจากับเจ้าหนี้)",
+      criteria_en: "Performing borrowers facing tighter cashflow or seasonal swings (final terms determined with your lender).",
       action_label_th: "เปิดอ่านประกาศหลักเกณฑ์ปี 2568",
       action_label_en: "Open 2568 Guideline (PDF)",
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
@@ -275,7 +292,7 @@ function matchOfficialPrograms(params: {
     })
   }
 
-  return list.slice(0, 2)
+  return list.slice(0, 3)
 }
 
 type PresetKey = "individual_tight" | "sme_tight" | "khunsoo_sme" | "disaster_cr" | null
@@ -325,6 +342,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const [debtPayment, setDebtPayment] = useState("")
   const [cashReserve, setCashReserve] = useState("")
   const [totalPrincipal, setTotalPrincipal] = useState("")
+  const [annualRateInput, setAnnualRateInput] = useState("")
   const [horizonYears, setHorizonYears] = useState(5)
   const [extraLoans, setExtraLoans] = useState<ExtraLoanItem[]>([])
   const [deferMonths, setDeferMonths] = useState(6)
@@ -361,11 +379,17 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const numOpex = parseMoney(opex)
   const baseDebt = parseMoney(debtPayment)
   const extraDebtSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.monthlyPayment), 0)
-  const numDebt = baseDebt + extraDebtSum
+  const numDebt = baseDebt > 0 ? baseDebt : extraDebtSum
   const numReserve = parseMoney(cashReserve)
   const basePrincipal = parseMoney(totalPrincipal)
   const extraPrincipalSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.principal), 0)
-  const numPrincipal = basePrincipal + extraPrincipalSum
+  const numPrincipal = basePrincipal > 0 ? basePrincipal : extraPrincipalSum
+  const [mobileResultTab, setMobileResultTab] = useState<"sim" | "programs" | "dossier">("sim")
+  const maxHorizonYears = debtStatus === "persistent" ? 7 : 30
+
+  useEffect(() => {
+    setHorizonYears((years) => Math.min(years, maxHorizonYears))
+  }, [maxHorizonYears])
   const hasAnyInput = Boolean(
     revenue.trim() ||
       opex.trim() ||
@@ -394,7 +418,10 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   }, [numRevenue, numDebt, selectedProvinceCode, business, debtStatus])
 
   useEffect(() => {
-    const onOpenResources = () => setShowSources(true)
+    const onOpenResources = () => {
+      setMobileResultTab("dossier")
+      setShowSources(true)
+    }
     window.addEventListener("open-official-resources", onOpenResources)
     return () => window.removeEventListener("open-official-resources", onOpenResources)
   }, [])
@@ -406,6 +433,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     setDebtPayment("")
     setCashReserve("")
     setTotalPrincipal("")
+    setAnnualRateInput("")
     setExtraLoans([])
     setHorizonYears(5)
     setApiError(null)
@@ -443,7 +471,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   }
 
   const diagnostic = useMemo(() => {
-    if (numRevenue <= 0) return null
+    if (numRevenue <= 0 && numDebt <= 0 && numOpex <= 0) return null
     return computeFinancialDiagnostic({
       isSme,
       monthlyRevenue: numRevenue,
@@ -454,21 +482,28 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     })
   }, [isSme, numRevenue, numOpex, numDebt, numReserve, stressDropPct])
 
+  const numAnnualRate = useMemo(() => {
+    const cleaned = annualRateInput.replace(/[^\d.]/g, "")
+    const val = Number(cleaned)
+    return Number.isFinite(val) && val > 0 ? Math.min(36, val) : undefined
+  }, [annualRateInput])
+
   const loanComparison = useMemo(() => {
-    if (numRevenue <= 0 || debtStatus === "overdue_120_plus") return null
+    if ((numRevenue <= 0 && numDebt <= 0) || debtStatus === "overdue_120_plus") return null
     return buildLoanComparison({
       status: debtStatus,
       isSme,
       monthlyRevenue: numRevenue,
       monthlyDebt: numDebt,
       totalPrincipalInput: numPrincipal,
+      customAnnualRatePct: numAnnualRate,
       borrowerAge: 0,
       clinicMonths: Math.max(12, Math.min(120, Math.round(horizonYears * 12))),
       deferMonths,
       customHorizonYears: horizonYears,
       lang,
     })
-  }, [debtStatus, isSme, numRevenue, numDebt, numPrincipal, deferMonths, horizonYears, lang])
+  }, [debtStatus, isSme, numRevenue, numDebt, numPrincipal, numAnnualRate, deferMonths, horizonYears, lang])
 
   // Yearly installment comparison bars up to user selected horizon
   const paymentChartData = useMemo(() => {
@@ -547,8 +582,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       })
       setResult(res)
     } catch {
-      // Silently rely on client side calculations when offline or backend is waking up
-      setApiError(null)
+      setApiError(
+        lang === "th"
+          ? "การคำนวณสภาพคล่องและค่างวดเบื้องต้นยังแสดงผลได้ตามปกติ แต่ระบบค้นคำแนะนำจากเอกสารทางการขัดข้องชั่วคราว"
+          : "Local liquidity and payment calculations remain available, but the official document guidance service is temporarily unavailable.",
+      )
     } finally {
       setSubmitting(false)
     }
@@ -899,7 +937,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               </div>
 
               {/* Step A Core Numbers First so User Sees Them Immediately */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="monthly-revenue" className="mb-1 block text-xs font-medium text-foreground">
                     {lang === "th"
@@ -929,7 +967,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 </div>
                 <div>
                   <label htmlFor="debt-payment" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th" ? "ค่างวดหนี้รวม/เดือน *" : "Monthly Debt *"}
+                    {lang === "th"
+                      ? extraLoans.length > 0
+                        ? "ค่างวดหนี้รวม/เดือน (ถ้าทราบ)"
+                        : "ค่างวดหนี้รวม/เดือน *"
+                      : extraLoans.length > 0
+                        ? "Total monthly debt payment (optional)"
+                        : "Total monthly debt payment *"}
                   </label>
                   <div className="relative">
                     <input
@@ -949,19 +993,26 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       {lang === "th" ? "บาท" : "THB"}
                     </span>
                   </div>
+                  {extraLoans.length > 0 && (
+                    <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                      {lang === "th"
+                        ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่าง ระบบจะรวมค่างวดจากรายการด้านล่าง"
+                        : "The total above is used once. If left blank, payments are totaled from the items below."}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="monthly-opex" className="mb-1 block text-xs font-medium text-foreground">
                     {lang === "th"
                       ? userType === "individual"
                         ? "ค่าใช้จ่ายจำเป็น/เดือน"
-                        : "รายจ่ายดำเนินงานคงที่/เดือน"
+                        : "รายจ่ายดำเนินงานต่อเดือน"
                       : userType === "individual"
                         ? "Essential Living Cost/mo"
-                        : "Fixed Operating Cost/mo"}
+                        : "Monthly Operating Cost"}
                   </label>
                   <div className="relative">
                     <input
@@ -1042,37 +1093,62 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         {lang === "th" ? "บาท" : "THB"}
                       </span>
                     </div>
+                    {extraLoans.length > 0 && (
+                      <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                        {lang === "th"
+                          ? "ถ้ากรอกยอดเงินต้นรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่างจะรวมเงินต้นจากรายการด้านล่าง"
+                          : "The total principal above is used once. If left blank, principal is totaled from the items below."}
+                      </p>
+                    )}
                   </div>
 
                   <div>
-                    <label htmlFor="horizon-years" className="mb-1 block text-xs font-medium text-foreground">
-                      {lang === "th" ? "ระยะเวลาผ่อนที่ต้องการคำนวณ (ปี)" : "Target Payoff Horizon (Years)"}
+                    <label htmlFor="annual-rate" className="mb-1 block text-xs font-medium text-foreground">
+                      {lang === "th" ? "ดอกเบี้ยสัญญาเดิม (%/ปี · ถ้าทราบ)" : "Current Interest Rate (% p.a. · optional)"}
                     </label>
-                    <div className="flex items-center gap-1.5">
+                    <div className="relative">
                       <input
-                        id="horizon-years"
-                        type="number"
-                        min="1"
-                        max="30"
-                        step="1"
-                        value={horizonYears}
-                        onChange={(e) => setHorizonYears(Math.max(1, Math.min(30, Number(e.target.value) || 5)))}
-                        className="h-9 min-w-[3.5rem] flex-1 rounded-xl border border-input bg-background px-2 text-center text-sm font-medium text-foreground outline-none focus:border-foreground/45"
+                        id="annual-rate"
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={annualRateInput}
+                        onChange={(e) => setAnnualRateInput(e.target.value.replace(/[^\d.]/g, ""))}
+                        placeholder={lang === "th" ? "เว้นว่างใช้ค่าสมมติฐาน" : "Leave blank for assumed rate"}
+                        className="h-9 w-full rounded-xl border border-input bg-background px-3 pr-10 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
                       />
-                      {[3, 5, 10].map((yr) => (
-                        <button
-                          key={yr}
-                          type="button"
-                          onClick={() => setHorizonYears(yr)}
-                          className={`shrink-0 whitespace-nowrap rounded-xl border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
-                            horizonYears === yr
-                              ? "border-foreground bg-foreground text-background"
-                              : "border-border bg-background text-muted-foreground hover:text-foreground"
-                          }`}
-                        >
-                          {yr} {lang === "th" ? "ปี" : "yr"}
-                        </button>
-                      ))}
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label htmlFor="horizon-years" className="mb-1 block text-xs font-medium text-foreground">
+                      {lang === "th" ? "ระยะเวลาจำลองแผน (ปี)" : "Plan Simulation Period (Years)"}
+                    </label>
+                    <div className="max-w-sm">
+                      <select
+                        id="horizon-years"
+                        value={horizonYears}
+                        onChange={(e) => setHorizonYears(Math.max(1, Math.min(maxHorizonYears, Number(e.target.value) || 5)))}
+                        className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm font-medium text-foreground outline-none focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                      >
+                        {Array.from({ length: maxHorizonYears }, (_, i) => i + 1).map((yr) => (
+                          <option key={yr} value={yr}>
+                            {yr} {lang === "th" ? "ปี" : yr === 1 ? "year" : "years"}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        {lang === "th"
+                          ? debtStatus === "persistent"
+                            ? "เลือกได้ไม่เกิน 7 ปีตามกรอบมาตรการหนี้เรื้อรัง ตัวเลขนี้ใช้จำลองแผน ไม่ใช่การยืนยันสิทธิ์หรือเงื่อนไขจากเจ้าหนี้"
+                            : "เลือกปีที่ต้องการดูในตารางจำลอง ไม่ใช่ระยะเวลาที่เจ้าหนี้อนุมัติแน่นอน"
+                          : debtStatus === "persistent"
+                            ? "Limited to 7 years for the persistent-debt measure. This is a simulation, not confirmed eligibility or lender terms."
+                            : "Choose the period to display in the simulation. It is not a guaranteed lender-approved term."}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1080,76 +1156,108 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
               {/* Progressive Disclosure Optional Multi Loan Breakdown */}
               <div className="rounded-2xl border border-dashed border-border bg-secondary/20 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-medium text-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium text-foreground">
                     {lang === "th"
                       ? extraLoans.length > 0
-                        ? `แยกคำนวณหนี้หลายก้อน (+${extraLoans.length} ก้อน · รวมค่างวด ${numDebt.toLocaleString()} บาท/เดือน)`
-                        : "มีหนี้หลายใบ/หลายก้อน (เช่น บัตร + รถ + บ้าน)?"
+                        ? `รายการหนี้ที่เพิ่ม ${extraLoans.length} ก้อน`
+                        : "มีหนี้หลายก้อน? เพิ่มรายการเพื่อช่วยรวมยอด"
                       : extraLoans.length > 0
-                        ? `${extraLoans.length} additional loans (Total ${numDebt.toLocaleString()} THB/mo)`
-                        : "Have multiple separate loans?"}
-                  </span>
+                        ? `${extraLoans.length} additional debt items`
+                        : "Have multiple loans? Add items to total them."}
+                    </p>
+                    {extraLoans.length > 0 && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {lang === "th"
+                          ? `รวมค่างวดทั้งหมด ${numDebt.toLocaleString()} บาท/เดือน · เงินต้นที่ระบุ ${numPrincipal.toLocaleString()} บาท`
+                          : `Combined payment ${numDebt.toLocaleString()} THB/mo · entered principal ${numPrincipal.toLocaleString()} THB`}
+                      </p>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => addExtraLoan("card")}
-                    className="shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
+                    className="min-h-9 shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
                   >
-                    {lang === "th" ? "+ เพิ่มก้อนหนี้อื่น" : "+ Add Loan"}
+                    {lang === "th" ? "+ เพิ่มรายการหนี้" : "+ Add debt item"}
                   </button>
                 </div>
 
                 {extraLoans.length > 0 && (
-                  <div className="mt-2.5 space-y-2">
+                  <div className="mt-3 space-y-2.5">
                     {extraLoans.map((loan, idx) => (
-                      <div key={loan.id} className="grid grid-cols-[1fr_1fr_1fr_auto] items-center gap-1.5">
-                        <select
-                          aria-label={`Extra loan ${idx + 1} type`}
-                          value={loan.category}
-                          onChange={(e) =>
-                            updateExtraLoan(loan.id, { category: e.target.value as LoanCategory })
-                          }
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-[11px] text-foreground outline-none"
-                        >
-                          <option value="card">{lang === "th" ? "บัตร/สินเชื่อบุคคล" : "Card / Personal"}</option>
-                          <option value="auto">{lang === "th" ? "สินเชื่อรถ" : "Auto Loan"}</option>
-                          <option value="home">{lang === "th" ? "สินเชื่อบ้าน" : "Home Loan"}</option>
-                          <option value="sme">{lang === "th" ? "สินเชื่อร้านค้า" : "Business Loan"}</option>
-                        </select>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={formatMoneyInput(loan.monthlyPayment)}
-                          onChange={(e) =>
-                            updateExtraLoan(loan.id, { monthlyPayment: formatMoneyInput(e.target.value) })
-                          }
-                          placeholder={lang === "th" ? "ค่างวด/เดือน" : "Monthly pay"}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground outline-none"
-                        />
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={formatMoneyInput(loan.principal)}
-                          onChange={(e) =>
-                            updateExtraLoan(loan.id, { principal: formatMoneyInput(e.target.value) })
-                          }
-                          placeholder={lang === "th" ? "ยอดต้น (ไม่บังคับ)" : "Principal"}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeExtraLoan(loan.id)}
-                          aria-label="Remove loan"
-                          className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-                        >
-                          ✕
-                        </button>
+                      <div key={loan.id} className="rounded-xl border border-border bg-background p-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 text-[11px] font-medium text-foreground">
+                            {lang === "th" ? `หนี้ก้อนที่ ${idx + 1}` : `Debt item ${idx + 1}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeExtraLoan(loan.id)}
+                            aria-label={lang === "th" ? `ลบหนี้ก้อนที่ ${idx + 1}` : `Remove debt item ${idx + 1}`}
+                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <label className="mt-1 block text-[10px] text-muted-foreground">
+                          {lang === "th" ? "ประเภทหนี้" : "Debt type"}
+                          <select
+                            aria-label={`${lang === "th" ? "ประเภทหนี้ก้อนที่" : "Debt item type"} ${idx + 1}`}
+                            value={loan.category}
+                            onChange={(e) =>
+                              updateExtraLoan(loan.id, { category: e.target.value as LoanCategory })
+                            }
+                            className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-xs text-foreground outline-none focus:border-foreground/45"
+                          >
+                            <option value="card">{lang === "th" ? "บัตร/สินเชื่อบุคคล" : "Card / Personal"}</option>
+                            <option value="auto">{lang === "th" ? "สินเชื่อรถ" : "Auto Loan"}</option>
+                            <option value="home">{lang === "th" ? "สินเชื่อบ้าน" : "Home Loan"}</option>
+                            <option value="sme">{lang === "th" ? "สินเชื่อกิจการ" : "Business Loan"}</option>
+                            <option value="informal">{lang === "th" ? "หนี้นอกระบบ" : "Informal debt"}</option>
+                          </select>
+                        </label>
+                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <label className="block text-[10px] text-muted-foreground">
+                            {lang === "th" ? "ค่างวดต่อเดือน" : "Monthly payment"}
+                            <div className="relative mt-1">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={formatMoneyInput(loan.monthlyPayment)}
+                                onChange={(e) =>
+                                  updateExtraLoan(loan.id, { monthlyPayment: formatMoneyInput(e.target.value) })
+                                }
+                                placeholder="0"
+                                className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
+                              />
+                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
+                            </div>
+                          </label>
+                          <label className="block text-[10px] text-muted-foreground">
+                            {lang === "th" ? "เงินต้นคงเหลือ (ถ้าทราบ)" : "Remaining principal (optional)"}
+                            <div className="relative mt-1">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={formatMoneyInput(loan.principal)}
+                                onChange={(e) =>
+                                  updateExtraLoan(loan.id, { principal: formatMoneyInput(e.target.value) })
+                                }
+                                placeholder={lang === "th" ? "เว้นว่างได้" : "Optional"}
+                                className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
+                              />
+                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
+                            </div>
+                          </label>
+                        </div>
                       </div>
                     ))}
                     <p className="rounded-xl border border-amber-600/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] leading-4 text-amber-950">
                       {lang === "th"
-                        ? "ระบบคำนวณภาพรวมจากยอดผ่อนรวม ทั้งนี้ หากเป็นหนี้ต่างประเภท (เช่น สินเชื่อธุรกิจ/บ้าน + บัตรเครดิต) อาจต้องยื่นแยกตามเกณฑ์ของแต่ละสถาบันการเงิน"
-                        : "Calculated from combined monthly payments. Mixed loan types (e.g. mortgage/business + credit card) may require separate applications per lender rules."}
+                        ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียวและใช้รายการด้านล่างเป็นรายละเอียด ถ้าเว้นยอดรวมว่าง ระบบจะรวมรายการให้ ประเภทหนี้ใช้ช่วยแยกรายการเท่านั้น ไม่ได้คำนวณดอกเบี้ยหรือเงื่อนไขแต่ละสัญญาแยกกัน มาตรการจริงอาจรับเฉพาะหนี้บางประเภท เช่น หนี้ไม่มีหลักประกันที่เข้าเกณฑ์คลินิกแก้หนี้"
+                        : "If you enter a total above, it is used once and the items below are for breakdown. If left blank, the system totals the items. Debt type only organizes entries; rates and contract terms are not calculated separately. Actual programs may cover only eligible types, such as qualifying unsecured debt for Debt Clinic."}
                     </p>
                   </div>
                 )}
@@ -1250,10 +1358,35 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               </fieldset>
 
               {apiError && (
-                <p className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                  {apiError}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-600/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-200">
+                  <span>{apiError}</span>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() =>
+                      void runBackendAssessment({
+                        prov: selectedProvinceCode,
+                        biz: business,
+                        statusKey: debtStatus,
+                        revVal: numRevenue,
+                        debtVal: numDebt,
+                      })
+                    }
+                    className="shrink-0 rounded-full border border-amber-700/35 bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+                  >
+                    {lang === "th" ? "ลองเชื่อมต่อใหม่" : "Retry"}
+                  </button>
+                </div>
               )}
+
+              <p className="rounded-xl border border-border/70 bg-secondary/20 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                <strong className="font-medium text-foreground">
+                  {lang === "th" ? "ความเป็นส่วนตัวของข้อมูล:" : "Data privacy notice:"}
+                </strong>{" "}
+                {lang === "th"
+                  ? "เมื่อระบบเชื่อมต่อเพื่อค้นเอกสารอ้างอิง จะบันทึกเฉพาะสถิติไม่ระบุตัวตน (จังหวัด ประเภทกิจการ และช่วงภาระหนี้) เพื่อสรุปเชิงนโยบาย โดยไม่บันทึกชื่อ ยอดรายได้ หรือยอดหนี้ของคุณ"
+                  : "When querying official document guidance, only anonymized aggregate signals (province, business type, and DSR band) are logged—never your name, income, or debt figures."}
+              </p>
 
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/35 px-3.5 py-2.5">
                 <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1384,8 +1517,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       </p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
                         {lang === "th"
-                          ? `เงินเหลือหลังหักค่าใช้จ่าย ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท · ค่างวดคิดเป็น ${diagnostic.dsrPct.toFixed(1)}% ของรายได้`
-                          : `Pre debt cashflow ${Math.round(diagnostic.operatingCashflow).toLocaleString()} · DSR ${diagnostic.dsrPct.toFixed(1)}%`}
+                          ? `เงินเหลือหลังหักค่าใช้จ่ายจำเป็น (ใช้คำนวณ DSCR) ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท · ค่างวดต่อรายได้รวม (Gross DSR) ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "คำนวณไม่ได้ (ไม่มีรายได้ · วิกฤต)"}`
+                          : `Post-expense CF (DSCR base) ${Math.round(diagnostic.operatingCashflow).toLocaleString()} · Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income · Critical)"}`}
                       </p>
                     </div>
 
@@ -1508,8 +1641,39 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </div>
                 </div>
 
-                {/* 2A. If Overdue > 120 Days Show Official Debt Clinic Referral Bridge */}
-                {debtStatus === "overdue_120_plus" ? (
+                {/* Mobile result section switcher so citizens on phones can browse results without an overwhelming scroll */}
+                <div
+                  role="tablist"
+                  aria-label={lang === "th" ? "เลือกดูผลลัพธ์การคำนวณ" : "Result section tabs"}
+                  className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-border bg-background p-1 md:hidden"
+                >
+                  {(
+                    [
+                      { id: "sim", th: "จำลองค่างวด", en: "Installment" },
+                      { id: "programs", th: "แนวทางแก้หนี้", en: "Programs" },
+                      { id: "dossier", th: "ใบสรุปยื่นธนาคาร", en: "Bank Summary" },
+                    ] as const
+                  ).map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={mobileResultTab === t.id}
+                      onClick={() => setMobileResultTab(t.id)}
+                      className={`rounded-xl px-2 py-2 text-center text-xs font-medium transition-colors ${
+                        mobileResultTab === t.id
+                          ? "bg-foreground text-background shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {lang === "th" ? t.th : t.en}
+                    </button>
+                  ))}
+                </div>
+
+                <div className={mobileResultTab === "sim" ? "block" : "hidden md:block"}>
+                  {/* 2A. If Overdue > 120 Days Show Official Debt Clinic Referral Bridge */}
+                  {debtStatus === "overdue_120_plus" ? (
                   <div className="mt-4 rounded-2xl border border-amber-600/35 bg-background p-5">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-[11px] font-medium text-amber-900">
                       <AlertTriangle aria-hidden="true" className="size-3.5" />
@@ -1639,11 +1803,15 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                               label={
                                 lang === "th"
                                   ? loanComparison.totalInterestSaved <= 0
-                                    ? "วัตถุประสงค์หลักของมาตรการ"
-                                    : "ดอกเบี้ยประหยัดรวม (ประมาณ)"
+                                    ? "วัตถุประสงค์หลักของแผนจำลอง"
+                                    : loanComparison.usesAssumedRate
+                                      ? `ประมาณการส่วนต่างดอกเบี้ย (สมมติฐาน ${loanComparison.originalRatePct.toFixed(1)}%/ปี)`
+                                      : `ประมาณการส่วนต่างดอกเบี้ย (ดอกเบี้ยที่กรอก ${loanComparison.originalRatePct.toFixed(1)}%/ปี)`
                                   : loanComparison.totalInterestSaved <= 0
-                                    ? "Primary Relief Purpose"
-                                    : "Est. Interest Saved"
+                                    ? "Primary Scenario Purpose"
+                                    : loanComparison.usesAssumedRate
+                                      ? `Est. Interest Diff (Assumed ${loanComparison.originalRatePct.toFixed(1)}%)`
+                                      : `Est. Interest Diff (Entered ${loanComparison.originalRatePct.toFixed(1)}%)`
                               }
                               value={
                                 loanComparison.totalInterestSaved <= 0
@@ -1793,9 +1961,14 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                     </div>
                   )
                 )}
+                </div>
 
                 {/* 3. Actionable One Page Financial Dossier Preview & Print */}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-foreground/20 bg-background p-4">
+                <div
+                  className={`${
+                    mobileResultTab === "dossier" ? "flex" : "hidden md:flex"
+                  } mt-4 flex-wrap items-center justify-between gap-3 rounded-2xl border border-foreground/20 bg-background p-4`}
+                >
                   <div className="max-w-md">
                     <p className="text-xs font-semibold text-foreground">
                       {lang === "th"
@@ -1820,8 +1993,24 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </div>
                 </div>
 
-                {/* 4. Matched Official Programs */}
-                <div className="mt-4 space-y-2.5">
+                {/* 4. Potentially Relevant Programs Initial Screening Only */}
+                <div
+                  className={`${
+                    mobileResultTab === "programs" ? "block" : "hidden md:block"
+                  } mt-4 space-y-2.5`}
+                >
+                  <div className="px-1">
+                    <h3 className="text-xs font-semibold text-foreground">
+                      {lang === "th"
+                        ? "แนวทางที่อาจเกี่ยวข้อง — กรุณาตรวจสอบสิทธิ์จริงกับเจ้าหนี้หรือหน่วยงานทางการ"
+                        : "Potentially Relevant Options — Verify Actual Eligibility with Your Lender or Agency"}
+                    </h3>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {lang === "th"
+                        ? "เป็นการคัดกรองเบื้องต้นตามสถานะที่คุณเลือกเท่านั้น ยังไม่ได้ตรวจสอบสัญญา ประเภทสินเชื่อ ยอดหนี้ อายุ หรือเกณฑ์รายได้จริง"
+                        : "Initial screening based on your selected status only; actual loan type, balance, age, and income criteria must be verified with the lender."}
+                    </p>
+                  </div>
                   {matchedPrograms.map((prog) => (
                     <div key={prog.id} className="rounded-2xl border border-border bg-background p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1861,7 +2050,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
                 {/* 5. Grounded Policy Note from Backend RAG */}
                 {result && (
-                  <div className="mt-4 rounded-2xl border border-border bg-background p-4">
+                  <div
+                    className={`${
+                      mobileResultTab === "programs" ? "block" : "hidden md:block"
+                    } mt-4 rounded-2xl border border-border bg-background p-4`}
+                  >
                     <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
                       <BookOpenCheck aria-hidden="true" className="size-4" />
                       {lang === "th" ? "ข้อกำหนดอ้างอิงจากเอกสารทางการ" : "Grounded Policy Document Excerpt"}
@@ -1899,7 +2092,12 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
             )}
 
             {/* Collapsible Checklist & Official Links at Bottom */}
-            <div id="official-resources" className="mt-4 scroll-mt-28">
+            <div
+              id="official-resources"
+              className={`${
+                !diagnostic || mobileResultTab === "dossier" ? "block" : "hidden md:block"
+              } mt-4 scroll-mt-28`}
+            >
               <button
                 type="button"
                 aria-expanded={showSources}
@@ -2047,8 +2245,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
                     {lang === "th"
-                      ? `สัดส่วนหนี้ต่อรายได้ ${diagnostic.dsrPct.toFixed(1)}%`
-                      : `Debt to income ${diagnostic.dsrPct.toFixed(1)}%`}
+                      ? `ค่างวดต่อรายได้รวม (Gross DSR) ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "คำนวณไม่ได้ (รายได้เป็น 0)"} (เกณฑ์คัดกรองภายใน 40/60/80%)`
+                      : `Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income)"} (internal 40/60/80% heuristic)`}
                   </p>
                 </div>
 
@@ -2100,8 +2298,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </p>
                   <p className="mt-1 text-muted-foreground">
                     {lang === "th"
-                      ? `ขอปรับลดภาระค่างวดปีที่ 1 จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน เหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน เพื่อให้สอดคล้องกับ${userType === "individual" ? "เงินเหลือหลังหักค่าใช้จ่ายจำเป็น" : "กำไรจากการดำเนินงานจริง"} (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน) ช่วยเพิ่มสภาพคล่องหมุนเวียน +${loanComparison.monthlyLiquiditySaved.toLocaleString()} บาท/เดือน และประหยัดดอกเบี้ยจ่ายจริงเทียบสัญญาเดิมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท${loanComparison.grossWaivedInterest ? ` (คิดเป็นมูลค่าดอกเบี้ยที่โครงการยกเว้นให้ในช่วงพักชำระ 3 ปีแรกประมาณ ${loanComparison.grossWaivedInterest.toLocaleString()} บาท)` : ""}${loanComparison.payoffMonthPol ? ` โดยสามารถปิดจบหนี้ได้เสร็จสิ้นภายในสิ้นปีที่ ${Math.ceil(loanComparison.payoffMonthPol / 12)} ทำให้ปีถัดไปไม่มีภาระค่างวดอีกต่อไป (0 บาท)` : ""}`
-                      : `Reduces Year 1 monthly payment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${loanComparison.policyYear1Payment.toLocaleString()} THB/mo, aligning with actual pre-debt cashflow (${Math.round(diagnostic.operatingCashflow).toLocaleString()} THB/mo), freeing +${loanComparison.monthlyLiquiditySaved.toLocaleString()} THB/mo in liquidity and saving approx. ${loanComparison.totalInterestSaved.toLocaleString()} THB in net interest${loanComparison.grossWaivedInterest ? ` (~${loanComparison.grossWaivedInterest.toLocaleString()} THB gross interest waived during the freeze)` : ""}${loanComparison.payoffMonthPol ? `. The loan is fully amortized by Year ${Math.ceil(loanComparison.payoffMonthPol / 12)}, with 0 THB installment thereafter.` : "."}`}
+                      ? `ตัวอย่างแนวทางขอปรับลดภาระค่างวดปีที่ 1 จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน เหลือ ${loanComparison.policyYear1Payment.toLocaleString()} บาท/เดือน เพื่อให้สอดคล้องกับ${userType === "individual" ? "เงินเหลือหลังหักค่าใช้จ่ายจำเป็น" : "กำไรจากการดำเนินงาน"} (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน) ช่วยเพิ่มสภาพคล่องหมุนเวียน +${loanComparison.monthlyLiquiditySaved.toLocaleString()} บาท/เดือน และมีประมาณการส่วนต่างดอกเบี้ย${loanComparison.usesAssumedRate ? `ภายใต้สมมติฐานดอกเบี้ยเดิม ${loanComparison.originalRatePct.toFixed(1)}% ต่อปี` : `ตามดอกเบี้ยที่คุณกรอก ${loanComparison.originalRatePct.toFixed(1)}% ต่อปี`} ประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท${loanComparison.grossWaivedInterest ? ` (ตัวอย่างดอกเบี้ยพักชำระช่วง 3 ปีแรกประมาณ ${loanComparison.grossWaivedInterest.toLocaleString()} บาท)` : ""}${loanComparison.payoffMonthPol ? ` คาดว่าจะผ่อนครบภายในปีที่ ${Math.ceil(loanComparison.payoffMonthPol / 12)} (ทั้งนี้เงื่อนไขจริงขึ้นอยู่กับการอนุมัติของเจ้าหนี้)` : " (เงื่อนไขจริงขึ้นอยู่กับการพิจารณาของเจ้าหนี้)"}`
+                      : `Illustrative Year 1 payment adjustment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${loanComparison.policyYear1Payment.toLocaleString()} THB/mo, aligned with post-expense cashflow (${Math.round(diagnostic.operatingCashflow).toLocaleString()} THB/mo), freeing +${loanComparison.monthlyLiquiditySaved.toLocaleString()} THB/mo and yielding an estimated interest difference of ~${loanComparison.totalInterestSaved.toLocaleString()} THB (${loanComparison.usesAssumedRate ? `assumed ${loanComparison.originalRatePct.toFixed(1)}%` : `entered ${loanComparison.originalRatePct.toFixed(1)}%`} p.a. baseline)${loanComparison.grossWaivedInterest ? ` (~${loanComparison.grossWaivedInterest.toLocaleString()} THB illustrative freeze interest)` : ""}${loanComparison.payoffMonthPol ? `. Estimated payoff by Year ${Math.ceil(loanComparison.payoffMonthPol / 12)} (subject to lender approval).` : " (subject to lender approval)."}`}
                   </p>
                 </div>
               )}

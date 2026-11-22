@@ -42,9 +42,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Run deterministic pytest guardrail suite
+      - name: Run deterministic pytest guardrail suite and log Layer 1 status
         working-directory: backend
-        run: pytest -q tests/test_guardrails.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pytest -q tests/test_guardrails.py
+          python -m src.evaluation.layered_eval --layer code_tests --role baseline
 
       - name: Execute scheduled Medallion ELT batch
         working-directory: backend

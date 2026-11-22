@@ -7,12 +7,16 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from src.config.feature_registry import get_validation_policy
 from src.db.connection import fetch_all
 from src.guardrails.schemas import get_province_metadata, resolve_northern_province
 
 
-def build_monthly_analysis_panel() -> pd.DataFrame:
-    """Build aligned 17 province monthly panel excluding incomplete current month and annual NSO rows."""
+def build_monthly_analysis_panel(
+    train_cutoff_date: pd.Timestamp | None = None,
+    prevent_lookahead: bool = True,
+) -> pd.DataFrame:
+    """Build aligned 17 province monthly panel with train fitted seasonal baselines to avoid lookahead leakage."""
     today_month = date.today().replace(day=1)
 
     rows = fetch_all(
@@ -43,8 +47,26 @@ def build_monthly_analysis_panel() -> pd.DataFrame:
         aggfunc="first",
     ).reset_index()
 
-    # Keep only months where MOTS target occupancy exists so every target row is complete
+    # Reindex to complete province x monthly calendar grid BEFORE YoY diffs so missing months never misalign lag 12
     prov_wide = prov_wide.dropna(subset=["occupancy_rate"]).sort_values(["province_code", "period_date"])
+    if not prov_wide.empty:
+        all_provinces = sorted(prov_wide["province_code"].unique())
+        min_month = prov_wide["period_date"].min()
+        max_month = prov_wide["period_date"].max()
+        full_months = pd.date_range(start=min_month, end=max_month, freq="MS")
+        full_idx = pd.MultiIndex.from_product(
+            [all_provinces, full_months], names=["province_code", "period_date"]
+        )
+        cal_grid = (
+            prov_wide.set_index(["province_code", "period_date"])
+            .reindex(full_idx)
+            .reset_index()
+        )
+        cal_grp = cal_grid.groupby("province_code", sort=False)
+        cal_grid["occupancy_yoy_diff"] = cal_grp["occupancy_rate"].diff(12)
+        cal_grid["visitors_yoy_pct"] = cal_grp["visitors_total"].pct_change(12, fill_method=None) * 100.0
+        cal_grid["revenue_yoy_pct"] = cal_grp["revenue_total_mthb"].pct_change(12, fill_method=None) * 100.0
+        prov_wide = cal_grid.dropna(subset=["occupancy_rate"]).sort_values(["province_code", "period_date"])
 
     # Merge macro controls by month_date
     macro_df = df[df["dataset_name"] == "macro_controls"].copy()
@@ -61,36 +83,59 @@ def build_monthly_analysis_panel() -> pd.DataFrame:
 
     panel["cal_month"] = panel["period_date"].dt.month
 
-    # Vectorized deseasonalization and YoY feature engineering per province
-    grp = panel.groupby("province_code", sort=False)
-    panel["occupancy_yoy_diff"] = grp["occupancy_rate"].diff(12)
-    panel["visitors_yoy_pct"] = grp["visitors_total"].pct_change(12) * 100.0
-    panel["revenue_yoy_pct"] = grp["revenue_total_mthb"].pct_change(12) * 100.0
-
-    # Calendar month baseline anomaly preserves all 34 months including 2024 flood episodes
-    pm_grp = panel.groupby(["province_code", "cal_month"])
-    panel["occupancy_deseason"] = panel["occupancy_rate"] - pm_grp["occupancy_rate"].transform("mean")
     panel["log_visitors"] = np.log1p(panel["visitors_total"].clip(lower=0))
-    panel["visitors_deseason_pct"] = (
-        panel["log_visitors"] - pm_grp["log_visitors"].transform("mean")
-    ) * 100.0
     panel["log_revenue"] = np.log1p(panel["revenue_total_mthb"].clip(lower=0))
-    panel["revenue_deseason_pct"] = (
-        panel["log_revenue"] - pm_grp["log_revenue"].transform("mean")
-    ) * 100.0
 
-    # Hazard seasonal excess and full sample province standardized scores
+    # Estimate seasonal means and standardization stats strictly on chronological train window to prevent leakage
+    unique_months = np.sort(panel["period_date"].unique())
+    if train_cutoff_date is not None:
+        cutoff = pd.Timestamp(train_cutoff_date)
+    elif prevent_lookahead and len(unique_months) >= 16:
+        policy = get_validation_policy()
+        split_idx = max(12, int(len(unique_months) * float(policy["time_split_train_ratio"])))
+        cutoff = pd.Timestamp(unique_months[min(split_idx, len(unique_months) - 1)])
+    else:
+        cutoff = pd.Timestamp(unique_months[-1])
+
+    fit_panel = panel[panel["period_date"] <= cutoff]
+    if fit_panel.empty:
+        fit_panel = panel
+
+    panel["seasonal_fit_cutoff_date"] = cutoff
+
+    def _apply_seasonal_anomaly(col: str) -> pd.Series:
+        pm_means = (
+            fit_panel.groupby(["province_code", "cal_month"])[col]
+            .mean()
+            .rename("_pm_mean")
+        )
+        p_fallback = fit_panel.groupby("province_code")[col].mean().rename("_p_mean")
+        joined = panel[["province_code", "cal_month"]].merge(
+            pm_means.reset_index(), on=["province_code", "cal_month"], how="left"
+        )
+        joined = joined.merge(p_fallback.reset_index(), on="province_code", how="left")
+        baseline = joined["_pm_mean"].fillna(joined["_p_mean"]).to_numpy(dtype=float)
+        return pd.Series(panel[col].to_numpy(dtype=float) - baseline, index=panel.index)
+
+    def _apply_train_zscore(col: str) -> pd.Series:
+        p_stats = fit_panel.groupby("province_code")[col].agg(["mean", "std"]).reset_index()
+        joined = panel[["province_code"]].merge(p_stats, on="province_code", how="left")
+        stds = joined["std"].replace(0, np.nan).to_numpy(dtype=float)
+        means = joined["mean"].to_numpy(dtype=float)
+        return pd.Series((panel[col].to_numpy(dtype=float) - means) / stds, index=panel.index)
+
+    panel["occupancy_deseason"] = _apply_seasonal_anomaly("occupancy_rate")
+    panel["visitors_deseason_pct"] = _apply_seasonal_anomaly("log_visitors") * 100.0
+    panel["revenue_deseason_pct"] = _apply_seasonal_anomaly("log_revenue") * 100.0
+
+    # Hazard seasonal excess and train fitted province standardized scores
     if "rainfall_sum_mm" in panel.columns:
-        panel["rainfall_excess_mm"] = panel["rainfall_sum_mm"] - pm_grp["rainfall_sum_mm"].transform("mean")
-        rain_prov_mean = grp["rainfall_sum_mm"].transform("mean")
-        rain_prov_std = grp["rainfall_sum_mm"].transform("std").replace(0, np.nan)
-        panel["rainfall_z_prov"] = (panel["rainfall_sum_mm"] - rain_prov_mean) / rain_prov_std
+        panel["rainfall_excess_mm"] = _apply_seasonal_anomaly("rainfall_sum_mm")
+        panel["rainfall_z_prov"] = _apply_train_zscore("rainfall_sum_mm")
 
     if "pm25_mean" in panel.columns:
-        panel["pm25_excess"] = panel["pm25_mean"] - pm_grp["pm25_mean"].transform("mean")
-        pm_prov_mean = grp["pm25_mean"].transform("mean")
-        pm_prov_std = grp["pm25_mean"].transform("std").replace(0, np.nan)
-        panel["pm25_z_prov"] = (panel["pm25_mean"] - pm_prov_mean) / pm_prov_std
+        panel["pm25_excess"] = _apply_seasonal_anomaly("pm25_mean")
+        panel["pm25_z_prov"] = _apply_train_zscore("pm25_mean")
 
     if {"visitors_foreign", "visitors_total"}.issubset(panel.columns):
         panel["foreign_visitor_share"] = (

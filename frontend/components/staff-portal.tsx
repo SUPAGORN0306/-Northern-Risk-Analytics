@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { Loader2, LockKeyhole, X } from "lucide-react"
 import { StaffWorkspace } from "@/components/staff-workspace"
-import { staffDemoAccess, staffLogin, type StaffAuthResponse } from "@/lib/api"
+import { formatFetchError, isUnauthorizedError, staffLogin, type StaffAuthResponse } from "@/lib/api"
 import { useAppState } from "@/lib/i18n"
 
 const STAFF_SESSION_KEY = "northrisk_staff_auth_v1"
@@ -94,22 +94,23 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
     setSignInMessage("")
   }
 
-  async function enterDemo() {
-    setLoading(true)
-    setSignInMessage("")
-    try {
-      const auth = await staffDemoAccess()
-      closeLogin()
-      persistStaffSession(auth)
-    } catch (err) {
-      setSignInMessage(
-        lang === "th"
-          ? "ไม่สามารถเชื่อมต่อระบบเจ้าหน้าที่ได้ในขณะนี้"
-          : `Unable to enter staff workspace (${err instanceof Error ? err.message : "Error"}).`,
-      )
-    } finally {
-      setLoading(false)
+  const demoUserEnv = process.env.NEXT_PUBLIC_DEMO_STAFF_USER || ""
+  const demoPassEnv = process.env.NEXT_PUBLIC_DEMO_STAFF_PASSWORD || ""
+  const hasDemoFillConfig = Boolean(demoUserEnv && demoPassEnv)
+
+  function handleFillDemo() {
+    if (!hasDemoFillConfig) return
+    const form = formRef.current
+    if (!form) return
+    const usernameInput = form.elements.namedItem("username") as HTMLInputElement | null
+    const passwordInput = form.elements.namedItem("password") as HTMLInputElement | null
+    if (usernameInput) {
+      usernameInput.value = demoUserEnv
     }
+    if (passwordInput) {
+      passwordInput.value = demoPassEnv
+    }
+    setSignInMessage("")
   }
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
@@ -124,11 +125,15 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
       closeLogin()
       persistStaffSession(auth)
     } catch (err) {
-      setSignInMessage(
-        lang === "th"
-          ? "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง หรือกดปุ่มเข้าใช้งานระบบเจ้าหน้าที่ด้านล่าง"
-          : `Authentication failed (${err instanceof Error ? err.message : "Unauthorized"}).`,
-      )
+      if (isUnauthorizedError(err)) {
+        setSignInMessage(
+          lang === "th"
+            ? "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบข้อมูลอีกครั้ง"
+            : "Invalid username or password. Please check your credentials.",
+        )
+      } else {
+        setSignInMessage(formatFetchError(err, lang))
+      }
     } finally {
       setLoading(false)
     }
@@ -217,20 +222,24 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
             )}
           </form>
 
-          <div className="my-4 flex items-center gap-3 text-[11px] text-muted-foreground">
-            <span className="h-px flex-1 bg-border" />
-            {lang === "th" ? "หรือ" : "or"}
-            <span className="h-px flex-1 bg-border" />
-          </div>
+          {hasDemoFillConfig && (
+            <>
+              <div className="my-5 flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs text-muted-foreground">{lang === "th" ? "หรือ" : "or"}</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
 
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => void enterDemo()}
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
-          >
-            {lang === "th" ? "เข้าใช้งานระบบเจ้าหน้าที่ทันที" : "Instant Staff Access"}
-          </button>
+              <button
+                type="button"
+                onClick={handleFillDemo}
+                disabled={loading}
+                className="inline-flex h-11 w-full items-center justify-center rounded-full border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+              >
+                {lang === "th" ? "กรอกข้อมูลบัญชีทดสอบอัตโนมัติ (Demo Fill)" : "Fill Demo Credentials"}
+              </button>
+            </>
+          )}
         </div>
       </dialog>
     </StaffPortalContext.Provider>

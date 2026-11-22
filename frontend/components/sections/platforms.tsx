@@ -17,6 +17,7 @@ import {
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
   ReferenceLine,
@@ -28,11 +29,14 @@ import {
 import { NorthernThailandMap, type MapMetricMode } from "@/components/northern-thailand-map"
 import {
   fetchProvinceDetail,
+  formatFetchError,
   type ProvinceDetailResponse,
   type RiskOutlookResponse,
 } from "@/lib/api"
 import {
   formatThaiMonth,
+  fullCalendarMonth,
+  joinNaturalList,
   shortCalendarMonth,
   translateClusterGuidance,
   translateClusterLabel,
@@ -42,6 +46,7 @@ import {
 } from "@/lib/i18n"
 
 type ChartTab = "trend" | "seasonality"
+type WeatherOverlay = "both" | "pm25" | "rain"
 
 export function RiskOutlook({
   outlook,
@@ -58,10 +63,16 @@ export function RiskOutlook({
 
   const [metricMode, setMetricMode] = useState<MapMetricMode>("cluster")
   const [chartTab, setChartTab] = useState<ChartTab>("trend")
+  const [weatherOverlay, setWeatherOverlay] = useState<WeatherOverlay>("both")
+  const [seasonYear, setSeasonYear] = useState<string>("all")
   const [detail, setDetail] = useState<ProvinceDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailRetryNonce, setDetailRetryNonce] = useState(0)
   const [playbookOpen, setPlaybookOpen] = useState(false)
   const [segmentsOpen, setSegmentsOpen] = useState(false)
+  const [mobileTierListOpen, setMobileTierListOpen] = useState(false)
+  const [mobileInspectorTab, setMobileInspectorTab] = useState<"summary" | "chart" | "advice">("summary")
 
   const provinces = outlook?.provinces ?? []
   const selectedItem = useMemo(
@@ -75,15 +86,37 @@ export function RiskOutlook({
   useEffect(() => {
     let active = true
     if (!selectedProvinceCode) return
-    setDetailLoading(true)
     setPlaybookOpen(false)
     setSegmentsOpen(false)
+
+    // Hydrate Chiang Mai immediately from the initial outlook payload when available
+    if (
+      selectedProvinceCode === "CM" &&
+      outlook?.default_province_detail &&
+      outlook.default_province_detail.province?.province_code === "CM"
+    ) {
+      setDetail(outlook.default_province_detail)
+      setDetailError(null)
+      setDetailLoading(false)
+      return () => {
+        active = false
+      }
+    }
+
+    setDetailLoading(true)
+    setDetailError(null)
     fetchProvinceDetail(selectedProvinceCode)
       .then((res) => {
-        if (active) setDetail(res)
+        if (active) {
+          setDetail(res)
+          setDetailError(null)
+        }
       })
-      .catch(() => {
-        if (active) setDetail(null)
+      .catch((err) => {
+        if (active) {
+          setDetail(null)
+          setDetailError(formatFetchError(err, lang))
+        }
       })
       .finally(() => {
         if (active) setDetailLoading(false)
@@ -91,7 +124,14 @@ export function RiskOutlook({
     return () => {
       active = false
     }
-  }, [selectedProvinceCode])
+  }, [selectedProvinceCode, detailRetryNonce, lang, outlook?.default_province_detail])
+
+  // Recover automatically if outlook finishes loading after an early cold start detail error
+  useEffect(() => {
+    if (outlook && !detail && detailError && !detailLoading) {
+      setDetailRetryNonce((n) => n + 1)
+    }
+  }, [outlook, detail, detailError, detailLoading])
 
   // Compute live regional averages and notable spotlight provinces for 1 click exploration
   const regionalBenchmarks = useMemo(() => {
@@ -166,27 +206,78 @@ export function RiskOutlook({
     return series.slice(-18).map((pt) => ({
       label: formatThaiMonth(pt.month_date, lang),
       occupancy: pt.occupancy_rate != null ? Number(pt.occupancy_rate.toFixed(1)) : null,
-      shock: Number(pt.composite_shock_idx.toFixed(1)),
-      flood: pt.flood_shock_subidx != null ? Number(pt.flood_shock_subidx.toFixed(1)) : 0,
-      haze: pt.haze_shock_subidx != null ? Number(pt.haze_shock_subidx.toFixed(1)) : 0,
-      macro: pt.macro_pressure_subidx != null ? Number(pt.macro_pressure_subidx.toFixed(1)) : 0,
-      rainMm: pt.rainfall_sum_mm != null ? Math.round(pt.rainfall_sum_mm) : 0,
-      pm25: pt.pm25_mean != null ? Number(pt.pm25_mean.toFixed(1)) : 0,
+      shock: pt.composite_shock_idx != null ? Number(pt.composite_shock_idx.toFixed(1)) : null,
+      flood: pt.flood_shock_subidx != null ? Number(pt.flood_shock_subidx.toFixed(1)) : null,
+      haze: pt.haze_shock_subidx != null ? Number(pt.haze_shock_subidx.toFixed(1)) : null,
+      macro: pt.macro_pressure_subidx != null ? Number(pt.macro_pressure_subidx.toFixed(1)) : null,
+      cpiYoy: pt.th_cpi_yoy_pct != null ? Number(pt.th_cpi_yoy_pct.toFixed(2)) : null,
+      oilYoy: pt.oil_brent_yoy_pct != null ? Number(pt.oil_brent_yoy_pct.toFixed(1)) : null,
+      rainMm: pt.rainfall_sum_mm != null ? Math.round(pt.rainfall_sum_mm) : null,
+      pm25: pt.pm25_mean != null ? Number(pt.pm25_mean.toFixed(1)) : null,
     }))
   }, [detail, lang])
 
+  const availableSeasonYears = useMemo(() => {
+    const years = new Set<string>()
+    for (const pt of detail?.monthly_series ?? []) {
+      const yr = pt.month_date?.slice(0, 4)
+      if (yr && /^\d{4}$/.test(yr)) years.add(yr)
+    }
+    return Array.from(years).sort((a, b) => Number(b) - Number(a))
+  }, [detail])
+
+  const effectiveSeasonYear =
+    seasonYear !== "all" && availableSeasonYears.includes(seasonYear) ? seasonYear : "all"
+
+  const activeSeasonRows = useMemo(() => {
+    if (effectiveSeasonYear === "all") {
+      return detail?.seasonality_calendar ?? []
+    }
+    const filtered = (detail?.monthly_series ?? [])
+      .filter((pt) => pt.month_date?.startsWith(effectiveSeasonYear))
+      .map((pt) => ({
+        cal_month: Number(pt.month_date.slice(5, 7)),
+        avg_occupancy_rate: pt.occupancy_rate,
+        avg_pm25_mean: pt.pm25_mean,
+        avg_rainfall_mm: pt.rainfall_sum_mm,
+      }))
+      .filter((row) => row.cal_month >= 1 && row.cal_month <= 12)
+      .sort((a, b) => a.cal_month - b.cal_month)
+    return filtered
+  }, [detail, effectiveSeasonYear])
+
+  const seasonYearRangeLabel = useMemo(() => {
+    if (!availableSeasonYears.length) {
+      return lang === "th" ? "เฉลี่ยทุกปี" : "All Years"
+    }
+    const minYr = Number(availableSeasonYears[availableSeasonYears.length - 1])
+    const maxYr = Number(availableSeasonYears[0])
+    if (minYr === maxYr) {
+      return lang === "th" ? `ปี ${maxYr + 543}` : `${maxYr}`
+    }
+    return lang === "th"
+      ? `เฉลี่ยทุกปี (${minYr + 543}–${maxYr + 543})`
+      : `All Years (${minYr}–${maxYr})`
+  }, [availableSeasonYears, lang])
+
   const seasonalityData = useMemo(() => {
-    const cal = detail?.seasonality_calendar ?? []
-    return cal.map((m) => ({
+    return activeSeasonRows.map((m) => ({
       month: shortCalendarMonth(m.cal_month, lang),
-      occupancy: m.avg_occupancy_rate != null ? Number(m.avg_occupancy_rate.toFixed(1)) : 0,
-      pm25: m.avg_pm25_mean != null ? Number(m.avg_pm25_mean.toFixed(1)) : 0,
-      rain: m.avg_rainfall_mm != null ? Math.round(m.avg_rainfall_mm) : 0,
+      fullMonth: fullCalendarMonth(m.cal_month, lang),
+      occupancy: m.avg_occupancy_rate != null ? Number(m.avg_occupancy_rate.toFixed(1)) : null,
+      pm25: m.avg_pm25_mean != null ? Number(m.avg_pm25_mean.toFixed(1)) : null,
+      rain: m.avg_rainfall_mm != null ? Math.round(m.avg_rainfall_mm) : null,
     }))
+  }, [activeSeasonRows, lang])
+
+  const monthlyTrendPeriod = useMemo(() => {
+    const series = (detail?.monthly_series ?? []).slice(-18)
+    if (!series.length) return ""
+    return `${formatThaiMonth(series[0].month_date, lang)}–${formatThaiMonth(series[series.length - 1].month_date, lang)}`
   }, [detail, lang])
 
   const seasonalPlan = useMemo(() => {
-    const cal = detail?.seasonality_calendar ?? []
+    const cal = activeSeasonRows
     const validOcc = cal.filter((c) => c.avg_occupancy_rate != null)
     if (!validOcc.length) return null
 
@@ -202,14 +293,14 @@ export function RiskOutlook({
     const lowOcc = lowM?.avg_occupancy_rate ?? annualAvgOcc
     const dropFromPeakPct = peakOcc > 0 ? Math.round(((peakOcc - lowOcc) / peakOcc) * 100) : 0
 
-    const highMonthsText = sortedOccDesc
-      .slice(0, 2)
-      .map((c) => shortCalendarMonth(c.cal_month, lang))
-      .join(", ")
-    const lowMonthsText = sortedOccAsc
-      .slice(0, 2)
-      .map((c) => shortCalendarMonth(c.cal_month, lang))
-      .join(", ")
+    const highMonthsText = joinNaturalList(
+      sortedOccDesc.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+      lang,
+    )
+    const lowMonthsText = joinNaturalList(
+      sortedOccAsc.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+      lang,
+    )
 
     // Check actual threshold exceedances for PM2.5 above 37.5 ug/m3 and heavy rainfall above 180 mm
     const hazeExceed = cal
@@ -229,36 +320,42 @@ export function RiskOutlook({
     return {
       annualAvgOcc,
       highMonthsText,
-      peakMonthName: peakM ? shortCalendarMonth(peakM.cal_month, lang) : "",
+      peakMonthName: peakM ? fullCalendarMonth(peakM.cal_month, lang) : "",
       peakOcc: peakOcc.toFixed(1),
       lowMonthsText,
-      lowMonthName: lowM ? shortCalendarMonth(lowM.cal_month, lang) : "",
+      lowMonthName: lowM ? fullCalendarMonth(lowM.cal_month, lang) : "",
       lowOcc: lowOcc.toFixed(1),
       dropFromPeakPct,
       hasHazeExceed: hazeExceed.length > 0,
-      hazeExceedMonths: hazeExceed
-        .slice(0, 2)
-        .map((c) => shortCalendarMonth(c.cal_month, lang))
-        .join(", "),
+      hazeExceedMonths: joinNaturalList(
+        hazeExceed.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+        lang,
+      ),
       maxHazeVal: maxHaze?.avg_pm25_mean != null ? maxHaze.avg_pm25_mean.toFixed(1) : "0",
-      maxHazeMonth: maxHaze ? shortCalendarMonth(maxHaze.cal_month, lang) : "",
-      rainPeakMonths: (rainExceed.length ? rainExceed : maxRain ? [maxRain] : [])
-        .slice(0, 2)
-        .map((c) => shortCalendarMonth(c.cal_month, lang))
-        .join(", "),
+      maxHazeMonth: maxHaze ? fullCalendarMonth(maxHaze.cal_month, lang) : "",
+      rainPeakMonths: joinNaturalList(
+        (rainExceed.length ? rainExceed : maxRain ? [maxRain] : [])
+          .slice(0, 2)
+          .map((c) => fullCalendarMonth(c.cal_month, lang)),
+        lang,
+      ),
       maxRainMm: maxRain?.avg_rainfall_mm != null ? Math.round(maxRain.avg_rainfall_mm) : 0,
+      monthCount: cal.length,
+      lastMonthName: cal.length ? fullCalendarMonth(cal[cal.length - 1].cal_month, lang) : "",
     }
-  }, [detail, lang])
+  }, [activeSeasonRows, lang])
 
   const bestSeasonMonths = useMemo(() => {
     const cal = detail?.seasonality_calendar ?? []
     if (!cal.length) return ""
-    return [...cal]
-      .filter((c) => c.avg_occupancy_rate != null)
-      .sort((a, b) => (b.avg_occupancy_rate ?? 0) - (a.avg_occupancy_rate ?? 0))
-      .slice(0, 2)
-      .map((c) => shortCalendarMonth(c.cal_month, lang))
-      .join(", ")
+    return joinNaturalList(
+      [...cal]
+        .filter((c) => c.avg_occupancy_rate != null)
+        .sort((a, b) => (b.avg_occupancy_rate ?? 0) - (a.avg_occupancy_rate ?? 0))
+        .slice(0, 2)
+        .map((c) => fullCalendarMonth(c.cal_month, lang)),
+      lang,
+    )
   }, [detail, lang])
 
   const stressSeasonMonths = useMemo(() => {
@@ -274,31 +371,31 @@ export function RiskOutlook({
     if (peakHaze) {
       parts.push(
         lang === "th"
-          ? `ฝุ่นสูง ${shortCalendarMonth(peakHaze.cal_month, lang)}`
-          : `Haze peak ${shortCalendarMonth(peakHaze.cal_month, lang)}`,
+          ? `ช่วงฝุ่นสูงในเดือน${fullCalendarMonth(peakHaze.cal_month, lang)}`
+          : `high haze in ${fullCalendarMonth(peakHaze.cal_month, lang)}`,
       )
     }
     if (peakRain) {
       parts.push(
         lang === "th"
-          ? `ฝนชุก ${shortCalendarMonth(peakRain.cal_month, lang)}`
-          : `Rain peak ${shortCalendarMonth(peakRain.cal_month, lang)}`,
+          ? `ช่วงฝนชุกในเดือน${fullCalendarMonth(peakRain.cal_month, lang)}`
+          : `heavy rainfall in ${fullCalendarMonth(peakRain.cal_month, lang)}`,
       )
     }
-    return parts.join(" · ")
+    return joinNaturalList(parts, lang)
   }, [detail, lang])
 
   const metricTabs: { id: MapMetricMode; label: string }[] =
     lang === "th"
       ? [
-          { id: "cluster", label: "ระดับความเสี่ยงทางเศรษฐกิจ" },
+          { id: "cluster", label: "ระดับความเสี่ยง" },
           { id: "occupancy", label: "อัตราเข้าพัก" },
           { id: "debt", label: "ภาระหนี้และเงินเหลือ" },
         ]
       : [
-          { id: "cluster", label: "Vulnerability Tier" },
+          { id: "cluster", label: "Risk Tier" },
           { id: "occupancy", label: "Occupancy" },
-          { id: "debt", label: "Debt & Cash Surplus" },
+          { id: "debt", label: "Debt & Surplus" },
         ]
 
   const summary = outlook?.regional_summary
@@ -349,14 +446,14 @@ export function RiskOutlook({
       const finLine =
         smeDebt != null && cushion != null
           ? smeDebt >= 1.0 || cushion <= 12
-            ? `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (ควรวางแผนลดภาระค่างวด)`
+            ? `ยอดหนี้คงค้างเฉลี่ยคิดเป็น ${Math.round(smeDebt * 100)}% ของรายได้ทั้งปี (ไม่ใช่ค่างวดรายเดือน) และมีเงินเหลือหลังหักรายจ่ายเฉลี่ย ${cushion.toFixed(0)}% ของรายได้ (ควรวางแผนลดภาระค่างวด)`
             : smeDebt >= 0.65 || cushion <= 22
-              ? `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (ควรสำรองเงินรับช่วงผู้เข้าพักน้อย)`
-              : `สัดส่วนหนี้ต่อรายได้ทั้งปี ${Math.round(smeDebt * 100)}% และเงินเหลือใช้ต่อเดือนคิดเป็น ${cushion.toFixed(0)}% ของรายได้ (สภาพคล่องดี)`
+              ? `ยอดหนี้คงค้างเฉลี่ยคิดเป็น ${Math.round(smeDebt * 100)}% ของรายได้ทั้งปี (ไม่ใช่ค่างวดรายเดือน) และมีเงินเหลือหลังหักรายจ่ายเฉลี่ย ${cushion.toFixed(0)}% ของรายได้ (ควรสำรองเงินรับช่วงผู้เข้าพักน้อย)`
+              : `ยอดหนี้คงค้างเฉลี่ยคิดเป็น ${Math.round(smeDebt * 100)}% ของรายได้ทั้งปี (ไม่ใช่ค่างวดรายเดือน) และมีเงินเหลือหลังหักรายจ่ายเฉลี่ย ${cushion.toFixed(0)}% ของรายได้ (สภาพคล่องดี)`
           : "อยู่ระหว่างอัปเดตข้อมูลฐานะการเงินรายจังหวัด"
 
       const seasonLine = bestSeasonMonths
-        ? `ช่วงทำรายได้หลักคือ ${bestSeasonMonths}${stressSeasonMonths ? ` · ช่วงที่ควรสำรองเงินสดรับมือคือ ${stressSeasonMonths}` : ""}`
+        ? `ช่วงทำรายได้หลักคือเดือน${bestSeasonMonths}${stressSeasonMonths ? ` ส่วนช่วงที่ควรสำรองเงินสดรับมือคือ${stressSeasonMonths}` : ""}`
         : translateClusterGuidance(selectedItem.cluster_label, lang)
 
       return [
@@ -420,7 +517,7 @@ export function RiskOutlook({
           initial={{ opacity: 0, y: 18 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.5 }}
-          className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"
+          className="mb-5"
         >
           <div className="max-w-2xl">
             <p className="mb-2 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -439,29 +536,6 @@ export function RiskOutlook({
                 ? "เลือกจังหวัดเพื่อดูอัตราเข้าพัก ภาระหนี้ และรายได้ที่เหลือหลังหักค่าใช้จ่าย เทียบกับค่าเฉลี่ยภาคเหนือตลอดทั้งปี"
                 : "Hover or click any province to compare occupancy, SME debt, and post-expense cash surplus against the regional average with a 12-month planner."}
             </p>
-          </div>
-
-          <div
-            role="tablist"
-            aria-label={lang === "th" ? "ตัวเลือกมุมมองแผนที่" : "Map layer selector"}
-            className="inline-flex flex-wrap items-center gap-1 rounded-full border border-border bg-background p-1"
-          >
-            {metricTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={metricMode === tab.id}
-                onClick={() => setMetricMode(tab.id)}
-                className={`rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${
-                  metricMode === tab.id
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
           </div>
         </motion.div>
 
@@ -550,6 +624,29 @@ export function RiskOutlook({
               )}
             </div>
 
+            <div
+              role="tablist"
+              aria-label={lang === "th" ? "ตัวเลือกมุมมองแผนที่" : "Map layer selector"}
+              className="grid grid-cols-3 gap-1 rounded-2xl border border-border bg-secondary/45 p-1"
+            >
+              {metricTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={metricMode === tab.id}
+                  onClick={() => setMetricMode(tab.id)}
+                  className={`rounded-xl px-2 py-2 text-center text-[11px] font-medium leading-tight transition-colors sm:text-xs ${
+                    metricMode === tab.id
+                      ? "bg-foreground text-background shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
             {provinces.length > 0 && (
               <label className="block md:hidden">
                 <span className="mb-1.5 block text-sm font-medium text-[#4B5563]">
@@ -586,19 +683,46 @@ export function RiskOutlook({
             {/* Compact 4 Tier Regional Summary Matrix below map for quick selection */}
             {tierGroups.length > 0 && (
               <div className="rounded-2xl border border-border bg-secondary/30 p-3.5">
-                <p className="mb-2 text-[11px] font-semibold text-foreground">
+                <button
+                  type="button"
+                  aria-expanded={mobileTierListOpen}
+                  onClick={() => setMobileTierListOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 text-left md:hidden"
+                >
+                  <span className="text-xs font-semibold text-foreground">
+                    {lang === "th"
+                      ? "ดูรายชื่อ 17 จังหวัดแยกตามระดับความเสี่ยง (4 ระดับ)"
+                      : "View all 17 provinces by risk tier"}
+                  </span>
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                      mobileTierListOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                <p className="mb-2 hidden text-[11px] font-semibold text-foreground md:block">
                   {lang === "th"
                     ? "ภาพรวมทุกจังหวัด จำแนกตามระดับความเสี่ยงทางเศรษฐกิจของพื้นที่"
                     : "Provincial Economic Risk Overview"}
                 </p>
-                <div className="space-y-2">
+                <div className={`${mobileTierListOpen ? "mt-2.5 block" : "hidden"} space-y-2 md:mt-0 md:block`}>
                   {tierGroups.map((grp) => (
                     <div key={grp.tier} className="rounded-xl bg-background px-3 py-2">
                       <div className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                           <span
-                            style={{ backgroundColor: grp.color }}
-                            className="size-2 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor:
+                                grp.tier === 1
+                                  ? "#e57373"
+                                  : grp.tier === 2
+                                    ? "#f5b87a"
+                                    : grp.tier === 3
+                                      ? "#93c5e8"
+                                      : "#7ec8a9",
+                            }}
+                            className="size-2.5 shrink-0 rounded-full ring-1 ring-black/10"
                             aria-hidden="true"
                           />
                           {lang === "th" ? `ระดับ ${grp.tier} ${grp.short_th}` : `Tier ${grp.tier} ${grp.short_en}`}
@@ -680,67 +804,102 @@ export function RiskOutlook({
                     )}
                   </div>
 
-                  {/* Plain language 3 bullet summary */}
-                  <div className="rounded-2xl border border-border bg-secondary/45 p-3.5">
-                    <ul className="space-y-1.5 text-sm leading-6 text-[#4B5563]">
-                      {plainTakeaways.map((item) => (
-                        <li key={item.label} className="flex items-start gap-2">
-                          <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground/70" aria-hidden="true" />
-                          <span>
-                            <strong className="font-medium text-foreground">{item.label}:</strong> {item.text}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                  {/* Mobile sub-tab switcher to prevent long scrolling on phones while keeping desktop untouched */}
+                  <div
+                    role="tablist"
+                    aria-label={lang === "th" ? "เลือกหัวข้อข้อมูลจังหวัด" : "Provincial section tabs"}
+                    className="grid grid-cols-3 gap-1 rounded-2xl border border-border bg-secondary/45 p-1 md:hidden"
+                  >
+                    {(
+                      [
+                        { id: "summary", th: "สรุปจังหวัด", en: "Summary" },
+                        { id: "chart", th: "กราฟและฤดูกาล", en: "Charts" },
+                        { id: "advice", th: "คำแนะนำธุรกิจ", en: "Guidance" },
+                      ] as const
+                    ).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={mobileInspectorTab === t.id}
+                        onClick={() => setMobileInspectorTab(t.id)}
+                        className={`rounded-xl px-2 py-2 text-center text-xs font-medium transition-colors ${
+                          mobileInspectorTab === t.id
+                            ? "bg-foreground text-background shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {lang === "th" ? t.th : t.en}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Visual Comparison Bars vs 17 Province Northern Average */}
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <CompareBarTile
-                      label={lang === "th" ? "อัตราเข้าพัก" : "Occupancy"}
-                      valueText={selectedItem.occupancy_rate != null ? `${selectedItem.occupancy_rate.toFixed(1)}%` : "—"}
-                      subText={
-                        lang === "th"
-                          ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgOcc.toFixed(1)}%`
-                          : `North avg ${regionalBenchmarks.avgOcc.toFixed(1)}%`
-                      }
-                      pct={Math.min(100, selectedItem.occupancy_rate ?? 0)}
-                      avgPct={Math.min(100, regionalBenchmarks.avgOcc)}
-                      tone="neutral"
-                    />
-                    <CompareBarTile
-                      label={lang === "th" ? "สัดส่วนหนี้ต่อรายได้ทั้งปี" : "Debt / Annual Income"}
-                      valueText={
-                        selectedItem.debt_to_annual_income_sme != null
-                          ? `${Math.round(selectedItem.debt_to_annual_income_sme * 100)}%`
-                          : "—"
-                      }
-                      subText={
-                        lang === "th"
-                          ? `เฉลี่ยภาคเหนือ ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
-                          : `North avg ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
-                      }
-                      pct={Math.min(100, ((selectedItem.debt_to_annual_income_sme ?? 0) / 1.6) * 100)}
-                      avgPct={Math.min(100, (regionalBenchmarks.avgSmeDebt / 1.6) * 100)}
-                      tone={(selectedItem.debt_to_annual_income_sme ?? 0) >= 1.0 ? "warn" : "neutral"}
-                    />
-                    <CompareBarTile
-                      label={lang === "th" ? "เงินเหลือใช้ต่อเดือน" : "Monthly cash left"}
-                      valueText={selectedCushion != null ? `${selectedCushion.toFixed(0)}%` : "—"}
-                      subText={
-                        lang === "th"
-                          ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
-                          : `North avg ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
-                      }
-                      pct={Math.min(100, ((selectedCushion ?? 0) / 50) * 100)}
-                      avgPct={Math.min(100, (regionalBenchmarks.avgSmeCushion / 50) * 100)}
-                      tone={selectedCushion != null && selectedCushion <= 12 ? "warn" : "good"}
-                    />
+                  <div className={mobileInspectorTab === "summary" ? "space-y-4" : "hidden md:block md:space-y-4"}>
+                    {/* Plain language 3 bullet summary */}
+                    <div className="rounded-2xl border border-border bg-secondary/45 p-3.5">
+                      <ul className="space-y-1.5 text-sm leading-6 text-[#4B5563]">
+                        {plainTakeaways.map((item) => (
+                          <li key={item.label} className="flex items-start gap-2">
+                            <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground/70" aria-hidden="true" />
+                            <span>
+                              <strong className="font-medium text-foreground">{item.label}:</strong> {item.text}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Visual Comparison Bars vs 17 Province Northern Average */}
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <CompareBarTile
+                        label={lang === "th" ? "อัตราเข้าพัก" : "Occupancy"}
+                        valueText={selectedItem.occupancy_rate != null ? `${selectedItem.occupancy_rate.toFixed(1)}%` : "—"}
+                        subText={
+                          lang === "th"
+                            ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgOcc.toFixed(1)}%`
+                            : `North avg ${regionalBenchmarks.avgOcc.toFixed(1)}%`
+                        }
+                        pct={selectedItem.occupancy_rate != null ? Math.min(100, selectedItem.occupancy_rate) : null}
+                        avgPct={Math.min(100, regionalBenchmarks.avgOcc)}
+                      />
+                      <CompareBarTile
+                        label={lang === "th" ? "สัดส่วนหนี้ต่อรายได้ทั้งปี" : "Debt / Annual Income"}
+                        valueText={
+                          selectedItem.debt_to_annual_income_sme != null
+                            ? `${Math.round(selectedItem.debt_to_annual_income_sme * 100)}%`
+                            : "—"
+                        }
+                        subText={
+                          lang === "th"
+                            ? `เฉลี่ยภาคเหนือ ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
+                            : `North avg ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
+                        }
+                        pct={selectedItem.debt_to_annual_income_sme != null
+                          ? Math.min(100, (selectedItem.debt_to_annual_income_sme / 1.6) * 100)
+                          : null}
+                        avgPct={Math.min(100, (regionalBenchmarks.avgSmeDebt / 1.6) * 100)}
+                      />
+                      <CompareBarTile
+                        label={lang === "th" ? "เงินเหลือใช้ต่อเดือน" : "Monthly cash left"}
+                        valueText={selectedCushion != null ? `${selectedCushion.toFixed(0)}%` : "—"}
+                        subText={
+                          lang === "th"
+                            ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
+                            : `North avg ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
+                        }
+                        pct={selectedCushion != null ? Math.min(100, (selectedCushion / 50) * 100) : null}
+                        avgPct={Math.min(100, (regionalBenchmarks.avgSmeCushion / 50) * 100)}
+                      />
+                    </div>
                   </div>
 
                   {/* Vulnerability Tiering Playbook & Sector Sensitivity */}
                   {selectedItem.vulnerability_tier && (
-                    <div className="rounded-2xl border border-border bg-secondary/35 p-4">
+                    <div
+                      className={`${
+                        mobileInspectorTab === "advice" ? "block" : "hidden md:block"
+                      } rounded-2xl border border-border bg-secondary/35 p-4`}
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <span
@@ -754,10 +913,16 @@ export function RiskOutlook({
                         </div>
                         <span className="rounded-full bg-background px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
                           {lang === "th"
-                            ? `คะแนนประเมินความเสี่ยง ${selectedItem.vulnerability_score ?? 0}/100`
-                            : `Score ${selectedItem.vulnerability_score ?? 0}/100`}
+                            ? `สัญญาณระดับจังหวัด ${selectedItem.vulnerability_score ?? 0}/100`
+                            : `Provincial Signal ${selectedItem.vulnerability_score ?? 0}/100`}
                         </span>
                       </div>
+
+                      <p className="mt-1.5 text-xs leading-5 text-[#4B5563]">
+                        {lang === "th"
+                          ? "หมายเหตุ: การจัดระดับและแนวทางด้านล่างเป็นสัญญาณเฝ้าระวังระดับจังหวัดจากค่าเฉลี่ยสถิติทางการ ไม่ใช่การประเมินเครดิตหรือความสามารถชำระหนี้ของธุรกิจรายบุคคล (การคำนวณข้อมูลกิจการของท่านแยกอยู่ในเครื่องมือตรวจสุขภาพการเงินด้านบน)"
+                          : "Note: This tier and sector playbook reflect provincial macro surveillance averages, not an individual firm credit assessment (use the firm calculator above for your own business numbers)."}
+                      </p>
 
                       {/* Drivers explaining why this province falls in this tier */}
                       {(lang === "th" ? selectedItem.tier_drivers_th : selectedItem.tier_drivers_en)?.length ? (
@@ -895,7 +1060,11 @@ export function RiskOutlook({
                   )}
 
                   {/* Interactive chart switcher between 18 month history and 12 month seasonality planner */}
-                  <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+                  <div
+                    className={`${
+                      mobileInspectorTab === "chart" ? "block" : "hidden md:block"
+                    } rounded-2xl border border-border bg-secondary/30 p-4`}
+                  >
                     <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                       <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-[11px] font-medium">
                         <button
@@ -933,7 +1102,7 @@ export function RiskOutlook({
                             </span>
                             <span className="inline-flex items-center gap-1">
                               <span className="size-2 rounded-sm bg-slate-300" aria-hidden="true" />
-                              {lang === "th" ? "ดัชนีแรงกดดัน (เกิน 50 = เฝ้าระวัง)" : "Hazard & Cost Pressure (50+ alert)"}
+                              {lang === "th" ? "แรงกดดันรวม 0–100 (ตั้งแต่ 50 = เฝ้าระวัง)" : "Total Pressure 0–100 (50+ = watch)"}
                             </span>
                           </>
                         ) : (
@@ -945,21 +1114,123 @@ export function RiskOutlook({
                             <span className="inline-flex items-center gap-1">
                               <span className="h-0.5 w-3 border-t border-dashed border-amber-600" aria-hidden="true" />
                               {lang === "th"
-                                ? `ค่าเฉลี่ยอัตราเข้าพักทั้งปี (${seasonalPlan?.annualAvgOcc ?? "—"}%)`
-                                : `Annual Average Occupancy Rate (${seasonalPlan?.annualAvgOcc ?? "—"}%)`}
+                                ? `เฉลี่ยรายเดือนย้อนหลัง (${seasonalPlan?.annualAvgOcc ?? "—"}%)`
+                                : `Historical monthly mean (${seasonalPlan?.annualAvgOcc ?? "—"}%)`}
                             </span>
-                            <span className="inline-flex items-center gap-1">
-                              <span className="size-2 rounded-sm bg-sky-600/50" aria-hidden="true" />
-                              {lang === "th" ? "ปริมาณฝนเฉลี่ย (มม.)" : "Avg Rainfall (mm)"}
-                            </span>
+                            {(weatherOverlay === "both" || weatherOverlay === "rain") && (
+                              <span className="inline-flex items-center gap-1">
+                                <span className="size-2 rounded-sm bg-sky-600/50" aria-hidden="true" />
+                                {lang === "th" ? "ปริมาณฝน (มม.)" : "Rainfall (mm)"}
+                              </span>
+                            )}
+                            {(weatherOverlay === "both" || weatherOverlay === "pm25") && (
+                              <>
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-orange-800">
+                                  <span className="size-2 shrink-0 rounded-full bg-orange-500" aria-hidden="true" />
+                                  {lang === "th" ? "ต่ำกว่า 37.5 µg/m³ สีส้ม" : "Below 37.5 µg/m³ Orange"}
+                                </span>
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-1 text-red-800">
+                                  <span className="size-2 shrink-0 rounded-full bg-red-600" aria-hidden="true" />
+                                  {lang === "th" ? "ตั้งแต่ 37.5 µg/m³ สีแดง" : "At or above 37.5 µg/m³ Red"}
+                                </span>
+                              </>
+                            )}
                           </>
                         )}
                       </div>
                     </div>
 
+                    {chartTab === "trend" && !detailLoading && !detailError && (
+                      <p className="mb-1 text-[10px] text-muted-foreground">
+                        {lang === "th"
+                          ? `ข้อมูลรายเดือน${monthlyTrendPeriod ? ` ${monthlyTrendPeriod}` : ""} ช่องว่างคือไม่มีข้อมูล`
+                          : `Monthly data${monthlyTrendPeriod ? ` ${monthlyTrendPeriod}` : ""} Gaps mean no data`}
+                      </p>
+                    )}
+
+                    {chartTab === "seasonality" && !detailLoading && !detailError && (
+                      <div className="mb-2.5 space-y-2 text-[10px]">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div
+                            role="group"
+                            aria-label={lang === "th" ? "เลือกปีข้อมูลฤดูกาล" : "Select seasonality year"}
+                            className="inline-flex flex-wrap items-center gap-0.5 rounded-full border border-border bg-background p-0.5 font-medium"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setSeasonYear("all")}
+                              className={`rounded-full px-2.5 py-0.5 transition-colors ${
+                                effectiveSeasonYear === "all"
+                                  ? "bg-foreground text-background"
+                                  : "text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              {seasonYearRangeLabel}
+                            </button>
+                            {availableSeasonYears.map((yr) => (
+                              <button
+                                key={yr}
+                                type="button"
+                                onClick={() => setSeasonYear(yr)}
+                                className={`rounded-full px-2.5 py-0.5 transition-colors ${
+                                  effectiveSeasonYear === yr
+                                    ? "bg-foreground text-background"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                {lang === "th" ? `ปี ${Number(yr) + 543}` : yr}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="inline-flex rounded-full border border-border bg-background p-0.5 font-medium">
+                            {(
+                              [
+                                { id: "both", th: "เทียบทั้งฝนและฝุ่น", en: "Rain & PM2.5" },
+                                { id: "pm25", th: "เฉพาะฝุ่น PM2.5", en: "PM2.5 Only" },
+                                { id: "rain", th: "เฉพาะปริมาณฝน", en: "Rain Only" },
+                              ] as const
+                            ).map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setWeatherOverlay(opt.id)}
+                                className={`rounded-full px-2.5 py-0.5 transition-colors ${
+                                  weatherOverlay === opt.id
+                                    ? "bg-foreground text-background"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                {lang === "th" ? opt.th : opt.en}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {effectiveSeasonYear !== "all" && seasonalPlan && seasonalPlan.monthCount < 12 && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {lang === "th"
+                              ? `ข้อมูลทางการปี ${Number(effectiveSeasonYear) + 543} เผยแพร่ล่าสุดถึงเดือน${seasonalPlan.lastMonthName} (${seasonalPlan.monthCount} เดือน)`
+                              : `Official ${effectiveSeasonYear} data currently covers through ${seasonalPlan.lastMonthName} (${seasonalPlan.monthCount} months).`}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {detailLoading ? (
                       <div className="flex h-[205px] items-center justify-center text-xs text-muted-foreground">
                         {lang === "th" ? "กำลังโหลดข้อมูลรายเดือนของจังหวัด…" : "Loading provincial series…"}
+                      </div>
+                    ) : detailError ? (
+                      <div className="flex h-[205px] flex-col items-center justify-center gap-2.5 rounded-xl border border-destructive/25 bg-destructive/5 px-4 text-center text-xs text-destructive">
+                        <p className="max-w-md leading-5">{detailError}</p>
+                        <button
+                          type="button"
+                          onClick={() => setDetailRetryNonce((n) => n + 1)}
+                          className="inline-flex h-8 items-center rounded-full border border-destructive/30 bg-background px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                        >
+                          {lang === "th" ? "ลองโหลดข้อมูลใหม่" : "Retry Loading"}
+                        </button>
                       </div>
                     ) : chartTab === "trend" ? (
                       <div className="h-[205px] w-full">
@@ -996,6 +1267,79 @@ export function RiskOutlook({
                                 if (!active || !payload?.length) return null
                                 const d = payload[0]?.payload as (typeof trendChartData)[number] | undefined
                                 if (!d) return null
+                                const shockBandTh =
+                                  d.shock == null
+                                    ? ""
+                                    : d.shock >= 70
+                                      ? "รุนแรง"
+                                      : d.shock >= 50
+                                        ? "เฝ้าระวังสูง"
+                                        : d.shock >= 30
+                                          ? "เฝ้าระวัง"
+                                          : "ปกติ"
+                                const shockBandEn =
+                                  d.shock == null
+                                    ? ""
+                                    : d.shock >= 70
+                                      ? "Severe"
+                                      : d.shock >= 50
+                                        ? "Elevated"
+                                        : d.shock >= 30
+                                          ? "Watch"
+                                          : "Normal"
+                                const rainStatusTh =
+                                  d.flood != null && d.flood >= 50
+                                    ? "ฝนชุกกว่าปกติ"
+                                    : d.flood != null && d.flood >= 25
+                                      ? "ฝนค่อนข้างมาก"
+                                      : "ปกติ"
+                                const rainStatusEn =
+                                  d.flood != null && d.flood >= 50
+                                    ? "Above normal"
+                                    : d.flood != null && d.flood >= 25
+                                      ? "Moderate"
+                                      : "Normal"
+                                const pmStatusTh =
+                                  d.pm25 != null && d.pm25 >= 75
+                                    ? "วิกฤต"
+                                    : d.pm25 != null && d.pm25 >= 37.5
+                                      ? "เกินเกณฑ์ 37.5"
+                                      : "ปกติ"
+                                const pmStatusEn =
+                                  d.pm25 != null && d.pm25 >= 75
+                                    ? "Hazardous"
+                                    : d.pm25 != null && d.pm25 >= 37.5
+                                      ? "Above 37.5"
+                                      : "Normal"
+                                const macroStatusTh =
+                                  d.macro == null
+                                    ? "รอประกาศ"
+                                    : d.macro >= 50
+                                      ? "ต้นทุนกดดันสูง"
+                                      : d.macro >= 20
+                                        ? "ต้นทุนเริ่มกดดัน"
+                                        : "ต้นทุนไม่กดดัน"
+                                const macroStatusEn =
+                                  d.macro == null
+                                    ? "Pending"
+                                    : d.macro >= 50
+                                      ? "High pressure"
+                                      : d.macro >= 20
+                                        ? "Mild pressure"
+                                        : "No pressure"
+                                const cpiTxt =
+                                  d.cpiYoy != null
+                                    ? `${d.cpiYoy > 0 ? "+" : ""}${d.cpiYoy}%`
+                                    : lang === "th"
+                                      ? "รอประกาศ"
+                                      : "Pending"
+                                const oilTxt =
+                                  d.oilYoy != null
+                                    ? `${d.oilYoy > 0 ? "+" : ""}${d.oilYoy}%`
+                                    : lang === "th"
+                                      ? "รอประกาศ"
+                                      : "Pending"
+
                                 return (
                                   <div className="rounded-xl border border-border bg-background px-3 py-2 text-[11px] shadow-lg">
                                     <p className="font-semibold text-foreground">{label}</p>
@@ -1004,18 +1348,43 @@ export function RiskOutlook({
                                       <strong>{d.occupancy != null ? `${d.occupancy}%` : "N/A"}</strong>
                                     </p>
                                     <p className="text-muted-foreground">
-                                      {lang === "th" ? "แรงกดดันรวม" : "Total Pressure"}:{" "}
-                                      <strong className="text-foreground">{d.shock}/100</strong>
+                                      {lang === "th" ? "แรงกดดันภายนอกรวม" : "External Pressure"}:{" "}
+                                      <strong className="text-foreground">
+                                        {d.shock != null
+                                          ? `${d.shock}/100 (${lang === "th" ? shockBandTh : shockBandEn})`
+                                          : lang === "th"
+                                            ? "ไม่มีข้อมูล"
+                                            : "No data"}
+                                      </strong>
                                     </p>
-                                    <div className="mt-1 space-y-0.5 border-t border-border pt-1 text-[10px] text-muted-foreground">
+                                    <div className="mt-1.5 space-y-1 border-t border-border pt-1.5 text-[10px] text-muted-foreground">
                                       <p>
-                                        {lang === "th" ? "น้ำฝน/เสี่ยงน้ำท่วม" : "Flood/Rain"}: {d.flood} ({d.rainMm} {lang === "th" ? "มม." : "mm"})
+                                        {lang === "th" ? "ปริมาณฝน" : "Rainfall"}:{" "}
+                                        <strong className="text-foreground">
+                                          {d.rainMm != null
+                                            ? `${d.rainMm} ${lang === "th" ? "มม." : "mm"}`
+                                            : lang === "th"
+                                              ? "ไม่มีข้อมูล"
+                                              : "No data"}
+                                        </strong>{" "}
+                                        ({lang === "th" ? rainStatusTh : rainStatusEn})
                                       </p>
                                       <p>
-                                        {lang === "th" ? "ฝุ่น PM2.5" : "PM2.5 Haze"}: {d.haze} ({d.pm25} µg/m³)
+                                        {lang === "th" ? "ฝุ่น PM2.5 เฉลี่ย" : "Avg PM2.5"}:{" "}
+                                        <strong className="text-foreground">
+                                          {d.pm25 != null
+                                            ? `${d.pm25} µg/m³`
+                                            : lang === "th"
+                                              ? "ไม่มีข้อมูล"
+                                              : "No data"}
+                                        </strong>{" "}
+                                        ({lang === "th" ? pmStatusTh : pmStatusEn})
                                       </p>
                                       <p>
-                                        {lang === "th" ? "ต้นทุนเงินเฟ้อและน้ำมัน" : "CPI & Oil Cost"}: {d.macro}
+                                        {lang === "th" ? "ต้นทุนมหภาค" : "Macro Costs"}:{" "}
+                                        {lang === "th"
+                                          ? `เงินเฟ้อ ${cpiTxt}, น้ำมัน Brent ${oilTxt} (${macroStatusTh})`
+                                          : `CPI ${cpiTxt}, Brent ${oilTxt} (${macroStatusEn})`}
                                       </p>
                                     </div>
                                   </div>
@@ -1025,7 +1394,7 @@ export function RiskOutlook({
                             <Bar
                               yAxisId="shock"
                               dataKey="shock"
-                              name={lang === "th" ? "แรงกดดันฝุ่น ฝน และต้นทุน" : "External Pressure"}
+                              name={lang === "th" ? "แรงกดดันรวม (ภัยทางกายภาพและต้นทุนมหภาค)" : "Total Pressure (physical hazards & macro costs)"}
                               fill="#cbd5e1"
                               radius={[4, 4, 0, 0]}
                               barSize={14}
@@ -1044,7 +1413,7 @@ export function RiskOutlook({
                       </div>
                     ) : (
                       <>
-                        <div className="h-[205px] w-full">
+                        <div className="h-[215px] w-full">
                           <ResponsiveContainer width="100%" height="100%">
                             <ComposedChart data={seasonalityData} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="hsl(var(--border))" />
@@ -1060,10 +1429,21 @@ export function RiskOutlook({
                               <YAxis
                                 yAxisId="rain"
                                 orientation="right"
+                                hide={weatherOverlay === "pm25"}
                                 tick={{ fontSize: 10 }}
                                 tickLine={false}
                                 axisLine={false}
                                 unit={lang === "th" ? " มม." : "mm"}
+                              />
+                              <YAxis
+                                yAxisId="pm25"
+                                orientation="right"
+                                hide={weatherOverlay !== "pm25"}
+                                domain={[0, 90]}
+                                tick={{ fontSize: 10 }}
+                                tickLine={false}
+                                axisLine={false}
+                                unit=" µg/m³"
                               />
                               {seasonalPlan && (
                                 <ReferenceLine
@@ -1074,41 +1454,100 @@ export function RiskOutlook({
                                   strokeOpacity={0.75}
                                 />
                               )}
+                              {weatherOverlay === "pm25" && (
+                                <ReferenceLine
+                                  yAxisId="pm25"
+                                  y={37.5}
+                                  stroke="#dc2626"
+                                  strokeDasharray="3 3"
+                                  strokeOpacity={0.7}
+                                />
+                              )}
                               <Tooltip
-                                content={({ active, payload, label }) => {
+                                content={({ active, payload }) => {
                                   if (!active || !payload?.length) return null
                                   const d = payload[0]?.payload as (typeof seasonalityData)[number] | undefined
                                   if (!d) return null
+                                  const isSingleYear = effectiveSeasonYear !== "all"
+                                  const yearSuffix = isSingleYear
+                                    ? lang === "th"
+                                      ? ` ${Number(effectiveSeasonYear) + 543}`
+                                      : ` ${effectiveSeasonYear}`
+                                    : ""
                                   return (
                                     <div className="rounded-xl border border-border bg-background px-3 py-2 text-[11px] shadow-lg">
-                                      <p className="font-semibold text-foreground">{label}</p>
+                                      <p className="font-semibold text-foreground">
+                                        {lang === "th" ? `เดือน${d.fullMonth}${yearSuffix}` : `${d.fullMonth}${yearSuffix}`}
+                                      </p>
                                       <p className="mt-1 text-foreground">
-                                        {lang === "th" ? "อัตราการเข้าพักเฉลี่ย" : "Average Occupancy Rate"}:{" "}
-                                        <strong>{d.occupancy}%</strong>
+                                        {lang === "th"
+                                          ? isSingleYear
+                                            ? "อัตราการเข้าพัก"
+                                            : "อัตราการเข้าพักเฉลี่ย"
+                                          : isSingleYear
+                                            ? "Occupancy Rate"
+                                            : "Average Occupancy Rate"}
+                                        :{" "}
+                                        <strong>{d.occupancy != null ? `${d.occupancy}%` : (lang === "th" ? "ไม่มีข้อมูล" : "No data")}</strong>
                                       </p>
                                       <p className="text-muted-foreground">
-                                        {lang === "th" ? "ปริมาณฝนเฉลี่ย" : "Avg Rainfall"}:{" "}
-                                        <strong className="text-foreground">{d.rain} {lang === "th" ? "มม." : "mm"}</strong>
+                                        {lang === "th"
+                                          ? isSingleYear
+                                            ? "ปริมาณฝน"
+                                            : "ปริมาณฝนเฉลี่ย"
+                                          : isSingleYear
+                                            ? "Rainfall"
+                                            : "Avg Rainfall"}
+                                        :{" "}
+                                        <strong className="text-foreground">{d.rain != null ? `${d.rain} ${lang === "th" ? "มม." : "mm"}` : (lang === "th" ? "ไม่มีข้อมูล" : "No data")}</strong>
                                       </p>
                                       <p className="text-muted-foreground">
-                                        {lang === "th" ? "ค่าฝุ่น PM2.5 เฉลี่ย" : "Avg PM2.5"}:{" "}
-                                        <strong className={d.pm25 >= 37.5 ? "text-amber-700" : "text-foreground"}>
-                                          {d.pm25} µg/m³ {d.pm25 >= 37.5 ? (lang === "th" ? "(เกินเกณฑ์ 37.5)" : "(>37.5)") : ""}
+                                        {lang === "th"
+                                          ? isSingleYear
+                                            ? "ค่าฝุ่น PM2.5 รายเดือน"
+                                            : "ค่าฝุ่น PM2.5 เฉลี่ย"
+                                          : isSingleYear
+                                            ? "Monthly PM2.5"
+                                            : "Avg PM2.5"}
+                                        :{" "}
+                                        <strong className={d.pm25 != null && d.pm25 >= 37.5 ? "text-red-700" : "text-foreground"}>
+                                          {d.pm25 != null
+                                            ? `${d.pm25} µg/m³${d.pm25 >= 37.5 ? (lang === "th" ? " (ตั้งแต่เกณฑ์ 37.5)" : " (at/above 37.5)") : ""}`
+                                            : (lang === "th" ? "ไม่มีข้อมูล" : "No data")}
                                         </strong>
                                       </p>
                                     </div>
                                   )
                                 }}
                               />
-                              <Bar
-                                yAxisId="rain"
-                                dataKey="rain"
-                                name={lang === "th" ? "ปริมาณฝนเฉลี่ย (มม.)" : "Avg Rainfall (mm)"}
-                                fill="#0284c7"
-                                fillOpacity={0.32}
-                                radius={[4, 4, 0, 0]}
-                                barSize={16}
-                              />
+                              {(weatherOverlay === "both" || weatherOverlay === "rain") && (
+                                <Bar
+                                  yAxisId="rain"
+                                  dataKey="rain"
+                                  name={lang === "th" ? "ปริมาณฝนเฉลี่ย (มม.)" : "Avg Rainfall (mm)"}
+                                  fill="#0284c7"
+                                  fillOpacity={0.32}
+                                  radius={[4, 4, 0, 0]}
+                                  barSize={weatherOverlay === "both" ? 10 : 16}
+                                />
+                              )}
+                              {(weatherOverlay === "both" || weatherOverlay === "pm25") && (
+                                <Bar
+                                  yAxisId="pm25"
+                                  dataKey="pm25"
+                                  name={lang === "th" ? "ค่าฝุ่น PM2.5 เฉลี่ย (µg/m³)" : "Avg PM2.5 (µg/m³)"}
+                                  radius={[4, 4, 0, 0]}
+                                  barSize={weatherOverlay === "both" ? 10 : 16}
+                                >
+                                  {seasonalityData.map((entry, idx) => (
+                                    <Cell
+                                      key={`pm-${idx}`}
+                                      fill={entry.pm25 != null && entry.pm25 >= 37.5 ? "#dc2626" : "#f97316"}
+                                      fillOpacity={entry.pm25 != null && entry.pm25 >= 37.5 ? 0.72 : 0.45}
+                                    />
+                                  ))}
+                                </Bar>
+                              )}
                               <Line
                                 yAxisId="occ"
                                 type="monotone"
@@ -1127,24 +1566,24 @@ export function RiskOutlook({
                             <div className="rounded-xl bg-background px-3 py-2">
                               <p className="text-[10px] font-semibold text-teal-800">
                                 {lang === "th"
-                                  ? `ช่วงฤดูท่องเที่ยว (${seasonalPlan.highMonthsText})`
+                                  ? `ช่วงฤดูท่องเที่ยว (เดือน${seasonalPlan.highMonthsText})`
                                   : `High Season (${seasonalPlan.highMonthsText})`}
                               </p>
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {lang === "th"
-                                  ? `นักท่องเที่ยวเข้าพักสูงสุดเดือน ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) ซึ่งสูงกว่าค่าเฉลี่ยทั้งปี (${seasonalPlan.annualAvgOcc}%)`
-                                  : `Peaks in ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) vs ${seasonalPlan.annualAvgOcc}% annual mean.`}
+                                  ? `อัตราเข้าพักสูงสุดในเดือน${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) เทียบกับค่าเฉลี่ย${effectiveSeasonYear === "all" ? "รายเดือนย้อนหลัง" : `ปี ${Number(effectiveSeasonYear) + 543}`} ${seasonalPlan.annualAvgOcc}%`
+                                  : `Peaks in ${seasonalPlan.peakMonthName} (${seasonalPlan.peakOcc}%) vs ${effectiveSeasonYear === "all" ? "historical monthly" : effectiveSeasonYear} mean ${seasonalPlan.annualAvgOcc}%.`}
                               </p>
                             </div>
                             <div className="rounded-xl bg-background px-3 py-2">
                               <p className="text-[10px] font-semibold text-amber-800">
                                 {lang === "th"
-                                  ? `ช่วงผู้เข้าพักน้อย (${seasonalPlan.lowMonthsText})`
+                                  ? `ช่วงผู้เข้าพักน้อย (เดือน${seasonalPlan.lowMonthsText})`
                                   : `Low Season (${seasonalPlan.lowMonthsText})`}
                               </p>
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {lang === "th"
-                                  ? `ต่ำสุดเดือน ${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%) · ยอดเข้าพักลดลง ${seasonalPlan.dropFromPeakPct}% จากเดือนสูงสุด`
+                                  ? `ต่ำสุดในเดือน${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%) โดยยอดเข้าพักลดลง ${seasonalPlan.dropFromPeakPct}% จากช่วงสูงสุด`
                                   : `Lowest in ${seasonalPlan.lowMonthName} (${seasonalPlan.lowOcc}%), a -${seasonalPlan.dropFromPeakPct}% drop from peak.`}
                               </p>
                             </div>
@@ -1155,11 +1594,11 @@ export function RiskOutlook({
                               <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {seasonalPlan.hasHazeExceed
                                   ? lang === "th"
-                                    ? `ฝุ่น PM2.5 เกินเกณฑ์ 37.5 ช่วง ${seasonalPlan.hazeExceedMonths} (สูงสุด ${seasonalPlan.maxHazeVal}) · ฝนหนักสุด ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
-                                    : `PM2.5 > 37.5 in ${seasonalPlan.hazeExceedMonths} (${seasonalPlan.maxHazeVal}) · Heavy rain ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm}mm).`
+                                    ? `ฝุ่น PM2.5 เกินเกณฑ์ 37.5 ในเดือน${seasonalPlan.hazeExceedMonths} (สูงสุด ${seasonalPlan.maxHazeVal}) และฝนหนักสุดในเดือน${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มิลลิเมตร)`
+                                    : `PM2.5 exceeds 37.5 in ${seasonalPlan.hazeExceedMonths} (peak ${seasonalPlan.maxHazeVal}) and rain peaks in ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} mm).`
                                   : lang === "th"
-                                    ? `ฝุ่น PM2.5 เฉลี่ยรายเดือนไม่เกินเกณฑ์ 37.5 (สูงสุด ${seasonalPlan.maxHazeVal} เดือน ${seasonalPlan.maxHazeMonth}) · ฝนชุก ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มม.)`
-                                    : `Monthly PM2.5 stays under 37.5 (max ${seasonalPlan.maxHazeVal} in ${seasonalPlan.maxHazeMonth}) · Rain peaks ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm}mm).`}
+                                    ? `ฝุ่น PM2.5 เฉลี่ยรายเดือนไม่เกินเกณฑ์ 37.5 (สูงสุด ${seasonalPlan.maxHazeVal} ในเดือน${seasonalPlan.maxHazeMonth}) และฝนชุกในเดือน${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} มิลลิเมตร)`
+                                    : `Monthly PM2.5 stays under 37.5 (peak ${seasonalPlan.maxHazeVal} in ${seasonalPlan.maxHazeMonth}) and rain peaks in ${seasonalPlan.rainPeakMonths} (${seasonalPlan.maxRainMm} mm).`}
                               </p>
                             </div>
                           </div>
@@ -1261,18 +1700,13 @@ function CompareBarTile({
   subText,
   pct,
   avgPct,
-  tone,
 }: {
   label: string
   valueText: string
   subText: string
-  pct: number
+  pct: number | null
   avgPct: number
-  tone: "neutral" | "good" | "warn"
 }) {
-  const barColor =
-    tone === "warn" ? "bg-amber-600" : tone === "good" ? "bg-teal-700" : "bg-foreground/80"
-
   return (
     <div className="flex h-full flex-col justify-between rounded-2xl border border-border bg-secondary/30 px-3.5 py-3">
       <div className="flex items-baseline justify-between gap-2">
@@ -1283,11 +1717,16 @@ function CompareBarTile({
       </div>
       <div>
         <div className="relative mt-2.5 h-1.5 w-full rounded-full bg-border/80">
-          <div className={`h-full rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${Math.max(4, pct)}%` }} />
+          {pct != null && (
+            <div
+              className="h-full rounded-full bg-slate-600 transition-all duration-300"
+              style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+            />
+          )}
           <span
             title={subText}
             style={{ left: `${Math.min(96, Math.max(4, avgPct))}%` }}
-            className="absolute -top-1 h-3.5 w-0.5 bg-foreground/60"
+            className="absolute -top-1 h-3.5 w-0.5 bg-slate-400"
             aria-hidden="true"
           />
         </div>

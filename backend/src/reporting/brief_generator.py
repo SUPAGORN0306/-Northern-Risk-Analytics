@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any
 
+from src.analytics.vulnerability_tiering import evaluate_province_vulnerability
 from src.db.connection import fetch_all
 from src.guardrails.schemas import resolve_northern_province
 
@@ -37,34 +38,29 @@ def compute_priority_score(
     shock_intensity: float | None,
     cash_margin_pct: float | None,
     dti_sme: float | None,
-) -> float:
-    """Unified composite vulnerability score without synthetic fallback values.
+) -> float | None:
+    """Compute uncalibrated rule based policy ordering heuristic requiring all 4 components.
 
-    Uses the exact same weights as the Staff Workspace UI:
-    0.38 exposure + 0.32 external shock + 0.15 tight cash margin penalty + 0.15 SME debt penalty.
-    When any component is missing, weights are renormalized across available components.
+    Weights 0.38 exposure + 0.32 external shock + 0.15 margin penalty + 0.15 stock debt penalty.
+    Returns None when any component is missing so partial 3 variable scores are never compared directly against 4 variable scores.
     """
-    weighted_sum = 0.0
-    active_weight = 0.0
+    if (
+        exposure_score is None
+        or shock_intensity is None
+        or cash_margin_pct is None
+        or dti_sme is None
+    ):
+        return None
 
-    if exposure_score is not None:
-        weighted_sum += 0.38 * float(exposure_score)
-        active_weight += 0.38
-    if shock_intensity is not None:
-        weighted_sum += 0.32 * float(shock_intensity)
-        active_weight += 0.32
-    if cash_margin_pct is not None:
-        tight_margin_penalty = max(0.0, (30.0 - float(cash_margin_pct)) * 2.2)
-        weighted_sum += 0.15 * tight_margin_penalty
-        active_weight += 0.15
-    if dti_sme is not None:
-        debt_penalty = min(100.0, float(dti_sme) * 65.0)
-        weighted_sum += 0.15 * debt_penalty
-        active_weight += 0.15
-
-    if active_weight <= 0.0:
-        return 0.0
-    return round(weighted_sum / active_weight, 2)
+    tight_margin_penalty = max(0.0, (30.0 - float(cash_margin_pct)) * 2.2)
+    debt_penalty = min(100.0, float(dti_sme) * 65.0)
+    score = (
+        0.38 * float(exposure_score)
+        + 0.32 * float(shock_intensity)
+        + 0.15 * tight_margin_penalty
+        + 0.15 * debt_penalty
+    )
+    return round(score, 2)
 
 
 def _load_nso_2025_map() -> dict[str, dict[str, float]]:
@@ -175,6 +171,19 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
     )
 
     nso_map = _load_nso_2025_map()
+    recent_alert_rows = fetch_all(
+        """
+        SELECT province_code, shock_type, severity_score, event_date
+        FROM silver.news_events
+        WHERE event_date >= CURRENT_DATE - INTERVAL '90 days'
+          AND severity_score >= 3
+        ORDER BY event_date DESC, severity_score DESC
+        """
+    )
+    alerts_by_prov: dict[str, list[dict[str, Any]]] = {}
+    for a in recent_alert_rows:
+        alerts_by_prov.setdefault(str(a["province_code"]), []).append(dict(a))
+
     prov_count = len(latest_rows)
     latest_month = str(latest_rows[0]["month_date"]) if latest_rows else ""
     model_used = str(latest_rows[0]["model_used"]) if latest_rows and latest_rows[0]["model_used"] else "KMeans (k=4)"
@@ -216,20 +225,37 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             elevated_provs.append(prov_label)
 
         dti_sme = nso.get("dti_sme")
+        dti_all = nso.get("dti_all")
         exp_sme = nso.get("exp_inc_sme")
         exp_all = nso.get("exp_inc_all")
         cash_margin_sme = round(max(0.0, 100.0 - exp_sme), 1) if exp_sme is not None else None
         exposure_v = float(r["exposure_score"]) if r["exposure_score"] is not None else None
         shock_intensity_v = float(r["shock_intensity"]) if r["shock_intensity"] is not None else None
 
-        priority_score = compute_priority_score(
-            exposure_score=exposure_v,
-            shock_intensity=shock_intensity_v,
-            cash_margin_pct=cash_margin_sme,
-            dti_sme=dti_sme,
+        # Use unified evaluate_province_vulnerability so brief watchlist matches public map and staff portal
+        v_eval = evaluate_province_vulnerability(
+            {
+                "province_code": code,
+                "debt_to_annual_income_sme": dti_sme,
+                "debt_to_annual_income_all": dti_all,
+                "expense_to_income_pct_sme": exp_sme,
+                "occupancy_rate": occ,
+                "exposure_score": exposure_v,
+                "shock_intensity": shock_intensity_v,
+                "latest_shock_idx": shock_v,
+                "live_pm25_mean": 0.0,
+            },
+            alerts_by_prov.get(code, []),
         )
+        priority_score = v_eval["vulnerability_score"] if not v_eval["insufficient_data"] else None
+        data_sufficient = not v_eval["insufficient_data"]
 
-        if (dti_sme is not None and dti_sme >= 1.0) or (cash_margin_sme is not None and cash_margin_sme <= 12.0):
+        if not data_sufficient:
+            risk_reason_th = "ข้อมูลภาระหนี้หรือรายจ่ายระดับจังหวัดไม่ครบถ้วน (ไม่นำมาจัดอันดับความเสี่ยง)"
+            risk_reason_en = "Incomplete provincial debt or expense data (excluded from priority ranking)"
+            action_tag_th = "ตรวจสอบความครบถ้วนของข้อมูล สสช. ก่อนประเมินมาตรการ"
+            action_tag_en = "Verify NSO provincial dataset completeness before ranking"
+        elif (dti_sme is not None and dti_sme >= 1.0) or (cash_margin_sme is not None and cash_margin_sme <= 12.0):
             risk_reason_th = (
                 f"หนี้ SME สูง ({dti_sme:.2f} เท่า) เงินเหลือหลังหักรายจ่ายเพียง {cash_margin_sme:.0f}%"
                 if dti_sme is not None and cash_margin_sme is not None
@@ -240,8 +266,8 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
                 if dti_sme is not None and cash_margin_sme is not None
                 else "High SME debt strain with thin post-expense cash margin"
             )
-            action_tag_th = "ปรับโครงสร้างหนี้เร่งด่วน (RL / คลินิกแก้หนี้)"
-            action_tag_en = "Urgent debt restructuring (RL / Debt Clinic)"
+            action_tag_th = "SME ปรับโครงสร้างหนี้เชิงป้องกัน (RL) · บุคคลคัดกรองคลินิกแก้หนี้/ปิดหนี้ไว"
+            action_tag_en = "SME pre-emptive DR (RL) · Individuals screen Debt Clinic / Fast-Close"
         elif (exp_all is not None and exp_all >= 84.0) or code == "CM":
             risk_reason_th = (
                 f"ศูนย์กลางรายได้หลัก ({round(rev):,} ลบ./เดือน) รายจ่ายครัวเรือนสูง {exp_all:.0f}%"
@@ -273,10 +299,11 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
                 "code": code,
                 "label": prov_label,
                 "rev": rev,
-                "exposure": exposure_v or 0.0,
-                "dti_sme": dti_sme or 0.0,
-                "cash_margin_sme": cash_margin_sme if cash_margin_sme is not None else 100.0,
-                "priority_score": priority_score,
+                "exposure": exposure_v,
+                "dti_sme": dti_sme,
+                "cash_margin_sme": cash_margin_sme,
+                "data_sufficient": data_sufficient,
+                "priority_score": priority_score if data_sufficient else None,
             }
         )
 
@@ -287,19 +314,23 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
                 "name_en": str(r["name_en"]),
                 "occupancy_pct": round(occ, 1),
                 "occupancy_yoy_diff": round(occ_yoy, 1),
-                "dti_sme": dti_sme if dti_sme is not None else 0.0,
-                "cash_cushion_sme": round(cash_margin_sme, 0) if cash_margin_sme is not None else 0.0,
-                "exp_inc_all": exp_all if exp_all is not None else 0.0,
+                "dti_sme": dti_sme,
+                "cash_cushion_sme": round(cash_margin_sme, 0) if cash_margin_sme is not None else None,
+                "exp_inc_all": exp_all,
+                "data_sufficient": data_sufficient,
                 "risk_reason": risk_reason_en if language == "en" else risk_reason_th,
                 "recommended_action": action_tag_en if language == "en" else action_tag_th,
-                "priority_score": priority_score,
+                "vulnerability_tier": v_eval["vulnerability_tier"],
+                "priority_score": priority_score if data_sufficient else None,
             }
         )
 
-    watchlist_candidates.sort(key=lambda x: x["priority_score"], reverse=True)
+    ranked_candidates = [w for w in watchlist_candidates if w["data_sufficient"] and w["priority_score"] is not None]
+    ranked_candidates.sort(key=lambda x: (int(x.get("vulnerability_tier") or 4), -float(x["priority_score"])))
+    insufficient_data_provinces = [w["province_code"] for w in watchlist_candidates if not w["data_sufficient"]]
     priority_watchlist = [
         {**item, "priority_rank": idx + 1}
-        for idx, item in enumerate(watchlist_candidates[:5])
+        for idx, item in enumerate(ranked_candidates[:5])
     ]
 
     # Fall back to latest published non-null CPI and Brent oil months if latest tourism month leads macro releases
@@ -323,18 +354,28 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
     m_lbl = _format_month_label(latest_month, language)
     cpi_lbl = _format_month_label(cpi_month, language)
 
-    # Dynamic action plan targets (independent of cluster_id or k=3/4/5)
+    # Dynamic action plan targets excluding provinces with incomplete NSO or cluster data
+    sufficient_profiles = [p for p in province_profiles if p["data_sufficient"]]
     immediate_targets = [
-        p for p in sorted(province_profiles, key=lambda x: (x["dti_sme"], -x["cash_margin_sme"]), reverse=True)
-        if p["dti_sme"] >= 0.65 or p["cash_margin_sme"] <= 18.0
+        p
+        for p in sorted(
+            sufficient_profiles,
+            key=lambda x: (float(x["dti_sme"]), -float(x["cash_margin_sme"])),
+            reverse=True,
+        )
+        if float(p["dti_sme"]) >= 0.65 or float(p["cash_margin_sme"]) <= 18.0
     ][:4]
     if not immediate_targets:
-        immediate_targets = sorted(province_profiles, key=lambda x: x["priority_score"], reverse=True)[:3]
+        immediate_targets = sorted(
+            sufficient_profiles,
+            key=lambda x: float(x["priority_score"] or 0.0),
+            reverse=True,
+        )[:3]
     immediate_codes = {p["code"] for p in immediate_targets}
 
     seasonal_targets = sorted(
-        [p for p in province_profiles if p["code"] not in immediate_codes],
-        key=lambda x: (x["rev"], x["exposure"]),
+        [p for p in sufficient_profiles if p["code"] not in immediate_codes],
+        key=lambda x: (float(x["rev"]), float(x["exposure"] or 0.0)),
         reverse=True,
     )[:4]
     seasonal_codes = {p["code"] for p in seasonal_targets}
@@ -344,7 +385,7 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
     )
 
     preventive_targets = [
-        p for p in province_profiles if p["code"] not in immediate_codes and p["code"] not in seasonal_codes
+        p for p in sufficient_profiles if p["code"] not in immediate_codes and p["code"] not in seasonal_codes
     ]
 
     if language == "en":
@@ -384,7 +425,7 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             {
                 "horizon": "Immediate (0–30 days)",
                 "target_area": ", ".join(p["label"] for p in immediate_targets),
-                "action": "Deploy proactive pre-NPL debt restructuring under Responsible Lending 2568 and route overdue unsecured borrowers to Debt Clinic by SAM (3–5% interest, up to 10 years).",
+                "action": "For SMEs, deploy proactive pre-NPL restructuring under Responsible Lending 2568; for individual unsecured borrowers, route eligible accounts to Debt Clinic by SAM (>120d NPL at 3–5%, up to 10y), Fast-Close Move-Forward via SAM Social AMC (<=100,000 THB NPL at 0%, up to 3y), or Persistent Debt exit (up to 7y). Note Khun Soo Rao Chuay closed new registration on 30 Sep 2025.",
             },
             {
                 "horizon": "Seasonal Readiness (Pre Mar–Apr)",
@@ -436,7 +477,7 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             {
                 "horizon": "เร่งด่วน (0–30 วัน)",
                 "target_area": ", ".join(p["label"] for p in immediate_targets),
-                "action": "เร่งปรับโครงสร้างหนี้เชิงป้องกันตามเกณฑ์ Responsible Lending 2568 สำหรับ SME ที่เงินเหลือหลังหักรายจ่ายต่ำ และส่งต่อลูกหนี้ค้างชำระเกิน 120 วันเข้าคลินิกแก้หนี้ (ดอกเบี้ย 3–5% ผ่อนสูงสุด 10 ปี)",
+                "action": "สำหรับ SME เร่งปรับโครงสร้างหนี้เชิงป้องกันตามเกณฑ์ Responsible Lending 2568; สำหรับลูกหนี้บุคคลธรรมดาที่มีหนี้ไม่มีหลักประกัน ให้คัดกรองคลินิกแก้หนี้ by SAM (ค้างเกิน 120 วัน ดอกเบี้ย 3–5% ผ่อนสูงสุด 10 ปี), ปิดหนี้ไว ไปต่อได้ (SAM Social AMC หนี้เสียไม่เกิน 100,000 บาท ดอกเบี้ย 0% สูงสุด 3 ปี) หรือเกณฑ์ปิดจบหนี้เรื้อรัง (ผ่อนสูงสุด 7 ปี) โดยโครงการคุณสู้ เราช่วย ปิดลงทะเบียนแล้วเมื่อ 30 ก.ย. 2568",
             },
             {
                 "horizon": "เตรียมพร้อมฤดูกาล (ก่อน มี.ค.–เม.ย.)",
@@ -497,9 +538,30 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             "has_regional_external_shock": len(elevated_provs) > 0,
         },
         "priority_watchlist": priority_watchlist,
+        "insufficient_data_provinces": insufficient_data_provinces,
+        "priority_score_metadata": {
+            "score_type": "rule_based_heuristic_index_uncalibrated",
+            "weights": {"exposure": 0.38, "shock": 0.32, "margin_penalty": 0.15, "stock_debt_to_annual_income_penalty": 0.15},
+            "dti_definition": "stock_household_debt_divided_by_annualized_income_not_monthly_dsr",
+            "calibration_note": "Ordering heuristic for policy prioritization only; not a calibrated default or crisis probability",
+        },
         "action_plan": action_plan,
         "verified_news": verified_news,
     }
+
+
+def _fmt_dti(val: float | None, is_en: bool) -> str:
+    """Format debt to income ratio or explicit missing label without zero substitution."""
+    if val is None:
+        return "N/A" if is_en else "ไม่มีข้อมูล"
+    return f"{val}x" if is_en else f"{val} เท่า"
+
+
+def _fmt_margin(val: float | None, is_en: bool) -> str:
+    """Format cash margin percentage or explicit missing label without 100 percent fallback."""
+    if val is None:
+        return "N/A" if is_en else "ไม่มีข้อมูล"
+    return f"{val:.0f}%"
 
 
 def render_brief_markdown(brief: dict[str, Any], language: str = "th") -> str:
@@ -520,7 +582,7 @@ def render_brief_markdown(brief: dict[str, Any], language: str = "th") -> str:
         lines.append("|---|---:|---:|---:|---|---|")
         for w in brief["priority_watchlist"]:
             lines.append(
-                f"| {w['name_en']} | {w['occupancy_pct']}% | {w['dti_sme']}x | {w['cash_cushion_sme']:.0f}% | {w['risk_reason']} | {w['recommended_action']} |"
+                f"| {w['name_en']} | {w['occupancy_pct']}% | {_fmt_dti(w.get('dti_sme'), True)} | {_fmt_margin(w.get('cash_cushion_sme'), True)} | {w['risk_reason']} | {w['recommended_action']} |"
             )
         lines.append("")
         lines.append("## 3. Three-Horizon Policy Action Plan")
@@ -538,7 +600,7 @@ def render_brief_markdown(brief: dict[str, Any], language: str = "th") -> str:
         lines.append("|---|---:|---:|---:|---|---|")
         for w in brief["priority_watchlist"]:
             lines.append(
-                f"| {w['name_th']} | {w['occupancy_pct']}% | {w['dti_sme']} เท่า | {w['cash_cushion_sme']:.0f}% | {w['risk_reason']} | {w['recommended_action']} |"
+                f"| {w['name_th']} | {w['occupancy_pct']}% | {_fmt_dti(w.get('dti_sme'), False)} | {_fmt_margin(w.get('cash_cushion_sme'), False)} | {w['risk_reason']} | {w['recommended_action']} |"
             )
         lines.append("")
         lines.append("## 3. แผนปฏิบัติการเชิงนโยบาย 3 ระยะ")
@@ -574,8 +636,8 @@ def render_brief_html(brief: dict[str, Any], language: str = "th") -> str:
         f"<tr>"
         f"<td><strong>{escape(w['name_en'] if is_en else w['name_th'])}</strong></td>"
         f"<td style='text-align:right;white-space:nowrap'>{w['occupancy_pct']}%</td>"
-        f"<td style='text-align:right;white-space:nowrap'>{w['dti_sme']}{'x' if is_en else ' เท่า'}</td>"
-        f"<td style='text-align:right;white-space:nowrap'><strong>{w['cash_cushion_sme']:.0f}%</strong></td>"
+        f"<td style='text-align:right;white-space:nowrap'>{escape(_fmt_dti(w.get('dti_sme'), is_en))}</td>"
+        f"<td style='text-align:right;white-space:nowrap'><strong>{escape(_fmt_margin(w.get('cash_cushion_sme'), is_en))}</strong></td>"
         f"<td>{escape(w['risk_reason'])}</td>"
         f"<td>{escape(w['recommended_action'])}</td>"
         f"</tr>"

@@ -37,8 +37,13 @@ from src.analytics.vulnerability_tiering import (
     evaluate_province_vulnerability,
 )
 from src.db.connection import fetch_all
+from src.evaluation.layered_eval import build_layered_evaluation_summary
 from src.guardrails.schemas import resolve_northern_province
-from src.rag.policy_assistant import answer_policy_question, assess_financial_resilience
+from src.rag.policy_assistant import (
+    answer_policy_question,
+    assess_financial_resilience,
+    get_rag_index_version,
+)
 from src.reporting.brief_generator import (
     build_executive_brief_data,
     render_brief_html,
@@ -123,20 +128,51 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Configure strict CORS origins from environment variable with local Next.js default and Vercel regex
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+# Configure strict CORS origins from environment variable with project scoped Vercel regex
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://northrisk.vercel.app,http://localhost:3000,http://127.0.0.1:3000",
+)
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_allowed_origin_regex = os.getenv(
+    "ALLOWED_ORIGIN_REGEX",
+    r"https://(northrisk|northern-risk-analytics)[a-z0-9-]*\.vercel\.app",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=_allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
 
-# Request models validated deterministically with Pydantic
+# Request models validated deterministically with Pydantic and strict whitelists
+
+ALLOWED_RELIEF_BUSINESS_TYPES = Literal[
+    "hotel",
+    "restaurant",
+    "tour",
+    "general_service",
+    "household",
+    "retail",
+    "agriculture",
+]
+ALLOWED_RELIEF_IMPACT_TAGS = Literal[
+    "overdue_debt",
+    "persistent_debt",
+    "disaster",
+    "water_pollution",
+    "pm25",
+    "flood",
+    "haze",
+    "cost_surge",
+    "revenue_drop",
+    "debt_stress",
+    "overdue",
+]
+
 
 class StaffLoginRequest(BaseModel):
     """Credentials for staff portal sign in."""
@@ -149,10 +185,10 @@ class ReliefCheckPayload(BaseModel):
     """Input payload for deterministic DSR calculation and grounded policy guidance."""
 
     province: str = Field(..., min_length=2, max_length=60)
-    business_type: str = Field(..., min_length=2, max_length=60)
+    business_type: ALLOWED_RELIEF_BUSINESS_TYPES = Field(default="general_service")
     monthly_revenue_thb: float = Field(..., ge=0.0, le=1e9)
     monthly_debt_thb: float = Field(..., ge=0.0, le=1e9)
-    impact_tags: list[str] = Field(default_factory=list, max_length=8)
+    impact_tags: list[ALLOWED_RELIEF_IMPACT_TAGS] = Field(default_factory=list, max_length=8)
     language: Literal["th", "en"] = Field(default="th")
 
 
@@ -160,6 +196,7 @@ class ChatRequestPayload(BaseModel):
     """Input payload for guardrailed policy and regional economic knowledge assistant."""
 
     question: str = Field(..., min_length=2, max_length=600)
+    recent_questions: list[str] = Field(default_factory=list, max_length=4)
     language: Literal["th", "en"] = Field(default="th")
 
 
@@ -238,25 +275,26 @@ def _fetch_nso_latest_by_province() -> dict[str, dict[str, float]]:
             continue
         raw_map.setdefault(code, {})[str(r["metric_name"])] = float(r["metric_value"])
 
-    out: dict[str, dict[str, float]] = {}
+    out: dict[str, dict[str, float | None]] = {}
     for code, m in raw_map.items():
-        inc_all = m.get("monthly_income_thb_all", 0.0)
-        inc_sme = m.get("monthly_income_thb_sme", 0.0)
+        inc_all = m.get("monthly_income_thb_all")
+        inc_sme = m.get("monthly_income_thb_sme")
+        debt_all = m.get("avg_household_debt_thb_all")
+        debt_sme = m.get("avg_household_debt_thb_sme")
+        exp_all = m.get("expense_to_income_pct_all")
+        exp_sme = m.get("expense_to_income_pct_sme")
+
         out[code] = {
-            "debt_to_annual_income_all": round(
-                m.get("avg_household_debt_thb_all", 0.0) / (inc_all * 12.0), 2
-            )
-            if inc_all > 0
-            else 0.0,
-            "debt_to_annual_income_sme": round(
-                m.get("avg_household_debt_thb_sme", 0.0) / (inc_sme * 12.0), 2
-            )
-            if inc_sme > 0
-            else 0.0,
-            "expense_to_income_pct_all": round(m.get("expense_to_income_pct_all", 0.0), 1),
-            "expense_to_income_pct_sme": round(m.get("expense_to_income_pct_sme", 0.0), 1),
-            "monthly_income_thb_all": round(inc_all, 0),
-            "monthly_income_thb_sme": round(inc_sme, 0),
+            "debt_to_annual_income_all": round(debt_all / (inc_all * 12.0), 2)
+            if (debt_all is not None and inc_all is not None and inc_all > 0)
+            else None,
+            "debt_to_annual_income_sme": round(debt_sme / (inc_sme * 12.0), 2)
+            if (debt_sme is not None and inc_sme is not None and inc_sme > 0)
+            else None,
+            "expense_to_income_pct_all": round(exp_all, 1) if exp_all is not None else None,
+            "expense_to_income_pct_sme": round(exp_sme, 1) if exp_sme is not None else None,
+            "monthly_income_thb_all": round(inc_all, 0) if inc_all is not None else None,
+            "monthly_income_thb_sme": round(inc_sme, 0) if inc_sme is not None else None,
         }
     _cache_set("nso_latest_by_province", out, ttl=300.0)
     return out
@@ -278,9 +316,14 @@ def health_check() -> dict[str, Any]:
 
 @app.post("/api/auth/staff-login")
 def staff_login(payload: StaffLoginRequest) -> dict[str, Any]:
-    """Authenticate staff analyst credentials and return signed bearer token."""
-    expected_user = os.getenv("STAFF_DEMO_USERNAME", "analyst")
-    expected_pass = os.getenv("STAFF_DEMO_PASSWORD", "northrisk2026")
+    """Authenticate staff analyst credentials failing closed when env secrets are unset."""
+    expected_user = (os.getenv("STAFF_DEMO_USERNAME") or "").strip()
+    expected_pass = os.getenv("STAFF_DEMO_PASSWORD") or ""
+    if not expected_user or not expected_pass:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Staff authentication credentials are not configured on this server.",
+        )
     user_ok = hmac.compare_digest(payload.username.strip(), expected_user)
     pass_ok = hmac.compare_digest(payload.password, expected_pass)
     if not (user_ok and pass_ok):
@@ -290,7 +333,12 @@ def staff_login(payload: StaffLoginRequest) -> dict[str, Any]:
 
 @app.post("/api/auth/demo-access")
 def staff_demo_access() -> dict[str, Any]:
-    """Issue a time limited demo staff token for interactive portfolio evaluation."""
+    """Block unauthenticated demo token issuance unless explicitly opted in for local testing."""
+    if os.getenv("ALLOW_DEMO_STAFF_ACCESS", "false").strip().lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthenticated demo token issuance is disabled. Please sign in with staff credentials.",
+        )
     return _create_staff_token(username="demo_analyst", role="demo_policy_analyst")
 
 
@@ -499,6 +547,12 @@ def get_risk_outlook(
         for n in _dedupe_news_rows(news_rows, limit=8)
     ]
 
+    default_cm_detail = None
+    try:
+        default_cm_detail = get_province_detail("CM")
+    except Exception:
+        default_cm_detail = None
+
     result = {
         "latest_month": latest_month,
         "regional_summary": {
@@ -516,6 +570,7 @@ def get_risk_outlook(
         "vulnerability_tiers": build_tier_summary(provinces_out),
         "regional_timeseries": ts_out,
         "recent_verified_news": news_out,
+        "default_province_detail": default_cm_detail,
     }
     _cache_set(cache_key, result)
     return result
@@ -584,10 +639,12 @@ def get_province_detail(province_code: str) -> dict[str, Any]:
                 "visitors_total": tm.get("visitors_total"),
                 "pm25_mean": sf.get("pm25_mean"),
                 "rainfall_sum_mm": sf.get("rainfall_sum_mm"),
-                "composite_shock_idx": float(r["composite_shock_idx"] or 0.0),
+                "composite_shock_idx": float(r["composite_shock_idx"]) if r["composite_shock_idx"] is not None else None,
                 "flood_shock_subidx": sf.get("flood_shock_subidx"),
                 "haze_shock_subidx": sf.get("haze_shock_subidx"),
                 "macro_pressure_subidx": sf.get("macro_pressure_subidx"),
+                "th_cpi_yoy_pct": sf.get("th_cpi_yoy_pct"),
+                "oil_brent_yoy_pct": sf.get("oil_brent_yoy_pct"),
                 "shock_driver": sf.get("shock_driver", "normal"),
             }
         )
@@ -676,7 +733,11 @@ def post_relief_check(request: Request, payload: ReliefCheckPayload) -> dict[str
 @limiter.limit(LIMIT_CHAT)
 def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
     """Answer citizen or analyst questions strictly from verified official PDFs with page citations."""
-    res = answer_policy_question(question=payload.question, language=payload.language)
+    res = answer_policy_question(
+        question=payload.question,
+        language=payload.language,
+        recent_questions=[str(q)[:600] for q in payload.recent_questions[-4:]],
+    )
     return {
         "answer_text": res["answer_text"],
         "key_points": res["key_points"],
@@ -855,16 +916,37 @@ def get_policy_monitor(
                 max(month_date) AS max_month
             FROM gold.province_monthly_panel
         ),
+        latest_panel AS (
+            SELECT
+                p.province_code,
+                (p.target_metrics->>'occupancy_rate')::double precision AS latest_occupancy_rate,
+                (p.target_metrics->>'occupancy_yoy_diff')::double precision AS latest_occupancy_yoy_diff,
+                p.composite_shock_idx AS latest_shock_idx
+            FROM gold.province_monthly_panel p
+            CROSS JOIN panel_span ps
+            WHERE p.month_date = ps.max_month
+        ),
+        latest_air AS (
+            SELECT DISTINCT ON (province_code)
+                province_code,
+                pm25_mean AS live_pm25_mean
+            FROM silver.air_daily
+            ORDER BY province_code, obs_date DESC
+        ),
         quad_cte AS (
             SELECT
                 d.province_code, d.name_th, d.name_en, d.subregion,
                 c.model_used, c.cluster_id, c.cluster_label,
                 c.shock_intensity, c.exposure_score, c.silhouette_score, c.recommended_policy,
                 r.avg_monthly_revenue_mthb, r.avg_occupancy_rate,
+                lp.latest_occupancy_rate, lp.latest_occupancy_yoy_diff, lp.latest_shock_idx,
+                a.live_pm25_mean,
                 ps.panel_months, ps.min_month, ps.max_month
             FROM silver.dim_provinces d
             JOIN gold.province_clusters c ON d.province_code = c.province_code
             LEFT JOIN avg_rev r ON d.province_code = r.province_code
+            LEFT JOIN latest_panel lp ON d.province_code = lp.province_code
+            LEFT JOIN latest_air a ON d.province_code = a.province_code
             CROSS JOIN panel_span ps
             ORDER BY c.cluster_id, c.exposure_score DESC
         ),
@@ -902,9 +984,28 @@ def get_policy_monitor(
     demand_by_biz = consolidated["dem_biz_json"] or []
     nso_map = _fetch_nso_latest_by_province()
 
-    quadrant_points = [
-        {
-            "province_code": str(q["province_code"]),
+    # Load recent verified high severity news alerts so staff monitor uses exact same vulnerability engine as public map
+    recent_alert_rows = fetch_all(
+        """
+        SELECT province_code, shock_type, severity_score, event_date
+        FROM silver.news_events
+        WHERE event_date >= CURRENT_DATE - INTERVAL '90 days'
+          AND severity_score >= 3
+        ORDER BY event_date DESC, severity_score DESC
+        """
+    )
+    alerts_by_prov: dict[str, list[dict[str, Any]]] = {}
+    for a in recent_alert_rows:
+        alerts_by_prov.setdefault(str(a["province_code"]), []).append(dict(a))
+
+    quadrant_points: list[dict[str, Any]] = []
+    for q in quad_rows:
+        code = str(q["province_code"])
+        nso = nso_map.get(code, {})
+        latest_occ = float(q["latest_occupancy_rate"]) if q.get("latest_occupancy_rate") is not None else None
+        avg_occ = float(q.get("avg_occupancy_rate") or 0.0)
+        item = {
+            "province_code": code,
             "name_th": str(q["name_th"]),
             "name_en": str(q["name_en"]),
             "subregion": str(q["subregion"]),
@@ -913,14 +1014,38 @@ def get_policy_monitor(
             "shock_intensity": float(q["shock_intensity"]),
             "exposure_score": float(q["exposure_score"]),
             "avg_monthly_revenue_mthb": float(q.get("avg_monthly_revenue_mthb") or 0.0),
-            "avg_occupancy_rate": float(q.get("avg_occupancy_rate") or 0.0),
-            "debt_to_annual_income_all": nso_map.get(str(q["province_code"]), {}).get("debt_to_annual_income_all"),
-            "debt_to_annual_income_sme": nso_map.get(str(q["province_code"]), {}).get("debt_to_annual_income_sme"),
-            "expense_to_income_pct_sme": nso_map.get(str(q["province_code"]), {}).get("expense_to_income_pct_sme"),
+            "avg_occupancy_rate": avg_occ,
+            "latest_occupancy_rate": round(latest_occ, 1) if latest_occ is not None else avg_occ,
+            "occupancy_rate": round(latest_occ, 1) if latest_occ is not None else avg_occ,
+            "latest_shock_idx": float(q["latest_shock_idx"]) if q.get("latest_shock_idx") is not None else 0.0,
+            "live_pm25_mean": float(q["live_pm25_mean"]) if q.get("live_pm25_mean") is not None else 0.0,
+            "debt_to_annual_income_all": nso.get("debt_to_annual_income_all"),
+            "debt_to_annual_income_sme": nso.get("debt_to_annual_income_sme"),
+            "expense_to_income_pct_sme": nso.get("expense_to_income_pct_sme"),
             "recommended_policy": str(q["recommended_policy"]),
         }
-        for q in quad_rows
-    ]
+        v_eval = evaluate_province_vulnerability(item, alerts_by_prov.get(code, []))
+        item["vulnerability_score"] = v_eval["vulnerability_score"]
+        item["vulnerability_tier"] = v_eval["vulnerability_tier"]
+        item["tier_code"] = v_eval["tier_code"]
+        item["tier_short_th"] = v_eval["tier_short_th"]
+        item["tier_short_en"] = v_eval["tier_short_en"]
+        item["tier_color"] = v_eval["tier_color"]
+        item["insufficient_data"] = v_eval["insufficient_data"]
+        quadrant_points.append(item)
+
+    # Assign unified priority_rank strictly matching public map vulnerability_tiering ordering
+    rank_order = sorted(
+        quadrant_points,
+        key=lambda p: (
+            bool(p.get("insufficient_data")),
+            int(p.get("vulnerability_tier") or 4),
+            -float(p.get("vulnerability_score") or 0.0),
+        ),
+    )
+    rank_lookup = {p["province_code"]: idx + 1 for idx, p in enumerate(rank_order)}
+    for p in quadrant_points:
+        p["priority_rank"] = rank_lookup[p["province_code"]]
 
     panel_months = int(quad_rows[0]["panel_months"]) if quad_rows and quad_rows[0].get("panel_months") else 0
     panel_start = str(quad_rows[0]["min_month"]) if quad_rows and quad_rows[0].get("min_month") else ""
@@ -937,6 +1062,9 @@ def get_policy_monitor(
         "feature_screening": screening_rows,
         "public_demand_signals": {
             "total_checks": sum(int(r["query_count"]) for r in demand_by_prov),
+            "counting_unit": "simulation_requests_not_unique_individuals",
+            "methodology_note_th": "ตัวเลขแสดงจำนวนคำขอจำลองในระบบเท่านั้น ไม่ใช่จำนวนผู้ใช้งานที่ไม่ซ้ำหรือตัวแทนความต้องการเชิงประชากร",
+            "methodology_note_en": "Counts represent total anonymous simulation requests submitted, not unique individuals or population prevalence.",
             "by_province_and_band": [
                 {
                     "province_code": str(r["province_code"]),
@@ -1017,6 +1145,24 @@ def get_data_health(
             FROM gold.pipeline_eval_runs
             ORDER BY run_type, ran_at DESC
         ),
+        eval_history_cte AS (
+            SELECT run_type, metrics_json, token_count, estimated_cost_thb, ran_at
+            FROM (
+                SELECT
+                    run_type,
+                    CASE
+                        WHEN metrics_json ? 'all_24_benchmarks' THEN metrics_json - 'all_24_benchmarks'
+                        ELSE metrics_json
+                    END AS metrics_json,
+                    token_count,
+                    estimated_cost_thb,
+                    ran_at,
+                    ROW_NUMBER() OVER (PARTITION BY run_type ORDER BY ran_at DESC) AS rn
+                FROM gold.pipeline_eval_runs
+            ) ranked
+            WHERE rn <= 6
+            ORDER BY run_type, ran_at DESC
+        ),
         docs_cte AS (
             SELECT doc_title, doc_url, count(*) AS chunk_count, count(DISTINCT page_num) AS page_count
             FROM silver.policy_chunks
@@ -1027,6 +1173,7 @@ def get_data_health(
             (SELECT row_to_json(c) FROM counts_cte c) AS counts_json,
             coalesce((SELECT json_agg(row_to_json(q)) FROM q_cte q), '[]'::json) AS quarantine_json,
             coalesce((SELECT json_agg(row_to_json(e)) FROM eval_cte e), '[]'::json) AS evals_json,
+            coalesce((SELECT json_agg(row_to_json(eh)) FROM eval_history_cte eh), '[]'::json) AS eval_history_json,
             coalesce((SELECT json_agg(row_to_json(d)) FROM docs_cte d), '[]'::json) AS docs_json
         """
     )[0]
@@ -1034,6 +1181,7 @@ def get_data_health(
     counts = consolidated["counts_json"] or {}
     quarantine_breakdown = consolidated["quarantine_json"] or []
     latest_evals = consolidated["evals_json"] or []
+    eval_history = consolidated["eval_history_json"] or []
     indexed_docs = consolidated["docs_json"] or []
 
     trimmed_evals: list[dict[str, Any]] = [
@@ -1047,8 +1195,12 @@ def get_data_health(
         for e in latest_evals
     ]
 
+    layered_evaluation = build_layered_evaluation_summary(eval_history)
+    rag_index_version = get_rag_index_version()
+
     payload = {
         "authenticated_staff": staff["sub"],
+        "rag_index_version": rag_index_version,
         "layer_counts": {k: (float(v) if k == "rag_storage_mb" else int(v)) for k, v in counts.items()},
         "quarantine_breakdown": [
             {
@@ -1068,6 +1220,7 @@ def get_data_health(
             for d in indexed_docs
         ],
         "latest_eval_runs": trimmed_evals,
+        "layered_evaluation": layered_evaluation,
     }
     _cache_set("data_health", payload)
     return {
