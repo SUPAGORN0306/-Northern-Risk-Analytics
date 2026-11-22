@@ -1,4 +1,4 @@
-import type { Lang, ProvinceOutlookItem } from "@/lib/api"
+import type { Lang } from "@/lib/api"
 
 export type DebtStatusKey = "current" | "persistent" | "overdue_31_120" | "overdue_120_plus" | "disaster"
 
@@ -228,7 +228,7 @@ export function buildLoanComparison(params: {
 
   let mode: LoanComparisonResult["mode"] = "responsible_lending"
   let horizonMonths = userMonths
-  let origRate = resolvedBaseRate
+  const origRate = resolvedBaseRate
   let policyRateLabel = ""
   let policyTitleTh = ""
   let policyTitleEn = ""
@@ -296,8 +296,10 @@ export function buildLoanComparison(params: {
 
   const origMonthlyPay = monthlyDebt > 0 ? monthlyDebt : Math.round(calcAnnuityPayment(principal, origRate, horizonMonths))
   const origR = origRate / 100 / 12
+  const reducedRlRate = Math.max(3.0, Number((origRate - 2.0).toFixed(2)))
+  const pdCapRate = Math.min(15.0, origRate)
 
-let policyY1Pay = origMonthlyPay
+  let policyY1Pay = origMonthlyPay
   let policyY2Pay = origMonthlyPay
   let policyY3Pay = origMonthlyPay
   let gracePay: number | undefined = undefined
@@ -314,7 +316,7 @@ let policyY1Pay = origMonthlyPay
     policyY2Pay = Math.round(origMonthlyPay * 0.7)
     policyY3Pay = Math.round(origMonthlyPay * 0.9)
   } else if (mode === "persistent_5y") {
-    const pay = Math.round(calcAnnuityPayment(principal, 15.0, horizonMonths))
+    const pay = Math.round(calcAnnuityPayment(principal, pdCapRate, horizonMonths))
     policyY1Pay = pay
     policyY2Pay = pay
     policyY3Pay = pay
@@ -332,7 +334,7 @@ let policyY1Pay = origMonthlyPay
     policyY3Pay = easedPay
   } else {
     const safeTarget = monthlyRevenue > 0 ? Math.round(monthlyRevenue * 0.38) : Math.round(origMonthlyPay * 0.8)
-    const pay = Math.min(origMonthlyPay, Math.max(Math.round(calcAnnuityPayment(principal, 8.5, 72)), safeTarget))
+    const pay = Math.min(origMonthlyPay, Math.max(Math.round(calcAnnuityPayment(principal, reducedRlRate, 72)), safeTarget))
     policyY1Pay = pay
     policyY2Pay = pay
     policyY3Pay = pay
@@ -431,7 +433,7 @@ let policyY1Pay = origMonthlyPay
         currentPolPay = policyY1Pay
         balPol = Math.max(0, balPol - Math.max(0, currentPolPay - interestP))
       } else if (mode === "persistent_5y") {
-        const r15 = 15.0 / 100 / 12
+        const r15 = pdCapRate / 100 / 12
         const interestP = balPol * r15
         intPolTotal += interestP
         currentPolPay = policyY1Pay
@@ -442,14 +444,14 @@ let policyY1Pay = origMonthlyPay
           intPolTotal += interestP
           currentPolPay = gracePay ?? policyY1Pay
         } else {
-          const rAfter = Math.max(5.5, origRate - 1.5) / 100 / 12
+          const rAfter = origRate / 100 / 12
           const interestP = balPol * rAfter
           intPolTotal += interestP
           currentPolPay = origMonthlyPay
           balPol = Math.max(0, balPol - Math.max(0, currentPolPay - interestP))
         }
       } else {
-        const rRestr = 8.5 / 100 / 12
+        const rRestr = reducedRlRate / 100 / 12
         const interestP = balPol * rRestr
         intPolTotal += interestP
         currentPolPay = policyY1Pay
@@ -594,7 +596,6 @@ export function parseStatementCsv(csvText: string): ParsedCsvSummary | null {
 export function buildFinancialDossierHtml(params: {
   lang: Lang
   provinceName: string
-  provinceData: ProvinceOutlookItem | null
   businessLabel: string
   statusLabel: string
   diag: FinancialDiagnostic
@@ -602,7 +603,7 @@ export function buildFinancialDossierHtml(params: {
   matchedPrograms: { title: string; benefit: string; criteria: string; source: string }[]
   checklist: string[]
 }): string {
-  const { lang, provinceName, provinceData, businessLabel, statusLabel, diag, comparison, matchedPrograms, checklist } = params
+  const { lang, provinceName, businessLabel, statusLabel, diag, comparison, matchedPrograms, checklist } = params
   const today = new Date().toLocaleDateString(lang === "th" ? "th-TH" : "en-US", {
     year: "numeric",
     month: "long",
@@ -622,19 +623,6 @@ export function buildFinancialDossierHtml(params: {
       </tr>`,
     )
     .join("")
-
-  const formalChecklist =
-    lang === "th"
-      ? [
-          "รายการเดินบัญชีย้อนหลัง 6 เดือน (บัญชีส่วนตัว หรือบัญชีร้านค้า)",
-          "ใบแจ้งยอดหนี้คงเหลือและตารางค่างวดล่าสุดของสถาบันการเงิน",
-          "เอกสารแสดงผลกระทบต่อรายได้หรือหลักฐานประกอบ (ถ้ามี)",
-        ]
-      : [
-          "6-month bank statements (personal or business account)",
-          "Latest outstanding loan balance and installment schedule",
-          "Supporting evidence of income disruption (if applicable)",
-        ]
 
   const primaryProgram = matchedPrograms[0]
 
@@ -841,7 +829,7 @@ export function buildFinancialDossierHtml(params: {
     </div>
     <div>
       <h2>${lang === "th" ? "4. เอกสารประกอบการยื่นคำขอ (แนบมาพร้อมนี้)" : "4. Attached Supporting Documents"}</h2>
-      <ul>${formalChecklist.map((c) => `<li>${c}</li>`).join("")}</ul>
+      <ul>${checklist.map((item) => `<li>${item}</li>`).join("")}</ul>
     </div>
   </div>
 

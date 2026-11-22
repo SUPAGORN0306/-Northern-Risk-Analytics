@@ -154,18 +154,28 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
         """
         WITH latest_m AS (
             SELECT max(month_date) AS m_date FROM gold.province_monthly_panel
+        ),
+        latest_air AS (
+            SELECT DISTINCT ON (province_code)
+                province_code,
+                pm25_mean AS live_pm25_mean
+            FROM silver.air_daily
+            ORDER BY province_code, obs_date DESC
         )
         SELECT
             d.province_code, d.name_th, d.name_en, d.subregion,
             p.month_date, p.composite_shock_idx, p.target_metrics, p.selected_features,
             c.model_used, c.cluster_id, c.cluster_label,
-            c.shock_intensity, c.exposure_score
+            c.shock_intensity, c.exposure_score,
+            a.live_pm25_mean
         FROM silver.dim_provinces d
         JOIN gold.province_monthly_panel p
           ON d.province_code = p.province_code
          AND p.month_date = (SELECT m_date FROM latest_m)
         LEFT JOIN gold.province_clusters c
           ON d.province_code = c.province_code
+        LEFT JOIN latest_air a
+          ON d.province_code = a.province_code
         ORDER BY d.province_code
         """
     )
@@ -175,7 +185,8 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
         """
         SELECT province_code, shock_type, severity_score, event_date
         FROM silver.news_events
-        WHERE event_date >= CURRENT_DATE - INTERVAL '90 days'
+        WHERE event_date >= CURRENT_DATE - INTERVAL '120 days'
+          AND shock_type != 'policy_relief'
           AND severity_score >= 3
         ORDER BY event_date DESC, severity_score DESC
         """
@@ -243,7 +254,7 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
                 "exposure_score": exposure_v,
                 "shock_intensity": shock_intensity_v,
                 "latest_shock_idx": shock_v,
-                "live_pm25_mean": 0.0,
+                "live_pm25_mean": float(r["live_pm25_mean"]) if r.get("live_pm25_mean") is not None else 0.0,
             },
             alerts_by_prov.get(code, []),
         )

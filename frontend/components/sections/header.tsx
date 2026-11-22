@@ -23,32 +23,31 @@ export function Header() {
   const desktopNavigation =
     lang === "th"
       ? [
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
           { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
+          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
+          { label: "เอกสารและสายด่วน", href: "#official-resources" },
         ]
       : [
-          { label: "Provincial Outlook", href: "#risk-outlook" },
           { label: "Check Debt & Relief", href: "#relief-assistant" },
+          { label: "Provincial Outlook", href: "#risk-outlook" },
+          { label: "Documents & Hotlines", href: "#official-resources" },
         ]
 
   const mobileNavigation =
     lang === "th"
       ? [
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook", openResources: false },
-          { label: "คำนวณค่างวดและเช็กสิทธิ", href: "#relief-assistant", openResources: false },
-          { label: "เอกสารที่ต้องเตรียมและลิงก์โครงการ", href: "#official-resources", openResources: true },
+          { label: "คำนวณค่างวดและเช็กสิทธิ", href: "#relief-assistant" },
+          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
+          { label: "เอกสารที่ต้องเตรียมและลิงก์โครงการ", href: "#official-resources" },
         ]
       : [
-          { label: "Provincial Outlook", href: "#risk-outlook", openResources: false },
-          { label: "Payment Simulator & Relief", href: "#relief-assistant", openResources: false },
-          { label: "Document Checklist & Official Links", href: "#official-resources", openResources: true },
+          { label: "Payment Simulator & Relief", href: "#relief-assistant" },
+          { label: "Provincial Outlook", href: "#risk-outlook" },
+          { label: "Document Checklist & Official Links", href: "#official-resources" },
         ]
 
-  function handleMobileNavClick(openResources: boolean) {
+  function handleMobileNavClick() {
     setMenuOpen(false)
-    if (openResources && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("open-official-resources"))
-    }
   }
 
   return (
@@ -75,7 +74,7 @@ export function Header() {
         </Link>
 
         {/* Horizontal navigation links shown only on desktop (md and up) */}
-        <nav aria-label="Main navigation" className="hidden items-center justify-center gap-8 md:flex">
+        <nav aria-label="Main navigation" className="hidden items-center justify-center gap-5 md:flex lg:gap-7">
           {desktopNavigation.map((item) => (
             <a
               key={item.href}
@@ -147,7 +146,7 @@ export function Header() {
             <a
               key={item.href}
               href={item.href}
-              onClick={() => handleMobileNavClick(item.openResources)}
+              onClick={handleMobileNavClick}
               className="flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
             >
               <span>{item.label}</span>

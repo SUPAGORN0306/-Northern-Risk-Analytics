@@ -6,6 +6,7 @@ import { StructuredData } from "@/components/structured-data"
 import { Header } from "@/components/sections/header"
 import { Hero } from "@/components/sections/hero"
 import { RiskOutlook } from "@/components/sections/platforms"
+import { OfficialResources } from "@/components/sections/official-resources"
 import { StaffPortalProvider } from "@/components/staff-portal"
 import { Pricing } from "@/components/sections/pricing"
 import { CTA } from "@/components/sections/cta"
@@ -43,6 +44,7 @@ function PublicExperience() {
         <Hero outlook={outlook} />
         <Pricing provinces={outlook?.provinces ?? []} />
         <RiskOutlook outlook={outlook} loading={loading} error={error} />
+        <OfficialResources />
       </main>
       <CTA />
       <Footer />

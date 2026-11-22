@@ -781,15 +781,16 @@ def assess_financial_resilience(
         query_parts.append("ช่วยเหลือลูกหนี้ SME รายย่อย รายได้ลดลง ปรับลดค่างวด")
 
     policy_query = " ".join(query_parts)
+    dsr_label = f"{dsr.dsr_pct}%" if dsr.dsr_pct is not None else "undefined (zero monthly revenue)"
     prov_ctx = (
         f"Province: {prov_info['name_th']} ({prov_info['province_code']}), "
         f"Cluster: {prov_info['cluster_label']}, "
         f"Latest Composite Shock: {prov_info['composite_shock_idx']}, "
         f"Business Type: {safe_business_type}, "
-        f"Deterministic DSR: {dsr.dsr_pct}% ({dsr.band} / {dsr.summary_en}), "
+        f"Deterministic DSR: {dsr_label} ({dsr.band} / {dsr.summary_en}), "
         f"Reported Factors: {', '.join(safe_impact_tags) if safe_impact_tags else 'general health check'}"
         if prov_info
-        else f"Business Type: {safe_business_type}, Deterministic DSR: {dsr.dsr_pct}% ({dsr.band})"
+        else f"Business Type: {safe_business_type}, Deterministic DSR: {dsr_label} ({dsr.band})"
     )
 
     rag_res = answer_policy_question(

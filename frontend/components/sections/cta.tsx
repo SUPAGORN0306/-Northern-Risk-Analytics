@@ -336,6 +336,15 @@ export function CTA() {
   function handleAssessmentText(prompt: string) {
     if (!assessment) return
     const value = prompt.trim()
+    if (/^(ยกเลิก|หยุด|ไม่เอา|ออก|cancel|stop|exit)$/i.test(value)) {
+      setAssessment(null)
+      addMessage({ role: "user", text: value })
+      addMessage({
+        role: "assistant",
+        text: lang === "th" ? "ยกเลิกการประเมินแล้วครับ สามารถพิมพ์คำถามทั่วไปต่อได้เลย" : "Assessment cancelled. Feel free to ask any general question.",
+      })
+      return
+    }
     if (assessment.step === "province") {
       if (value.length < 2) return
       const next: AssessmentDraft = { ...assessment, step: "income", province: value }
@@ -583,6 +592,21 @@ export function CTA() {
                   {assessment.step === "type" && <><button type="button" onClick={() => chooseAssessmentType("household")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "บุคคล / ครัวเรือน" : "Household"}</button><button type="button" onClick={() => chooseAssessmentType("general_service")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "กิจการ / อาชีพ" : "Business"}</button></>}
                   {assessment.step === "impact" && <><button type="button" onClick={() => chooseImpact([], lang === "th" ? "ไม่มีเหตุพิเศษ" : "No special impact")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "ไม่มีเหตุพิเศษ" : "None"}</button><button type="button" onClick={() => chooseImpact(["overdue_debt"], lang === "th" ? "มีหนี้ค้างชำระ" : "Overdue debt")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "หนี้ค้างชำระ" : "Overdue debt"}</button><button type="button" onClick={() => chooseImpact(["revenue_drop"], lang === "th" ? "รายได้ลดลง" : "Income has dropped")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "รายได้ลดลง" : "Income drop"}</button><button type="button" onClick={() => chooseImpact(["disaster"], lang === "th" ? "ได้รับผลกระทบจากภัยพิบัติ" : "Disaster impact")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "ภัยพิบัติ" : "Disaster"}</button></>}
                   {assessment.step === "confirm" && <><button type="button" disabled={sending} onClick={() => void runAssessment(assessment)} className="min-h-11 rounded-full bg-foreground px-4 text-sm font-semibold text-background disabled:opacity-50">{lang === "th" ? "ถูกต้อง คำนวณได้เลย" : "Correct, calculate"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "province" }); addMessage({ role: "assistant", text: lang === "th" ? "ได้ครับ พิมพ์จังหวัดที่ต้องการแก้ได้เลย" : "Sure. Type the province you want to change." }) }} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "แก้จังหวัด" : "Edit province"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "income" }); addMessage({ role: "assistant", text: lang === "th" ? "พิมพ์รายรับต่อเดือนที่ถูกต้องได้เลยครับ" : "Type the correct monthly income." }) }} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "แก้ตัวเลข" : "Edit amounts"}</button><button type="button" onClick={() => { setAssessment(null); addMessage({ role: "assistant", text: lang === "th" ? "ยกเลิกการประเมินแล้วครับ ถ้าอยากเริ่มใหม่บอกได้เลย" : "Assessment cancelled. You can start again anytime." }) }} className="min-h-11 rounded-full border border-border px-3 text-sm text-muted-foreground">{lang === "th" ? "ยกเลิก" : "Cancel"}</button></>}
+                  {assessment.step !== "confirm" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssessment(null)
+                        addMessage({
+                          role: "assistant",
+                          text: lang === "th" ? "ยกเลิกการประเมินแล้วครับ สามารถพิมพ์คำถามทั่วไปต่อได้เลย" : "Assessment cancelled. Feel free to ask any general question.",
+                        })
+                      }}
+                      className="min-h-11 rounded-full border border-border px-3 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    >
+                      {lang === "th" ? "ยกเลิกการประเมิน" : "Cancel"}
+                    </button>
+                  )}
                 </div>
               )}
 

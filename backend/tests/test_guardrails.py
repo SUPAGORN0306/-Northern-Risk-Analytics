@@ -223,8 +223,56 @@ def test_vulnerability_tiering_flags_missing_data_without_false_safe() -> None:
     assert res["insufficient_data"] is True
     assert res["tier_code"] == "insufficient_data"
     assert res["data_completeness_pct"] == 0.0
-    assert len(res["missing_metrics"]) == 6
+    assert len(res["missing_metrics"]) == 8
     assert res["signal_scope"] == "provincial_macro_surveillance_only"
+
+
+def test_vulnerability_tiering_keeps_missing_hazard_inputs_unknown() -> None:
+    """Missing current shock and air readings stay unknown and are excluded from the hazard score."""
+    prov = {
+        "province_code": "CM",
+        "debt_to_annual_income_sme": 0.20,
+        "debt_to_annual_income_all": 0.40,
+        "expense_to_income_pct_sme": 65.0,
+        "occupancy_rate": 60.0,
+        "exposure_score": 20.0,
+        "shock_intensity": 30.0,
+        "latest_shock_idx": None,
+        "live_pm25_mean": None,
+    }
+    result = evaluate_province_vulnerability(prov, [])
+    assert result["insufficient_data"] is False
+    assert result["vulnerability_score"] > 0.0
+    assert result["data_completeness_pct"] == 75.0
+    assert "latest_shock_idx" in result["missing_metrics"]
+    assert "live_pm25_mean" in result["missing_metrics"]
+
+
+def test_structural_annualization_uses_each_provinces_observed_months(monkeypatch) -> None:
+    """Annual hazard-day estimates divide by observed months for that province and metric."""
+    import pandas as pd
+    from src.transform import panel_builder
+
+    monkeypatch.setattr(panel_builder, "fetch_all", lambda *_args, **_kwargs: [])
+    panel = pd.DataFrame(
+        {
+            "province_code": ["CM"] * 4,
+            "period_date": pd.date_range("2026-01-01", periods=4, freq="MS"),
+            "occupancy_rate": [50.0] * 4,
+            "revenue_total_mthb": [10.0] * 4,
+            "foreign_visitor_share": [20.0] * 4,
+            "foreign_revenue_share": [20.0] * 4,
+            "pm25_mean": [20.0] * 4,
+            "pm25_days_over_37_5": [2.0, 4.0, np.nan, 0.0],
+            "pm25_days_over_75_0": [0.0, 1.0, np.nan, 0.0],
+            "heavy_rain_days": [1.0, 2.0, np.nan, 0.0],
+            "rainfall_sum_mm": [10.0] * 4,
+        }
+    )
+    result = panel_builder.build_provincial_structural_profile(panel)
+    assert result.loc[0, "annual_pm25_days_over_37_5"] == pytest.approx(24.0)
+    assert result.loc[0, "annual_pm25_days_over_75_0"] == pytest.approx(4.0)
+    assert result.loc[0, "annual_heavy_rain_days"] == pytest.approx(12.0)
 
 
 def test_feature_registry_loads_and_validates_specs() -> None:

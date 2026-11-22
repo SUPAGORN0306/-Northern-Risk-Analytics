@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   AlertTriangle,
-  BadgeCheck,
   Building2,
   ChartNoAxesCombined,
   Check,
@@ -89,11 +88,7 @@ type RankedProvince = QuadrantProvince & {
   priority_rank: number
 }
 
-/**
- * Unified composite vulnerability score matching backend brief_generator.py:
- * 0.38 exposure + 0.32 external shock + 0.15 tight cash margin penalty + 0.15 SME debt penalty.
- * Renormalizes weights across available non-null indicators (zero synthetic fallback values).
- */
+// Read unified backend vulnerability score matching public map and executive brief
 function computeCompositePriorityScore(p: QuadrantProvince): {
   cashMargin: number | null
   smeDebt: number | null
@@ -105,8 +100,9 @@ function computeCompositePriorityScore(p: QuadrantProvince): {
       : null
   const smeDebt = p.debt_to_annual_income_sme
 
-  if (p.priority_score != null && Number.isFinite(p.priority_score)) {
-    return { cashMargin, smeDebt, score: p.priority_score }
+  const unifiedScore = p.vulnerability_score ?? p.priority_score
+  if (unifiedScore != null && Number.isFinite(unifiedScore)) {
+    return { cashMargin, smeDebt, score: unifiedScore }
   }
 
   let weightedSum = 0
@@ -1241,9 +1237,12 @@ function PolicyOverviewPage({
         const avgDebt = debtVals.length
           ? debtVals.reduce((acc, v) => acc + v, 0) / debtVals.length
           : null
-        const avgOcc =
-          g.items.reduce((acc, item) => acc + item.avg_occupancy_rate, 0) /
-          Math.max(1, g.items.length)
+        const occVals = g.items
+          .map((item) => item.avg_occupancy_rate)
+          .filter((value): value is number => value != null && Number.isFinite(value))
+        const avgOcc = occVals.length
+          ? occVals.reduce((acc, value) => acc + value, 0) / occVals.length
+          : null
         return {
           ...g,
           avgMargin,
@@ -1389,10 +1388,14 @@ function PolicyOverviewPage({
                 </div>
                 <div className="rounded-xl border border-border bg-background px-2.5 py-2">
                   <span className="block text-[11px] text-muted-foreground">
-                    {lang === "th" ? "เข้าพักล่าสุด" : "Latest Occ."}
+                    {selectedRanked.latest_occupancy_rate != null
+                      ? lang === "th" ? "เข้าพักเดือนล่าสุด" : "Latest Occ."
+                      : lang === "th" ? "เข้าพักเฉลี่ยย้อนหลัง" : "Historical Avg. Occ."}
                   </span>
                   <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
-                    {(selectedRanked.latest_occupancy_rate ?? selectedRanked.avg_occupancy_rate).toFixed(1)}%
+                    {(selectedRanked.latest_occupancy_rate ?? selectedRanked.avg_occupancy_rate) != null
+                      ? `${(selectedRanked.latest_occupancy_rate ?? selectedRanked.avg_occupancy_rate)!.toFixed(1)}%`
+                      : "—"}
                   </span>
                 </div>
               </div>
@@ -1505,9 +1508,15 @@ function PolicyOverviewPage({
                         }`}
                       >
                         <span className="block font-medium">
-                          {lang === "th"
-                            ? `เข้าพัก ${(p.latest_occupancy_rate ?? p.avg_occupancy_rate).toFixed(1)}%`
-                            : `Occ ${(p.latest_occupancy_rate ?? p.avg_occupancy_rate).toFixed(1)}%`}
+                          {p.latest_occupancy_rate != null
+                            ? lang === "th"
+                              ? `เข้าพักล่าสุด ${p.latest_occupancy_rate.toFixed(1)}%`
+                              : `Latest Occ. ${p.latest_occupancy_rate.toFixed(1)}%`
+                            : (p.avg_occupancy_rate != null
+                              ? lang === "th"
+                                ? `เฉลี่ยย้อนหลัง ${p.avg_occupancy_rate.toFixed(1)}%`
+                                : `Historical Avg. ${p.avg_occupancy_rate.toFixed(1)}%`
+                              : lang === "th" ? "ไม่มีข้อมูลอัตราเข้าพัก" : "Occupancy unavailable")}
                         </span>
                         <span className="block">
                           {p.tier_short_th
@@ -1581,8 +1590,8 @@ function PolicyOverviewPage({
 
                   <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
                     {lang === "th"
-                      ? `เงินเหลือเฉลี่ย ${g.avgMargin != null ? `${g.avgMargin.toFixed(0)}%` : "—"} · หนี้เฉลี่ย ${g.avgDebt != null ? `${g.avgDebt.toFixed(2)} เท่า` : "—"} · อัตราเข้าพัก ${g.avgOcc.toFixed(0)}%`
-                      : `Avg Cash Margin ${g.avgMargin != null ? `${g.avgMargin.toFixed(0)}%` : "—"} · Debt ${g.avgDebt != null ? `${g.avgDebt.toFixed(2)}x` : "—"} · Occ ${g.avgOcc.toFixed(0)}%`}
+                      ? `เงินเหลือเฉลี่ย ${g.avgMargin != null ? `${g.avgMargin.toFixed(0)}%` : "—"} · หนี้เฉลี่ย ${g.avgDebt != null ? `${g.avgDebt.toFixed(2)} เท่า` : "—"} · อัตราเข้าพัก ${g.avgOcc != null ? `${g.avgOcc.toFixed(0)}%` : "—"}`
+                      : `Avg Cash Margin ${g.avgMargin != null ? `${g.avgMargin.toFixed(0)}%` : "—"} · Debt ${g.avgDebt != null ? `${g.avgDebt.toFixed(2)}x` : "—"} · Occ ${g.avgOcc != null ? `${g.avgOcc.toFixed(0)}%` : "—"}`}
                   </p>
 
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -3746,7 +3755,10 @@ function DataHealthView({
                 ? "ยังไม่เคยตรวจ"
                 : "Never run"
             const metricEntries = Object.entries(layer.metrics || {}).filter(
-              ([, v]) => v !== null && v !== undefined && typeof v !== "object",
+              (entry): entry is [string, string | number | boolean] =>
+                typeof entry[1] === "string" ||
+                typeof entry[1] === "number" ||
+                typeof entry[1] === "boolean",
             )
             const thresholdRules =
               thresholdRulesMap[layer.layer]?.[lang] ??

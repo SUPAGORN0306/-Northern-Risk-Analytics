@@ -15,8 +15,6 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
     const match = outlook?.provinces.find((p) => p.province_code === code)
     return match ? (lang === "th" ? match.name_th : match.name_en) : code
   })
-  const hasWaterAlert = (summary?.water_pollution_alert_provinces?.length ?? 0) > 0
-
   return (
     <section className="px-3 pb-6 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pt-28">
       <div className="relative mx-auto min-h-[500px] max-w-7xl overflow-hidden rounded-[2rem] bg-foreground sm:min-h-[540px]">

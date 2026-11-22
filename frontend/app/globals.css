@@ -14,6 +14,15 @@ body {
   .scroll-target {
     scroll-margin-top: 7rem;
   }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @layer base {

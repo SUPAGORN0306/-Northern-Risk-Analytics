@@ -1,17 +1,16 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { motion, useInView } from "motion/react"
+import { AnimatePresence, motion, useInView } from "motion/react"
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   ArrowUpRight,
   BookOpenCheck,
-  Calculator,
   Check,
   ChevronDown,
   ExternalLink,
-  FileCheck2,
   FileText,
   Loader2,
   PhoneCall,
@@ -114,15 +113,6 @@ const DEBT_STATUS_OPTIONS: {
     sub_th: "เฉพาะบัตรเครดิตและสินเชื่อส่วนบุคคลที่ไม่มีหลักประกัน",
     sub_en: "Unsecured credit cards and personal loans in NPL status",
   },
-]
-
-const OFFICIAL_SOURCES = [
-  { label_th: "คลินิกแก้หนี้ (สมัครออนไลน์ / โทร 1443)", label_en: "Debt Clinic by SAM (Apply Online / 1443)", href: "https://www.debtclinicbysam.com/" },
-  { label_th: "เอกสารโครงการคุณสู้ เราช่วย (ฉบับทางการ)", label_en: "Khun Soo Rao Chuay Official PDF", href: "https://www.bot.or.th/content/dam/bot/documents/th/research-and-publications-pdf/articles-and-publications/articles/download/2024/article-2024dec24.pdf" },
-  { label_th: "ประกาศหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568", label_en: "Responsible Lending 2568 PDF", href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf" },
-  { label_th: "คู่มือรู้ก่อน รอดก่อน แนวทางแก้หนี้ 2569", label_en: "Official Debt Relief Guide 2569 PDF", href: "https://www.bot.or.th/content/dam/bot/documents/th/thai-economy/regional-economy/northeastern/File-download/press-training-at-sakonnakorn/Debt%20Relief%20Measures.pdf" },
-  { label_th: "หนังสือเวียนมาตรการลูกหนี้ผู้ประสบภัยพิบัติ 2568", label_en: "2568 Disaster Relief Circular PDF", href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680065.pdf" },
-  { label_th: "รายงานภาวะเศรษฐกิจและการเงินภาคเหนือ (ธปท.)", label_en: "Northern Regional Economy Portal", href: "https://www.bot.or.th/th/thai-economy/regional-economy/northern-economy.html" },
 ]
 
 type ProgramMatch = {
@@ -322,9 +312,12 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const ref = useRef(null)
   const dossierDialogRef = useRef<HTMLDialogElement | null>(null)
   const docPageDialogRef = useRef<HTMLDialogElement | null>(null)
+  const resultPanelRef = useRef<HTMLDivElement | null>(null)
   const isInView = useInView(ref, { once: true, margin: "-60px" })
   const { lang, selectedProvinceCode, setSelectedProvinceCode } = useAppState()
 
+  const [formStep, setFormStep] = useState<1 | 2 | 3>(1)
+  const [stepDir, setStepDir] = useState<1 | -1>(1)
   const [activePreset, setActivePreset] = useState<PresetKey>(null)
   const [activeDocPage, setActiveDocPage] = useState<{
     docTitle: string
@@ -351,7 +344,15 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [result, setResult] = useState<ReliefCheckResponse | null>(null)
-  const [showSources, setShowSources] = useState(false)
+
+  function goToStep(next: 1 | 2 | 3) {
+    setStepDir(next >= formStep ? 1 : -1)
+    setFormStep(next)
+  }
+
+  function scrollToResults() {
+    resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
 
   const isSme = userType === "business" && business !== "household"
 
@@ -400,8 +401,10 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       activePreset,
   )
 
+  const hasEnteredRevenue = revenue.trim().length > 0
+
   useEffect(() => {
-    if (numRevenue <= 0 || numDebt <= 0) {
+    if (numDebt <= 0 || (!hasEnteredRevenue && numRevenue <= 0)) {
       setResult(null)
       return
     }
@@ -415,16 +418,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       })
     }, 350)
     return () => clearTimeout(timer)
-  }, [numRevenue, numDebt, selectedProvinceCode, business, debtStatus])
-
-  useEffect(() => {
-    const onOpenResources = () => {
-      setMobileResultTab("dossier")
-      setShowSources(true)
-    }
-    window.addEventListener("open-official-resources", onOpenResources)
-    return () => window.removeEventListener("open-official-resources", onOpenResources)
-  }, [])
+  }, [hasEnteredRevenue, numRevenue, numDebt, selectedProvinceCode, business, debtStatus])
 
   function resetAllInputs() {
     setActivePreset(null)
@@ -438,6 +432,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     setHorizonYears(5)
     setApiError(null)
     setResult(null)
+    goToStep(1)
   }
 
   function handleUserTypeChange(nextType: "individual" | "business") {
@@ -574,7 +569,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       if (selectedProvData?.has_active_water_pollution) tags.push("water_pollution")
       const res = await submitReliefCheck({
         province: params.prov,
-        business_type: params.biz === "household" ? "general_service" : params.biz,
+        business_type: params.biz,
         monthly_revenue_thb: params.revVal,
         monthly_debt_thb: params.debtVal,
         impact_tags: tags,
@@ -596,6 +591,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     setActivePreset(preset)
     setApiError(null)
     setExtraLoans([])
+    goToStep(2)
     if (preset === "individual_tight") {
       setUserType("individual")
       setBusiness("household")
@@ -606,13 +602,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setCashReserve("45,000")
       setTotalPrincipal("450,000")
       setHorizonYears(5)
-      void runBackendAssessment({
-        prov: selectedProvinceCode,
-        biz: "household",
-        statusKey: "current",
-        revVal: 35000,
-        debtVal: 15500,
-      })
     } else if (preset === "sme_tight") {
       setUserType("business")
       setBusiness("hotel")
@@ -622,13 +611,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setDebtPayment("48,000")
       setCashReserve("240,000")
       setTotalPrincipal("1,850,000")
-      void runBackendAssessment({
-        prov: selectedProvinceCode,
-        biz: "hotel",
-        statusKey: "current",
-        revVal: 165000,
-        debtVal: 48000,
-      })
     } else if (preset === "khunsoo_sme") {
       setUserType("business")
       setBusiness("restaurant")
@@ -638,13 +620,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setDebtPayment("44,000")
       setCashReserve("150,000")
       setTotalPrincipal("1,600,000")
-      void runBackendAssessment({
-        prov: selectedProvinceCode,
-        biz: "restaurant",
-        statusKey: "overdue_31_120",
-        revVal: 120000,
-        debtVal: 44000,
-      })
     } else {
       setUserType("business")
       setSelectedProvinceCode("CR")
@@ -655,23 +630,16 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setDebtPayment("39,000")
       setCashReserve("160,000")
       setTotalPrincipal("1,500,000")
-      void runBackendAssessment({
-        prov: "CR",
-        biz: "restaurant",
-        statusKey: "disaster",
-        revVal: 135000,
-        debtVal: 39000,
-      })
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!revenue.trim() || numDebt <= 0 || numRevenue <= 0) {
+    if (!hasEnteredRevenue || numDebt <= 0) {
       setApiError(
         lang === "th"
-          ? "กรุณากรอกรายได้ต่อเดือนและค่างวดหนี้ต่อเดือนก่อนกดคำนวณ"
-          : "Please enter monthly revenue and monthly debt payment before evaluating.",
+          ? "กรุณากรอกรายได้ต่อเดือน (หากไม่มีรายได้ใส่ 0) และค่างวดหนี้ต่อเดือนก่อนกดคำนวณ"
+          : "Please enter monthly revenue (enter 0 if no income) and monthly debt payment before evaluating.",
       )
       return
     }
@@ -723,7 +691,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     const html = buildFinancialDossierHtml({
       lang,
       provinceName: selectedProvName,
-      provinceData: selectedProvData,
       businessLabel: bizObj ? (lang === "th" ? bizObj.th : bizObj.en) : business,
       statusLabel: statusObj ? (lang === "th" ? statusObj.th : statusObj.en) : debtStatus,
       diag: diagnostic,
@@ -879,584 +846,823 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
           )}
         </div>
 
-        <div className="grid items-start gap-5 lg:grid-cols-[5fr_7fr]">
-          {/* Left Compact Form with Numbers Immediately Visible Above the Fold */}
-          <motion.form
-            onSubmit={handleSubmit}
-            initial={{ opacity: 0, y: 20 }}
-            animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.5, delay: 0.06 }}
-            className="rounded-[1.75rem] border border-border bg-card p-5 sm:p-6"
-          >
-            <div className="mb-4 flex items-start justify-between gap-2 border-b border-border pb-3">
+        <div
+          className={
+            diagnostic
+              ? "grid items-start gap-5 lg:grid-cols-[5fr_7fr]"
+              : "mx-auto max-w-2xl"
+          }
+        >
+          {/* Left Sticky Control Column on Desktop holding the 3 Step Stepper and Live Summary Snapshot */}
+          <div className={diagnostic ? "space-y-4 lg:sticky lg:top-24" : ""}>
+            {/* Connected 3 Step Horizontal Slide Wizard Form */}
+            <motion.form
+              onSubmit={handleSubmit}
+              initial={{ opacity: 0, y: 20 }}
+              animate={isInView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.5, delay: 0.06 }}
+              className="rounded-[1.75rem] border border-border bg-card p-5 sm:p-6"
+            >
+            <div className="mb-4 flex items-start justify-between gap-2">
               <div>
                 <h3 className="font-display text-base font-semibold text-foreground sm:text-lg">
                   {lang === "th" ? "ข้อมูลรายรับ รายจ่าย และภาระหนี้" : "Cashflow & Debt Inputs"}
                 </h3>
-                <p className="mt-1 text-sm leading-6 text-[#4B5563]">
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground sm:text-sm">
                   {lang === "th"
                     ? "ไม่เก็บข้อมูลส่วนบุคคล ประมวลผลเพื่อจำลองแผนเจรจาเท่านั้น"
                     : "No personal data stored. Processed strictly for planning."}
                 </p>
               </div>
+              {hasAnyInput && (
+                <button
+                  type="button"
+                  onClick={resetAllInputs}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  <RotateCcw aria-hidden="true" className="size-3" />
+                  {lang === "th" ? "เริ่มใหม่" : "Reset"}
+                </button>
+              )}
             </div>
 
-            <div className="flex flex-col gap-3.5">
-              {/* Top User Mode Switcher (Individual vs Business) */}
-              <div
-                role="tablist"
-                aria-label={lang === "th" ? "เลือกประเภทผู้ใช้งาน" : "Select user profile"}
-                className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-secondary/50 p-1"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={userType === "individual"}
-                  onClick={() => handleUserTypeChange("individual")}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
-                    userType === "individual"
-                      ? "bg-foreground text-background shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {lang === "th" ? "บุคคลทั่วไป / มนุษย์เงินเดือน" : "Individual / Household"}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={userType === "business"}
-                  onClick={() => handleUserTypeChange("business")}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
-                    userType === "business"
-                      ? "bg-foreground text-background shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {lang === "th" ? "เจ้าของร้านค้า / กิจการ" : "Shop / Business Owner"}
-                </button>
-              </div>
-
-              {/* Step A Core Numbers First so User Sees Them Immediately */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="monthly-revenue" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th"
-                      ? userType === "individual"
-                        ? "รายได้ต่อเดือน (เงินเดือน/รายได้รวม) *"
-                        : "รายได้รวมกิจการ/เดือน *"
-                      : "Monthly Income *"}
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="monthly-revenue"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={formatMoneyInput(revenue)}
-                      onChange={(e) => {
-                        setActivePreset(null)
-                        setRevenue(formatMoneyInput(e.target.value))
-                      }}
-                      placeholder={lang === "th" ? "กรอกรายได้ต่อเดือน" : "Enter monthly revenue"}
-                      className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                      {lang === "th" ? "บาท" : "THB"}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="debt-payment" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th"
-                      ? extraLoans.length > 0
-                        ? "ค่างวดหนี้รวม/เดือน (ถ้าทราบ)"
-                        : "ค่างวดหนี้รวม/เดือน *"
-                      : extraLoans.length > 0
-                        ? "Total monthly debt payment (optional)"
-                        : "Total monthly debt payment *"}
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="debt-payment"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={formatMoneyInput(debtPayment)}
-                      onChange={(e) => {
-                        setActivePreset(null)
-                        setDebtPayment(formatMoneyInput(e.target.value))
-                      }}
-                      placeholder={lang === "th" ? "กรอกค่างวดต่อเดือน" : "Enter monthly payment"}
-                      className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                      {lang === "th" ? "บาท" : "THB"}
-                    </span>
-                  </div>
-                  {extraLoans.length > 0 && (
-                    <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-                      {lang === "th"
-                        ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่าง ระบบจะรวมค่างวดจากรายการด้านล่าง"
-                        : "The total above is used once. If left blank, payments are totaled from the items below."}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="monthly-opex" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th"
-                      ? userType === "individual"
-                        ? "ค่าใช้จ่ายจำเป็น/เดือน"
-                        : "รายจ่ายดำเนินงานต่อเดือน"
-                      : userType === "individual"
-                        ? "Essential Living Cost/mo"
-                        : "Monthly Operating Cost"}
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="monthly-opex"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={formatMoneyInput(opex)}
-                      onChange={(e) => {
-                        setActivePreset(null)
-                        setOpex(formatMoneyInput(e.target.value))
-                      }}
-                      placeholder={lang === "th" ? "เช่น ค่าเช่า ค่ากิน ค่าน้ำไฟ" : "Enter fixed costs"}
-                      className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                      {lang === "th" ? "บาท" : "THB"}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {lang === "th"
-                      ? userType === "individual"
-                        ? "ค่าเช่าบ้าน ค่าอาหาร ค่าน้ำไฟ ค่าเดินทาง"
-                        : "ค่าเช่า ค่าจ้าง ค่าน้ำไฟ วัตถุดิบ"
-                      : "Rent, utilities, essentials"}
-                  </p>
-                </div>
-                <div>
-                  <label htmlFor="cash-reserve" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th"
-                      ? userType === "business"
-                        ? "เงินสดสำรองกิจการที่มี"
-                        : "เงินเก็บสำรองฉุกเฉินที่มี"
-                      : "Liquid Cash Reserve"}
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="cash-reserve"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={formatMoneyInput(cashReserve)}
-                      onChange={(e) => {
-                        setActivePreset(null)
-                        setCashReserve(formatMoneyInput(e.target.value))
-                      }}
-                      placeholder={lang === "th" ? "กรอกเงินสำรองที่มี" : "Enter cash reserve"}
-                      className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                      {lang === "th" ? "บาท" : "THB"}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {lang === "th" ? "คำนวณว่าเงินสำรองอยู่รอดได้กี่เดือน" : "Computes Liquidity Runway"}
-                  </p>
-                </div>
-              </div>
-
-              {debtStatus !== "overdue_120_plus" && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label htmlFor="total-principal" className="mb-1 block text-xs font-medium text-foreground">
-                      {lang === "th" ? "ยอดเงินต้นหนี้คงเหลือรวม (ถ้าทราบ)" : "Total Debt Principal (Optional)"}
-                    </label>
-                    <div className="relative">
-                      <input
-                        id="total-principal"
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        value={formatMoneyInput(totalPrincipal)}
-                        onChange={(e) => setTotalPrincipal(formatMoneyInput(e.target.value))}
-                        placeholder={lang === "th" ? "กรอกยอดเงินต้นคงเหลือ" : "Enter total principal"}
-                        className="h-9 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                        {lang === "th" ? "บาท" : "THB"}
-                      </span>
-                    </div>
-                    {extraLoans.length > 0 && (
-                      <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
-                        {lang === "th"
-                          ? "ถ้ากรอกยอดเงินต้นรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่างจะรวมเงินต้นจากรายการด้านล่าง"
-                          : "The total principal above is used once. If left blank, principal is totaled from the items below."}
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label htmlFor="annual-rate" className="mb-1 block text-xs font-medium text-foreground">
-                      {lang === "th" ? "ดอกเบี้ยสัญญาเดิม (%/ปี · ถ้าทราบ)" : "Current Interest Rate (% p.a. · optional)"}
-                    </label>
-                    <div className="relative">
-                      <input
-                        id="annual-rate"
-                        type="text"
-                        inputMode="decimal"
-                        autoComplete="off"
-                        value={annualRateInput}
-                        onChange={(e) => setAnnualRateInput(e.target.value.replace(/[^\d.]/g, ""))}
-                        placeholder={lang === "th" ? "เว้นว่างใช้ค่าสมมติฐาน" : "Leave blank for assumed rate"}
-                        className="h-9 w-full rounded-xl border border-input bg-background px-3 pr-10 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
-                        %
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label htmlFor="horizon-years" className="mb-1 block text-xs font-medium text-foreground">
-                      {lang === "th" ? "ระยะเวลาจำลองแผน (ปี)" : "Plan Simulation Period (Years)"}
-                    </label>
-                    <div className="max-w-sm">
-                      <select
-                        id="horizon-years"
-                        value={horizonYears}
-                        onChange={(e) => setHorizonYears(Math.max(1, Math.min(maxHorizonYears, Number(e.target.value) || 5)))}
-                        className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm font-medium text-foreground outline-none focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
-                      >
-                        {Array.from({ length: maxHorizonYears }, (_, i) => i + 1).map((yr) => (
-                          <option key={yr} value={yr}>
-                            {yr} {lang === "th" ? "ปี" : yr === 1 ? "year" : "years"}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                        {lang === "th"
-                          ? debtStatus === "persistent"
-                            ? "เลือกได้ไม่เกิน 7 ปีตามกรอบมาตรการหนี้เรื้อรัง ตัวเลขนี้ใช้จำลองแผน ไม่ใช่การยืนยันสิทธิ์หรือเงื่อนไขจากเจ้าหนี้"
-                            : "เลือกปีที่ต้องการดูในตารางจำลอง ไม่ใช่ระยะเวลาที่เจ้าหนี้อนุมัติแน่นอน"
-                          : debtStatus === "persistent"
-                            ? "Limited to 7 years for the persistent-debt measure. This is a simulation, not confirmed eligibility or lender terms."
-                            : "Choose the period to display in the simulation. It is not a guaranteed lender-approved term."}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Progressive Disclosure Optional Multi Loan Breakdown */}
-              <div className="rounded-2xl border border-dashed border-border bg-secondary/20 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium text-foreground">
-                    {lang === "th"
-                      ? extraLoans.length > 0
-                        ? `รายการหนี้ที่เพิ่ม ${extraLoans.length} ก้อน`
-                        : "มีหนี้หลายก้อน? เพิ่มรายการเพื่อช่วยรวมยอด"
-                      : extraLoans.length > 0
-                        ? `${extraLoans.length} additional debt items`
-                        : "Have multiple loans? Add items to total them."}
-                    </p>
-                    {extraLoans.length > 0 && (
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        {lang === "th"
-                          ? `รวมค่างวดทั้งหมด ${numDebt.toLocaleString()} บาท/เดือน · เงินต้นที่ระบุ ${numPrincipal.toLocaleString()} บาท`
-                          : `Combined payment ${numDebt.toLocaleString()} THB/mo · entered principal ${numPrincipal.toLocaleString()} THB`}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => addExtraLoan("card")}
-                    className="min-h-9 shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
-                  >
-                    {lang === "th" ? "+ เพิ่มรายการหนี้" : "+ Add debt item"}
-                  </button>
-                </div>
-
-                {extraLoans.length > 0 && (
-                  <div className="mt-3 space-y-2.5">
-                    {extraLoans.map((loan, idx) => (
-                      <div key={loan.id} className="rounded-xl border border-border bg-background p-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className="min-w-0 flex-1 text-[11px] font-medium text-foreground">
-                            {lang === "th" ? `หนี้ก้อนที่ ${idx + 1}` : `Debt item ${idx + 1}`}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => removeExtraLoan(loan.id)}
-                            aria-label={lang === "th" ? `ลบหนี้ก้อนที่ ${idx + 1}` : `Remove debt item ${idx + 1}`}
-                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        <label className="mt-1 block text-[10px] text-muted-foreground">
-                          {lang === "th" ? "ประเภทหนี้" : "Debt type"}
-                          <select
-                            aria-label={`${lang === "th" ? "ประเภทหนี้ก้อนที่" : "Debt item type"} ${idx + 1}`}
-                            value={loan.category}
-                            onChange={(e) =>
-                              updateExtraLoan(loan.id, { category: e.target.value as LoanCategory })
-                            }
-                            className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-xs text-foreground outline-none focus:border-foreground/45"
-                          >
-                            <option value="card">{lang === "th" ? "บัตร/สินเชื่อบุคคล" : "Card / Personal"}</option>
-                            <option value="auto">{lang === "th" ? "สินเชื่อรถ" : "Auto Loan"}</option>
-                            <option value="home">{lang === "th" ? "สินเชื่อบ้าน" : "Home Loan"}</option>
-                            <option value="sme">{lang === "th" ? "สินเชื่อกิจการ" : "Business Loan"}</option>
-                            <option value="informal">{lang === "th" ? "หนี้นอกระบบ" : "Informal debt"}</option>
-                          </select>
-                        </label>
-                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <label className="block text-[10px] text-muted-foreground">
-                            {lang === "th" ? "ค่างวดต่อเดือน" : "Monthly payment"}
-                            <div className="relative mt-1">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                value={formatMoneyInput(loan.monthlyPayment)}
-                                onChange={(e) =>
-                                  updateExtraLoan(loan.id, { monthlyPayment: formatMoneyInput(e.target.value) })
-                                }
-                                placeholder="0"
-                                className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
-                              />
-                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
-                            </div>
-                          </label>
-                          <label className="block text-[10px] text-muted-foreground">
-                            {lang === "th" ? "เงินต้นคงเหลือ (ถ้าทราบ)" : "Remaining principal (optional)"}
-                            <div className="relative mt-1">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                value={formatMoneyInput(loan.principal)}
-                                onChange={(e) =>
-                                  updateExtraLoan(loan.id, { principal: formatMoneyInput(e.target.value) })
-                                }
-                                placeholder={lang === "th" ? "เว้นว่างได้" : "Optional"}
-                                className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
-                              />
-                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
-                            </div>
-                          </label>
-                        </div>
-                      </div>
-                    ))}
-                    <p className="rounded-xl border border-amber-600/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] leading-4 text-amber-950">
-                      {lang === "th"
-                        ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียวและใช้รายการด้านล่างเป็นรายละเอียด ถ้าเว้นยอดรวมว่าง ระบบจะรวมรายการให้ ประเภทหนี้ใช้ช่วยแยกรายการเท่านั้น ไม่ได้คำนวณดอกเบี้ยหรือเงื่อนไขแต่ละสัญญาแยกกัน มาตรการจริงอาจรับเฉพาะหนี้บางประเภท เช่น หนี้ไม่มีหลักประกันที่เข้าเกณฑ์คลินิกแก้หนี้"
-                        : "If you enter a total above, it is used once and the items below are for breakdown. If left blank, the system totals the items. Debt type only organizes entries; rates and contract terms are not calculated separately. Actual programs may cover only eligible types, such as qualifying unsecured debt for Debt Clinic."}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Step B Province & Optional Business Selector */}
-              <div className={`grid grid-cols-1 gap-3 border-t border-border pt-3 ${userType === "business" ? "sm:grid-cols-2" : ""}`}>
-                <div>
-                  <label htmlFor="province" className="mb-1 block text-xs font-medium text-foreground">
-                    {lang === "th"
-                      ? userType === "individual"
-                        ? "จังหวัดที่อยู่อาศัย"
-                        : "จังหวัดที่ตั้งกิจการ"
-                      : "Northern Province"}
-                  </label>
-                  <div className="relative">
-                    <select
-                      id="province"
-                      value={selectedProvinceCode}
-                      onChange={(e) => setSelectedProvinceCode(e.target.value)}
-                      className="h-9 w-full appearance-none rounded-xl border border-input bg-background bg-none px-3 pr-8 text-xs font-medium text-foreground outline-none transition focus:border-foreground/45"
-                    >
-                      {provinceList.map((p) => (
-                        <option key={p.code} value={p.code}>
-                          {lang === "th" ? p.name_th : p.name_en}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      aria-hidden="true"
-                      className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                    />
-                  </div>
-                </div>
-
-                {userType === "business" && (
-                  <div>
-                    <label htmlFor="business-type" className="mb-1 block text-xs font-medium text-foreground">
-                      {lang === "th" ? "ประเภทกิจการ" : "Business Type"}
-                    </label>
-                    <div className="relative">
-                      <select
-                        id="business-type"
-                        value={business}
-                        onChange={(e) => setBusiness(e.target.value)}
-                        className="h-9 w-full appearance-none rounded-xl border border-input bg-background bg-none px-3 pr-8 text-xs font-medium text-foreground outline-none transition focus:border-foreground/45"
-                      >
-                        {BUSINESS_OPTIONS.filter((b) => b.id !== "household").map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {lang === "th" ? b.th : b.en}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown
-                        aria-hidden="true"
-                        className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Step C Compact Repayment Status Grid */}
-              <fieldset>
-                <legend className="mb-1.5 text-xs font-medium text-foreground">
-                  {lang === "th"
-                    ? "สถานะการผ่อนชำระของคุณในปัจจุบัน (เลือกเพื่อจับคู่ทางออกที่ตรงเงื่อนไข)"
-                    : "Your Current Repayment Status (Select to match solutions)"}
-                </legend>
-                <div className="grid gap-1.5 sm:grid-cols-2">
-                  {DEBT_STATUS_OPTIONS.map((opt, idx) => {
-                    const active = debtStatus === opt.id
-                    const spanFull = idx === DEBT_STATUS_OPTIONS.length - 1
-                    return (
+            {/* Connected Circular Stepper Progress Bar */}
+            <div
+              role="tablist"
+              aria-label={lang === "th" ? "ขั้นตอนการกรอกข้อมูล" : "Form steps"}
+              className="mb-5 border-b border-border pb-4"
+            >
+              <div className="flex items-start justify-between">
+                {(
+                  [
+                    { num: 1 as const, th: "สถานะและจังหวัด", en: "Profile & Status" },
+                    { num: 2 as const, th: "รายรับและค่างวด", en: "Income & Debt" },
+                    { num: 3 as const, th: "รายละเอียดหนี้", en: "Loan Details" },
+                  ] as const
+                ).map((step, idx) => {
+                  const isActive = formStep === step.num
+                  const isCompleted =
+                    step.num < formStep || (step.num === 2 && Boolean(diagnostic) && formStep !== 2)
+                  return (
+                    <div key={step.num} className="flex flex-1 items-start last:flex-none">
                       <button
-                        key={opt.id}
                         type="button"
-                        aria-pressed={active}
-                        onClick={() => setDebtStatus(opt.id)}
-                        className={`flex flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                          spanFull ? "sm:col-span-2" : ""
-                        } ${
-                          active
-                            ? "border-foreground bg-secondary/90 text-foreground"
-                            : "border-border bg-background text-muted-foreground hover:border-foreground/35 hover:text-foreground"
-                        }`}
+                        role="tab"
+                        aria-selected={isActive}
+                        onClick={() => goToStep(step.num)}
+                        className="group flex flex-col items-center gap-1.5 text-center focus:outline-none"
                       >
-                        <span className="text-[11px] font-semibold text-foreground">
-                          {lang === "th" ? opt.th : opt.en}
+                        <span
+                          className={`flex size-8 items-center justify-center rounded-full border-2 text-xs font-semibold transition-all ${
+                            isActive
+                              ? "border-foreground bg-foreground text-background shadow-sm"
+                              : isCompleted
+                                ? "border-foreground bg-foreground/10 text-foreground"
+                                : "border-border bg-background text-muted-foreground group-hover:border-foreground/40 group-hover:text-foreground"
+                          }`}
+                        >
+                          {isCompleted ? <Check aria-hidden="true" className="size-4" /> : step.num}
                         </span>
-                        <span className="mt-0.5 text-[10px] text-muted-foreground">
-                          {lang === "th" ? opt.sub_th : opt.sub_en}
+                        <span
+                          className={`max-w-[92px] text-[11px] leading-tight sm:max-w-none ${
+                            isActive
+                              ? "font-semibold text-foreground"
+                              : isCompleted
+                                ? "font-medium text-foreground/80"
+                                : "text-muted-foreground"
+                          }`}
+                        >
+                          {lang === "th" ? step.th : step.en}
                         </span>
                       </button>
-                    )
-                  })}
-                </div>
-              </fieldset>
 
-              {apiError && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-600/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-200">
-                  <span>{apiError}</span>
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() =>
-                      void runBackendAssessment({
-                        prov: selectedProvinceCode,
-                        biz: business,
-                        statusKey: debtStatus,
-                        revVal: numRevenue,
-                        debtVal: numDebt,
-                      })
-                    }
-                    className="shrink-0 rounded-full border border-amber-700/35 bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
-                  >
-                    {lang === "th" ? "ลองเชื่อมต่อใหม่" : "Retry"}
-                  </button>
-                </div>
-              )}
-
-              <p className="rounded-xl border border-border/70 bg-secondary/20 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-                <strong className="font-medium text-foreground">
-                  {lang === "th" ? "ความเป็นส่วนตัวของข้อมูล:" : "Data privacy notice:"}
-                </strong>{" "}
-                {lang === "th"
-                  ? "เมื่อระบบเชื่อมต่อเพื่อค้นเอกสารอ้างอิง จะบันทึกเฉพาะสถิติไม่ระบุตัวตน (จังหวัด ประเภทกิจการ และช่วงภาระหนี้) เพื่อสรุปเชิงนโยบาย โดยไม่บันทึกชื่อ ยอดรายได้ หรือยอดหนี้ของคุณ"
-                  : "When querying official document guidance, only anonymized aggregate signals (province, business type, and DSR band) are logged—never your name, income, or debt figures."}
-              </p>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/35 px-3.5 py-2.5">
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {submitting ? (
-                    <>
-                      <Loader2 aria-hidden="true" className="size-3.5 animate-spin text-foreground" />
-                      <span>{lang === "th" ? "กำลังอัปเดตผลวิเคราะห์…" : "Updating diagnostic…"}</span>
-                    </>
-                  ) : numRevenue > 0 ? (
-                    <>
-                      <Check aria-hidden="true" className="size-3.5 text-emerald-700" />
-                      <span>
-                        {lang === "th"
-                          ? "คำนวณอัตโนมัติแล้ว · แก้ตัวเลขหรือสลับสถานะได้ทันที"
-                          : "Live calculated · Edit any number or status freely"}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <Calculator aria-hidden="true" className="size-3.5" />
-                      <span>
-                        {lang === "th"
-                          ? "กรอกรายได้และค่างวดในแบบฟอร์มเพื่อแสดงผลวิเคราะห์ทันที"
-                          : "Enter income and payment above to see instant analysis"}
-                      </span>
-                    </>
-                  )}
-                </span>
-
-                {hasAnyInput && (
-                  <button
-                    type="button"
-                    onClick={resetAllInputs}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
-                  >
-                    <RotateCcw aria-hidden="true" className="size-3" />
-                    {lang === "th" ? "ล้างข้อมูลเพื่อกรอกใหม่" : "Reset All Fields"}
-                  </button>
-                )}
+                      {idx < 2 && (
+                        <div className="mx-1.5 mt-4 flex-1 sm:mx-3" aria-hidden="true">
+                          <div className="h-[2px] w-full overflow-hidden rounded-full bg-border">
+                            <div
+                              className={`h-full transition-all duration-300 ${
+                                formStep > step.num ? "w-full bg-foreground" : "w-0 bg-foreground"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
+
+            <div className="overflow-hidden">
+              <AnimatePresence mode="wait" initial={false}>
+                {formStep === 1 && (
+                  <motion.div
+                    key="step-1"
+                    initial={{ opacity: 0, x: stepDir * 28 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: stepDir * -28 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="flex flex-col gap-4"
+                  >
+                    {/* User Mode Switcher */}
+                    <div
+                      role="tablist"
+                      aria-label={lang === "th" ? "เลือกประเภทผู้ใช้งาน" : "Select user profile"}
+                      className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-secondary/50 p-1"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={userType === "individual"}
+                        onClick={() => handleUserTypeChange("individual")}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                          userType === "individual"
+                            ? "bg-foreground text-background shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {lang === "th" ? "บุคคลทั่วไป / มนุษย์เงินเดือน" : "Individual / Household"}
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={userType === "business"}
+                        onClick={() => handleUserTypeChange("business")}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                          userType === "business"
+                            ? "bg-foreground text-background shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {lang === "th" ? "เจ้าของร้านค้า / กิจการ" : "Shop / Business Owner"}
+                      </button>
+                    </div>
+
+                    {/* Province and Optional Business Selector */}
+                    <div className={`grid grid-cols-1 gap-3 ${userType === "business" ? "sm:grid-cols-2" : ""}`}>
+                      <div>
+                        <label htmlFor="province" className="mb-1 block text-xs font-medium text-foreground">
+                          {lang === "th"
+                            ? userType === "individual"
+                              ? "จังหวัดที่อยู่อาศัย"
+                              : "จังหวัดที่ตั้งกิจการ"
+                            : "Northern Province"}
+                        </label>
+                        <div className="relative">
+                          <select
+                            id="province"
+                            value={selectedProvinceCode}
+                            onChange={(e) => setSelectedProvinceCode(e.target.value)}
+                            className="h-10 w-full appearance-none rounded-xl border border-input bg-background bg-none px-3 pr-8 text-xs font-medium text-foreground outline-none transition focus:border-foreground/45"
+                          >
+                            {provinceList.map((p) => (
+                              <option key={p.code} value={p.code}>
+                                {lang === "th" ? p.name_th : p.name_en}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                          />
+                        </div>
+                      </div>
+
+                      {userType === "business" && (
+                        <div>
+                          <label htmlFor="business-type" className="mb-1 block text-xs font-medium text-foreground">
+                            {lang === "th" ? "ประเภทกิจการ" : "Business Type"}
+                          </label>
+                          <div className="relative">
+                            <select
+                              id="business-type"
+                              value={business}
+                              onChange={(e) => setBusiness(e.target.value)}
+                              className="h-10 w-full appearance-none rounded-xl border border-input bg-background bg-none px-3 pr-8 text-xs font-medium text-foreground outline-none transition focus:border-foreground/45"
+                            >
+                              {BUSINESS_OPTIONS.filter((b) => b.id !== "household").map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {lang === "th" ? b.th : b.en}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown
+                              aria-hidden="true"
+                              className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Repayment Status Selector */}
+                    <fieldset>
+                      <legend className="mb-2 text-xs font-medium text-foreground">
+                        {lang === "th"
+                          ? "สถานะการผ่อนชำระในปัจจุบัน (เลือกเพื่อจับคู่ทางออกที่ตรงเงื่อนไข)"
+                          : "Current Repayment Status (Select to match solutions)"}
+                      </legend>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {DEBT_STATUS_OPTIONS.map((opt, idx) => {
+                          const active = debtStatus === opt.id
+                          const spanFull = idx === DEBT_STATUS_OPTIONS.length - 1
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => setDebtStatus(opt.id)}
+                              className={`flex flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                                spanFull ? "sm:col-span-2" : ""
+                              } ${
+                                active
+                                  ? "border-foreground bg-secondary/90 text-foreground"
+                                  : "border-border bg-background text-muted-foreground hover:border-foreground/35 hover:text-foreground"
+                              }`}
+                            >
+                              <span className="text-xs font-semibold text-foreground">
+                                {lang === "th" ? opt.th : opt.en}
+                              </span>
+                              <span className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                                {lang === "th" ? opt.sub_th : opt.sub_en}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </fieldset>
+
+                    <div className="flex items-center justify-end border-t border-border pt-3">
+                      <button
+                        type="button"
+                        onClick={() => goToStep(2)}
+                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85 sm:w-auto"
+                      >
+                        <span>{lang === "th" ? "ถัดไป · กรอกรายรับและค่างวด" : "Next · Income & Debt"}</span>
+                        <ArrowRight aria-hidden="true" className="size-3.5" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {formStep === 2 && (
+                  <motion.div
+                    key="step-2"
+                    initial={{ opacity: 0, x: stepDir * 28 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: stepDir * -28 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="flex flex-col gap-3.5"
+                  >
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="monthly-revenue" className="mb-1 block text-xs font-medium text-foreground">
+                          {lang === "th"
+                            ? userType === "individual"
+                              ? "รายได้ต่อเดือน (เงินเดือน/รายได้รวม) *"
+                              : "รายได้รวมกิจการ/เดือน *"
+                            : "Monthly Income *"}
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="monthly-revenue"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={formatMoneyInput(revenue)}
+                            onChange={(e) => {
+                              setActivePreset(null)
+                              setRevenue(formatMoneyInput(e.target.value))
+                            }}
+                            placeholder={lang === "th" ? "กรอกรายได้ต่อเดือน (ไม่มีใส่ 0)" : "Enter monthly income"}
+                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                            {lang === "th" ? "บาท" : "THB"}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="debt-payment" className="mb-1 block text-xs font-medium text-foreground">
+                          {lang === "th"
+                            ? extraLoans.length > 0
+                              ? "ค่างวดหนี้รวม/เดือน (ถ้าทราบ)"
+                              : "ค่างวดหนี้รวม/เดือน *"
+                            : extraLoans.length > 0
+                              ? "Total monthly debt payment (optional)"
+                              : "Total monthly debt payment *"}
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="debt-payment"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={formatMoneyInput(debtPayment)}
+                            onChange={(e) => {
+                              setActivePreset(null)
+                              setDebtPayment(formatMoneyInput(e.target.value))
+                            }}
+                            placeholder={lang === "th" ? "กรอกค่างวดต่อเดือน" : "Enter monthly payment"}
+                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                            {lang === "th" ? "บาท" : "THB"}
+                          </span>
+                        </div>
+                        {extraLoans.length > 0 && (
+                          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                            {lang === "th"
+                              ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่าง ระบบจะรวมค่างวดจากรายการหนี้ในขั้นที่ 3"
+                              : "The total above is used once. If left blank, payments are totaled from Step 3 items."}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="monthly-opex" className="mb-1 block text-xs font-medium text-foreground">
+                          {lang === "th"
+                            ? userType === "individual"
+                              ? "ค่าใช้จ่ายจำเป็น/เดือน"
+                              : "รายจ่ายดำเนินงานต่อเดือน"
+                            : userType === "individual"
+                              ? "Essential Living Cost/mo"
+                              : "Monthly Operating Cost"}
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="monthly-opex"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={formatMoneyInput(opex)}
+                            onChange={(e) => {
+                              setActivePreset(null)
+                              setOpex(formatMoneyInput(e.target.value))
+                            }}
+                            placeholder={lang === "th" ? "เช่น ค่าเช่า ค่ากิน ค่าน้ำไฟ" : "Enter fixed costs"}
+                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                            {lang === "th" ? "บาท" : "THB"}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {lang === "th"
+                            ? userType === "individual"
+                              ? "ค่าเช่าบ้าน ค่าอาหาร ค่าน้ำไฟ ค่าเดินทาง"
+                              : "ค่าเช่า ค่าจ้าง ค่าน้ำไฟ วัตถุดิบ"
+                            : "Rent, utilities, essentials"}
+                        </p>
+                      </div>
+                      <div>
+                        <label htmlFor="cash-reserve" className="mb-1 block text-xs font-medium text-foreground">
+                          {lang === "th"
+                            ? userType === "business"
+                              ? "เงินสดสำรองกิจการที่มี"
+                              : "เงินเก็บสำรองฉุกเฉินที่มี"
+                            : "Liquid Cash Reserve"}
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="cash-reserve"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={formatMoneyInput(cashReserve)}
+                            onChange={(e) => {
+                              setActivePreset(null)
+                              setCashReserve(formatMoneyInput(e.target.value))
+                            }}
+                            placeholder={lang === "th" ? "กรอกเงินสำรองที่มี" : "Enter cash reserve"}
+                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                            {lang === "th" ? "บาท" : "THB"}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {lang === "th" ? "คำนวณว่าเงินสำรองอยู่รอดได้กี่เดือน" : "Computes Liquidity Runway"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {diagnostic && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-700/20 bg-emerald-700/5 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-300">
+                        <span className="inline-flex items-center gap-1.5 font-medium">
+                          {submitting ? (
+                            <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+                          ) : (
+                            <Check aria-hidden="true" className="size-3.5" />
+                          )}
+                          {lang === "th"
+                            ? "คำนวณผลวิเคราะห์เบื้องต้นแล้ว · กรอกเงินต้นและดอกเบี้ยต่อในขั้นที่ 3 ได้"
+                            : "Diagnostic ready · Add loan principal or rate in Step 3"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={scrollToResults}
+                          className="rounded-full bg-foreground px-3 py-1 text-[11px] font-medium text-background lg:hidden"
+                        >
+                          {lang === "th" ? "ดูผลวิเคราะห์ด้านล่าง ↓" : "View results ↓"}
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                      <button
+                        type="button"
+                        onClick={() => goToStep(1)}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                      >
+                        <ArrowLeft aria-hidden="true" className="size-3.5" />
+                        <span>{lang === "th" ? "ย้อนกลับ" : "Back"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => goToStep(3)}
+                        className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                      >
+                        <span>{lang === "th" ? "ถัดไป · ใส่เงินต้น/ดอกเบี้ยเพิ่ม" : "Next · Loan Details"}</span>
+                        <ArrowRight aria-hidden="true" className="size-3.5" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {formStep === 3 && (
+                  <motion.div
+                    key="step-3"
+                    initial={{ opacity: 0, x: stepDir * 28 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: stepDir * -28 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="flex flex-col gap-3.5"
+                  >
+                    {debtStatus !== "overdue_120_plus" ? (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <label htmlFor="total-principal" className="mb-1 block text-xs font-medium text-foreground">
+                            {lang === "th" ? "ยอดเงินต้นหนี้คงเหลือรวม (ถ้าทราบ)" : "Total Debt Principal (Optional)"}
+                          </label>
+                          <div className="relative">
+                            <input
+                              id="total-principal"
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              value={formatMoneyInput(totalPrincipal)}
+                              onChange={(e) => setTotalPrincipal(formatMoneyInput(e.target.value))}
+                              placeholder={lang === "th" ? "กรอกยอดเงินต้นคงเหลือ" : "Enter total principal"}
+                              className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                            />
+                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                              {lang === "th" ? "บาท" : "THB"}
+                            </span>
+                          </div>
+                          {extraLoans.length > 0 && (
+                            <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                              {lang === "th"
+                                ? "ถ้ากรอกยอดเงินต้นรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียว ถ้าเว้นว่างจะรวมเงินต้นจากรายการด้านล่าง"
+                                : "The total principal above is used once. If left blank, principal is totaled from the items below."}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label htmlFor="annual-rate" className="mb-1 block text-xs font-medium text-foreground">
+                            {lang === "th" ? "ดอกเบี้ยสัญญาเดิม (%/ปี · ถ้าทราบ)" : "Current Interest Rate (% p.a. · optional)"}
+                          </label>
+                          <div className="relative">
+                            <input
+                              id="annual-rate"
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={annualRateInput}
+                              onChange={(e) => setAnnualRateInput(e.target.value.replace(/[^\d.]/g, ""))}
+                              placeholder={lang === "th" ? "เว้นว่างใช้ค่าสมมติฐาน" : "Leave blank for assumed rate"}
+                              className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-10 text-sm text-foreground outline-none transition placeholder:text-xs placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                            />
+                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                              %
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label htmlFor="horizon-years" className="mb-1 block text-xs font-medium text-foreground">
+                            {lang === "th" ? "ระยะเวลาจำลองแผน (ปี)" : "Plan Simulation Period (Years)"}
+                          </label>
+                          <div className="max-w-sm">
+                            <select
+                              id="horizon-years"
+                              value={horizonYears}
+                              onChange={(e) => setHorizonYears(Math.max(1, Math.min(maxHorizonYears, Number(e.target.value) || 5)))}
+                              className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm font-medium text-foreground outline-none focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                            >
+                              {Array.from({ length: maxHorizonYears }, (_, i) => i + 1).map((yr) => (
+                                <option key={yr} value={yr}>
+                                  {yr} {lang === "th" ? "ปี" : yr === 1 ? "year" : "years"}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                              {lang === "th"
+                                ? debtStatus === "persistent"
+                                  ? "เลือกได้ไม่เกิน 7 ปีตามกรอบมาตรการหนี้เรื้อรัง ตัวเลขนี้ใช้จำลองแผน ไม่ใช่การยืนยันสิทธิ์หรือเงื่อนไขจากเจ้าหนี้"
+                                  : "เลือกปีที่ต้องการดูในตารางจำลอง ไม่ใช่ระยะเวลาที่เจ้าหนี้อนุมัติแน่นอน"
+                                : debtStatus === "persistent"
+                                  ? "Limited to 7 years for the persistent-debt measure. This is a simulation, not confirmed eligibility or lender terms."
+                                  : "Choose the period to display in the simulation. It is not a guaranteed lender-approved term."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-amber-600/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-950">
+                        {lang === "th"
+                          ? "สำหรับสถานะค้างชำระเกิน 4 เดือน (บัตรเครดิต/สินเชื่อบุคคล) ระบบจะส่งต่อแนวทางคัดกรองคลินิกแก้หนี้และโครงการปิดหนี้ไว ไปต่อได้โดยตรง คุณสามารถเพิ่มรายการหนี้ด้านล่างเพื่อรวมยอดได้"
+                          : "For unsecured debt overdue > 120 days, the system guides you to Debt Clinic by SAM and Fast-Close screening directly. You may list multiple debts below to sum balances."}
+                      </div>
+                    )}
+
+                    {/* Optional Multi Loan Breakdown */}
+                    <div className="rounded-2xl border border-dashed border-border bg-secondary/20 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium text-foreground">
+                            {lang === "th"
+                              ? extraLoans.length > 0
+                                ? `รายการหนี้ที่เพิ่ม ${extraLoans.length} ก้อน`
+                                : "มีหนี้หลายก้อน? เพิ่มรายการเพื่อช่วยรวมยอด"
+                              : extraLoans.length > 0
+                                ? `${extraLoans.length} additional debt items`
+                                : "Have multiple loans? Add items to total them."}
+                          </p>
+                          {extraLoans.length > 0 && (
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              {lang === "th"
+                                ? `รวมค่างวดทั้งหมด ${numDebt.toLocaleString()} บาท/เดือน · เงินต้นที่ระบุ ${numPrincipal.toLocaleString()} บาท`
+                                : `Combined payment ${numDebt.toLocaleString()} THB/mo · entered principal ${numPrincipal.toLocaleString()} THB`}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => addExtraLoan("card")}
+                          className="min-h-9 shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
+                        >
+                          {lang === "th" ? "+ เพิ่มรายการหนี้" : "+ Add debt item"}
+                        </button>
+                      </div>
+
+                      {extraLoans.length > 0 && (
+                        <div className="mt-3 space-y-2.5">
+                          {extraLoans.map((loan, idx) => (
+                            <div key={loan.id} className="rounded-xl border border-border bg-background p-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className="min-w-0 flex-1 text-[11px] font-medium text-foreground">
+                                  {lang === "th" ? `หนี้ก้อนที่ ${idx + 1}` : `Debt item ${idx + 1}`}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeExtraLoan(loan.id)}
+                                  aria-label={lang === "th" ? `ลบหนี้ก้อนที่ ${idx + 1}` : `Remove debt item ${idx + 1}`}
+                                  className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <label className="mt-1 block text-[10px] text-muted-foreground">
+                                {lang === "th" ? "ประเภทหนี้" : "Debt type"}
+                                <select
+                                  aria-label={`${lang === "th" ? "ประเภทหนี้ก้อนที่" : "Debt item type"} ${idx + 1}`}
+                                  value={loan.category}
+                                  onChange={(e) =>
+                                    updateExtraLoan(loan.id, { category: e.target.value as LoanCategory })
+                                  }
+                                  className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-xs text-foreground outline-none focus:border-foreground/45"
+                                >
+                                  <option value="card">{lang === "th" ? "บัตร/สินเชื่อบุคคล" : "Card / Personal"}</option>
+                                  <option value="auto">{lang === "th" ? "สินเชื่อรถ" : "Auto Loan"}</option>
+                                  <option value="home">{lang === "th" ? "สินเชื่อบ้าน" : "Home Loan"}</option>
+                                  <option value="sme">{lang === "th" ? "สินเชื่อกิจการ" : "Business Loan"}</option>
+                                  <option value="informal">{lang === "th" ? "หนี้นอกระบบ" : "Informal debt"}</option>
+                                </select>
+                              </label>
+                              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <label className="block text-[10px] text-muted-foreground">
+                                  {lang === "th" ? "ค่างวดต่อเดือน" : "Monthly payment"}
+                                  <div className="relative mt-1">
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={formatMoneyInput(loan.monthlyPayment)}
+                                      onChange={(e) =>
+                                        updateExtraLoan(loan.id, { monthlyPayment: formatMoneyInput(e.target.value) })
+                                      }
+                                      placeholder="0"
+                                      className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
+                                    />
+                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
+                                  </div>
+                                </label>
+                                <label className="block text-[10px] text-muted-foreground">
+                                  {lang === "th" ? "เงินต้นคงเหลือ (ถ้าทราบ)" : "Remaining principal (optional)"}
+                                  <div className="relative mt-1">
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={formatMoneyInput(loan.principal)}
+                                      onChange={(e) =>
+                                        updateExtraLoan(loan.id, { principal: formatMoneyInput(e.target.value) })
+                                      }
+                                      placeholder={lang === "th" ? "เว้นว่างได้" : "Optional"}
+                                      className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-12 text-sm text-foreground outline-none focus:border-foreground/45"
+                                    />
+                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px]">{lang === "th" ? "บาท" : "THB"}</span>
+                                  </div>
+                                </label>
+                              </div>
+                            </div>
+                          ))}
+                          <p className="rounded-xl border border-amber-600/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] leading-4 text-amber-950">
+                            {lang === "th"
+                              ? "ถ้ากรอกยอดรวมด้านบน ระบบใช้ยอดนั้นครั้งเดียวและใช้รายการด้านล่างเป็นรายละเอียด ถ้าเว้นยอดรวมว่าง ระบบจะรวมรายการให้ ประเภทหนี้ใช้ช่วยแยกรายการเท่านั้น ไม่ได้คำนวณดอกเบี้ยหรือเงื่อนไขแต่ละสัญญาแยกกัน"
+                              : "If you enter a total above, it is used once and the items below are for breakdown. If left blank, the system totals the items."}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="rounded-xl border border-border/70 bg-secondary/20 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                      <strong className="font-medium text-foreground">
+                        {lang === "th" ? "ความเป็นส่วนตัวของข้อมูล:" : "Data privacy notice:"}
+                      </strong>{" "}
+                      {lang === "th"
+                        ? "เมื่อระบบเชื่อมต่อเพื่อค้นเอกสารอ้างอิง จะบันทึกเฉพาะสถิติไม่ระบุตัวตน (จังหวัด ประเภทกิจการ และช่วงภาระหนี้) โดยไม่บันทึกชื่อ ยอดรายได้ หรือยอดหนี้ของคุณ"
+                        : "When querying official document guidance, only anonymized aggregate signals (province, business type, and DSR band) are logged, never your name, income, or debt figures."}
+                    </p>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                      <button
+                        type="button"
+                        onClick={() => goToStep(2)}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                      >
+                        <ArrowLeft aria-hidden="true" className="size-3.5" />
+                        <span>{lang === "th" ? "ย้อนกลับ" : "Back"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!diagnostic) {
+                            goToStep(2)
+                          } else {
+                            scrollToResults()
+                          }
+                        }}
+                        className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                      >
+                        <Check aria-hidden="true" className="size-3.5" />
+                        <span>
+                          {diagnostic
+                            ? lang === "th"
+                              ? "ดูผลวิเคราะห์และแนวทางแก้หนี้"
+                              : "View Diagnostic & Relief Plan"
+                            : lang === "th"
+                              ? "กลับไปกรอกรายรับและค่างวด"
+                              : "Go to Income & Debt"}
+                        </span>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {apiError && (
+              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-600/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-200">
+                <span>{apiError}</span>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() =>
+                    void runBackendAssessment({
+                      prov: selectedProvinceCode,
+                      biz: business,
+                      statusKey: debtStatus,
+                      revVal: numRevenue,
+                      debtVal: numDebt,
+                    })
+                  }
+                  className="shrink-0 rounded-full border border-amber-700/35 bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+                >
+                  {lang === "th" ? "ลองเชื่อมต่อใหม่" : "Retry"}
+                </button>
+              </div>
+            )}
           </motion.form>
 
-          {/* Right Panel Directly Connected Diagnostic, Payment Comparison Chart, Referral Bridge & 1 Page Dossier */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.5, delay: 0.14 }}
-            className="flex flex-col rounded-[1.75rem] border border-border bg-secondary/45 p-5 sm:p-6"
-          >
-            {!diagnostic ? (
-              <div className="flex flex-col justify-between rounded-2xl border border-border bg-background p-6">
-                <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-[11px] font-medium text-foreground">
-                    <Calculator aria-hidden="true" className="size-3.5" />
-                    {lang === "th" ? "ผลวิเคราะห์และแนวทางแก้หนี้" : "Live Diagnostic Appears Here"}
-                  </span>
-                  <h3 className="mt-3.5 font-display text-lg font-semibold text-foreground sm:text-xl">
-                    {lang === "th"
-                      ? "กรอกตัวเลขในแบบฟอร์ม หรือกดปุ่มตัวอย่างด้านบนเพื่อดูผลวิเคราะห์ทันที"
-                      : "Enter figures in the form or click any instant example button above"}
-                  </h3>
-                  <p className="mt-1.5 text-xs leading-6 text-muted-foreground">
-                    {lang === "th"
-                      ? "เมื่อกรอกข้อมูลครบ ระบบจะแสดงความสามารถในการจ่ายหนี้ ระยะเวลาที่เงินเก็บอยู่รอดได้ กราฟเปรียบเทียบค่างวดเดิม–ใหม่ และปุ่มพิมพ์ใบสรุปสำหรับนำไปคุยกับธนาคาร"
-                      : "Displays affordability, cash reserve runway, stress impact, payment comparison charts, and a 1 page printable dossier."}
-                  </p>
+            {/* Desktop Live Input Snapshot and Quick Print Action underneath the Sticky Stepper */}
+            {diagnostic && (
+              <div className="hidden rounded-[1.75rem] border border-border bg-card p-5 lg:block">
+                <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
+                  <div>
+                    <p className="text-[11px] font-medium text-muted-foreground">
+                      {lang === "th" ? "สรุปตัวเลขที่กำลังคำนวณ" : "Active Calculation Snapshot"}
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold text-foreground">
+                      {selectedProvName} ·{" "}
+                      {DEBT_STATUS_OPTIONS.find((s) => s.id === debtStatus)?.[lang === "th" ? "th" : "en"]}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => goToStep(1)}
+                    className="shrink-0 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    {lang === "th" ? "แก้สถานะ" : "Edit"}
+                  </button>
                 </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => goToStep(2)}
+                    className="rounded-xl border border-border/70 bg-secondary/35 px-3 py-2 text-left transition-colors hover:border-foreground/35"
+                  >
+                    <span className="block text-[10px] text-muted-foreground">
+                      {lang === "th" ? "รายได้ต่อเดือน" : "Monthly Income"}
+                    </span>
+                    <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                      {Math.round(diagnostic.monthlyRevenue).toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goToStep(2)}
+                    className="rounded-xl border border-border/70 bg-secondary/35 px-3 py-2 text-left transition-colors hover:border-foreground/35"
+                  >
+                    <span className="block text-[10px] text-muted-foreground">
+                      {lang === "th" ? "ค่างวดหนี้รวม/เดือน" : "Monthly Debt"}
+                    </span>
+                    <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                      {Math.round(diagnostic.monthlyDebt).toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goToStep(2)}
+                    className="rounded-xl border border-border/70 bg-secondary/35 px-3 py-2 text-left transition-colors hover:border-foreground/35"
+                  >
+                    <span className="block text-[10px] text-muted-foreground">
+                      {lang === "th" ? "ค่าใช้จ่ายจำเป็น" : "Essential Costs"}
+                    </span>
+                    <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                      {Math.round(diagnostic.monthlyOpex).toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goToStep(2)}
+                    className="rounded-xl border border-border/70 bg-secondary/35 px-3 py-2 text-left transition-colors hover:border-foreground/35"
+                  >
+                    <span className="block text-[10px] text-muted-foreground">
+                      {lang === "th" ? "เงินเก็บสำรอง" : "Cash Reserve"}
+                    </span>
+                    <span className="mt-0.5 block text-xs font-semibold tabular-nums text-foreground">
+                      {Math.round(diagnostic.cashReserve).toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                    </span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openDossierModal}
+                  className="mt-3.5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                >
+                  <FileText aria-hidden="true" className="size-3.5" />
+                  {lang === "th" ? "เปิดดูและพิมพ์ใบสรุปยื่นธนาคาร" : "Preview & Print Bank Dossier"}
+                </button>
               </div>
-            ) : (
+            )}
+          </div>
+
+          {/* Right Panel Shown Cleanly Only Once Numbers Are Entered or Example Selected */}
+          {diagnostic && (
+            <motion.div
+              ref={resultPanelRef}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.35 }}
+              className="scroll-mt-28 flex flex-col rounded-[1.75rem] border border-border bg-secondary/45 p-5 sm:p-6"
+            >
               <>
                 {/* 1. Financial Health Diagnostic Cards */}
                 <div className="rounded-2xl border border-border bg-background p-5">
@@ -2089,85 +2295,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </div>
                 )}
               </>
-            )}
-
-            {/* Collapsible Checklist & Official Links at Bottom */}
-            <div
-              id="official-resources"
-              className={`${
-                !diagnostic || mobileResultTab === "dossier" ? "block" : "hidden md:block"
-              } mt-4 scroll-mt-28`}
-            >
-              <button
-                type="button"
-                aria-expanded={showSources}
-                onClick={() => setShowSources((curr) => !curr)}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-border bg-background px-5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
-              >
-                <FileCheck2 aria-hidden="true" className="size-3.5" />
-                {lang === "th"
-                  ? "ดูรายการเอกสารที่ต้องเตรียม สายด่วน และลิงก์โครงการทางการ"
-                  : "View Checklist, Official Hotlines & Program Links"}
-                <ChevronDown
-                  aria-hidden="true"
-                  className={`size-4 transition-transform ${showSources ? "rotate-180" : ""}`}
-                />
-              </button>
-              {showSources && (
-                <div className="mt-2.5 space-y-3 rounded-2xl border border-border bg-background p-4">
-                  <div>
-                    <h4 className="font-display text-xs font-semibold text-foreground">
-                      {lang === "th" ? "เอกสารที่ควรเตรียมก่อนติดต่อธนาคาร" : "Preparation Checklist"}
-                    </h4>
-                    <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                      {checklist.map((doc) => (
-                        <li key={doc} className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                          <Check aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-foreground/70" />
-                          <span>{doc}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs">
-                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                      <PhoneCall aria-hidden="true" className="size-3.5" />
-                      {lang === "th" ? "สายด่วนทางการ:" : "Official Hotlines:"}
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      <a href="tel:1213" className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium hover:bg-secondary">
-                        {lang === "th" ? "1213 (ศูนย์คุ้มครองฯ)" : "1213 (Consumer)"}
-                      </a>
-                      <a href="tel:1357" className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium hover:bg-secondary">
-                        {lang === "th" ? "1357 (ธพว.)" : "1357 (SME D Bank)"}
-                      </a>
-                      <a href="tel:028909999" className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium hover:bg-secondary">
-                        {lang === "th" ? "02-890-9999 (บสย.)" : "02-890-9999 (TCG)"}
-                      </a>
-                      <a href="tel:1443" className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium hover:bg-secondary">
-                        {lang === "th" ? "1443 (คลินิกแก้หนี้)" : "1443 (Debt Clinic)"}
-                      </a>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-1.5 border-t border-border pt-2.5 sm:grid-cols-2">
-                    {OFFICIAL_SOURCES.map((source) => (
-                      <a
-                        key={source.href}
-                        href={source.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                      >
-                        <span>{lang === "th" ? source.label_th : source.label_en}</span>
-                        <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
         </div>
       </div>
 

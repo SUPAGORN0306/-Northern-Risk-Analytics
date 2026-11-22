@@ -117,6 +117,7 @@ _RATE_CFG = _load_guardrails().get("rate_limits", {})
 LIMIT_RELIEF = str(_RATE_CFG.get("relief_check", "20/minute"))
 LIMIT_CHAT = str(_RATE_CFG.get("chat", "15/minute"))
 LIMIT_REFRESH = str(_RATE_CFG.get("refresh", "3/hour"))
+LIMIT_STAFF_LOGIN = str(_RATE_CFG.get("staff_login", "10/minute"))
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -315,7 +316,8 @@ def health_check() -> dict[str, Any]:
 
 
 @app.post("/api/auth/staff-login")
-def staff_login(payload: StaffLoginRequest) -> dict[str, Any]:
+@limiter.limit(LIMIT_STAFF_LOGIN)
+def staff_login(request: Request, payload: StaffLoginRequest) -> dict[str, Any]:
     """Authenticate staff analyst credentials failing closed when env secrets are unset."""
     expected_user = (os.getenv("STAFF_DEMO_USERNAME") or "").strip()
     expected_pass = os.getenv("STAFF_DEMO_PASSWORD") or ""
@@ -426,7 +428,11 @@ def get_risk_outlook(
         if rev_v is not None:
             rev_sum += float(rev_v)
 
-        shock_idx = round(float(r["composite_shock_idx"] or 0.0), 2)
+        shock_idx = (
+            round(float(r["composite_shock_idx"]), 2)
+            if r["composite_shock_idx"] is not None
+            else None
+        )
         live_pm_crit = bool(r["live_pm25_critical"]) if r["live_pm25_critical"] is not None else False
         prov_alerts = alerts_by_prov.get(code, [])
 
@@ -459,7 +465,7 @@ def get_risk_outlook(
 
         vuln = evaluate_province_vulnerability(prov_record, prov_alerts)
         has_water = bool(vuln["has_active_water_pollution"])
-        has_shock = shock_idx >= 50.0 or live_pm_crit or has_water
+        has_shock = (shock_idx is not None and shock_idx >= 50.0) or live_pm_crit or has_water
         if has_shock:
             elevated_codes.append(code)
         if has_water:
@@ -525,8 +531,8 @@ def get_risk_outlook(
         FROM silver.news_events e
         JOIN silver.dim_provinces d ON e.province_code = d.province_code
         JOIN bronze.news_raw n ON e.news_id = n.id
-        ORDER BY e.event_date DESC, e.severity_score DESC
-        LIMIT 24
+        ORDER BY e.event_date DESC, e.severity_score DESC, e.event_id DESC
+        LIMIT 40
         """
     )
     news_out = [
@@ -544,7 +550,7 @@ def get_risk_outlook(
             "source_name": str(n["source_name"]),
             "source_url": str(n["source_url"]),
         }
-        for n in _dedupe_news_rows(news_rows, limit=8)
+        for n in _dedupe_news_rows(news_rows, limit=10)
     ]
 
     default_cm_detail = None
@@ -662,12 +668,14 @@ def get_province_detail(province_code: str) -> dict[str, Any]:
     nso_latest = _fetch_nso_latest_by_province().get(code, {})
     news_rows = fetch_all(
         """
-        SELECT e.event_date, e.sector, e.shock_type, e.severity_score, e.evidence_quote, n.title, n.source_url
+        SELECT
+            e.event_id, e.event_date, e.sector, e.shock_type, e.severity_score,
+            e.evidence_quote, n.title, n.source_name, n.source_url
         FROM silver.news_events e
         JOIN bronze.news_raw n ON e.news_id = n.id
         WHERE e.province_code = :code
-        ORDER BY e.event_date DESC
-        LIMIT 18
+        ORDER BY e.event_date DESC, e.event_id DESC
+        LIMIT 40
         """,
         {"code": code},
     )
@@ -691,15 +699,17 @@ def get_province_detail(province_code: str) -> dict[str, Any]:
         "seasonality_calendar": seasonality,
         "verified_news": [
             {
+                "event_id": int(n["event_id"]),
                 "event_date": str(n["event_date"]),
                 "sector": str(n["sector"]),
                 "shock_type": str(n["shock_type"]),
                 "severity_score": int(n["severity_score"]),
                 "evidence_quote": str(n["evidence_quote"]),
                 "title": str(n["title"]),
+                "source_name": str(n["source_name"] or ""),
                 "source_url": str(n["source_url"]),
             }
-            for n in _dedupe_news_rows(news_rows, limit=6)
+            for n in _dedupe_news_rows(news_rows, limit=10)
         ],
     }
     _cache_set(cache_key, result)
@@ -984,12 +994,13 @@ def get_policy_monitor(
     demand_by_biz = consolidated["dem_biz_json"] or []
     nso_map = _fetch_nso_latest_by_province()
 
-    # Load recent verified high severity news alerts so staff monitor uses exact same vulnerability engine as public map
+    # Load recent verified high severity news alerts using the exact 120 day filter shared with public map
     recent_alert_rows = fetch_all(
         """
         SELECT province_code, shock_type, severity_score, event_date
         FROM silver.news_events
-        WHERE event_date >= CURRENT_DATE - INTERVAL '90 days'
+        WHERE event_date >= CURRENT_DATE - INTERVAL '120 days'
+          AND shock_type != 'policy_relief'
           AND severity_score >= 3
         ORDER BY event_date DESC, severity_score DESC
         """
@@ -1003,7 +1014,11 @@ def get_policy_monitor(
         code = str(q["province_code"])
         nso = nso_map.get(code, {})
         latest_occ = float(q["latest_occupancy_rate"]) if q.get("latest_occupancy_rate") is not None else None
-        avg_occ = float(q.get("avg_occupancy_rate") or 0.0)
+        avg_occ = (
+            float(q["avg_occupancy_rate"])
+            if q.get("avg_occupancy_rate") is not None
+            else None
+        )
         item = {
             "province_code": code,
             "name_th": str(q["name_th"]),
@@ -1015,10 +1030,10 @@ def get_policy_monitor(
             "exposure_score": float(q["exposure_score"]),
             "avg_monthly_revenue_mthb": float(q.get("avg_monthly_revenue_mthb") or 0.0),
             "avg_occupancy_rate": avg_occ,
-            "latest_occupancy_rate": round(latest_occ, 1) if latest_occ is not None else avg_occ,
-            "occupancy_rate": round(latest_occ, 1) if latest_occ is not None else avg_occ,
-            "latest_shock_idx": float(q["latest_shock_idx"]) if q.get("latest_shock_idx") is not None else 0.0,
-            "live_pm25_mean": float(q["live_pm25_mean"]) if q.get("live_pm25_mean") is not None else 0.0,
+            "latest_occupancy_rate": round(latest_occ, 1) if latest_occ is not None else None,
+            "occupancy_rate": round(latest_occ, 1) if latest_occ is not None else None,
+            "latest_shock_idx": float(q["latest_shock_idx"]) if q.get("latest_shock_idx") is not None else None,
+            "live_pm25_mean": float(q["live_pm25_mean"]) if q.get("live_pm25_mean") is not None else None,
             "debt_to_annual_income_all": nso.get("debt_to_annual_income_all"),
             "debt_to_annual_income_sme": nso.get("debt_to_annual_income_sme"),
             "expense_to_income_pct_sme": nso.get("expense_to_income_pct_sme"),
@@ -1026,6 +1041,7 @@ def get_policy_monitor(
         }
         v_eval = evaluate_province_vulnerability(item, alerts_by_prov.get(code, []))
         item["vulnerability_score"] = v_eval["vulnerability_score"]
+        item["priority_score"] = v_eval["vulnerability_score"]
         item["vulnerability_tier"] = v_eval["vulnerability_tier"]
         item["tier_code"] = v_eval["tier_code"]
         item["tier_short_th"] = v_eval["tier_short_th"]

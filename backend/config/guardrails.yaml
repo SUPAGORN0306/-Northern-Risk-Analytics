@@ -22,3 +22,4 @@ rate_limits:
   relief_check: "20/minute"
   chat: "15/minute"
   refresh: "3/hour"
+  staff_login: "10/minute"

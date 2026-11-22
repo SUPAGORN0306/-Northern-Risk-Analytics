@@ -156,8 +156,11 @@ def build_provincial_structural_profile(panel: pd.DataFrame | None = None) -> pd
         panel = build_monthly_analysis_panel()
 
     meta_map = get_province_metadata()
-    n_months = max(panel["period_date"].nunique(), 1)
-    annual_factor = 12.0 / float(n_months)
+    def _annualize_observed_monthly_days(series: pd.Series) -> float:
+        observed_months = int(series.notna().sum())
+        if observed_months == 0:
+            return float("nan")
+        return float(series.sum()) * 12.0 / observed_months
 
     # Aggregate 34 month tourism exposure and chronic physical hazard per province
     struct = panel.groupby("province_code", as_index=False).agg(
@@ -168,9 +171,9 @@ def build_provincial_structural_profile(panel: pd.DataFrame | None = None) -> pd
         foreign_revenue_share=("foreign_revenue_share", "mean"),
         pm25_mean_3y=("pm25_mean", "mean"),
         pm25_p90_3y=("pm25_mean", lambda s: float(np.nanpercentile(s, 90))),
-        annual_pm25_days_over_37_5=("pm25_days_over_37_5", lambda s: float(s.sum()) * annual_factor),
-        annual_pm25_days_over_75_0=("pm25_days_over_75_0", lambda s: float(s.sum()) * annual_factor),
-        annual_heavy_rain_days=("heavy_rain_days", lambda s: float(s.sum()) * annual_factor),
+        annual_pm25_days_over_37_5=("pm25_days_over_37_5", _annualize_observed_monthly_days),
+        annual_pm25_days_over_75_0=("pm25_days_over_75_0", _annualize_observed_monthly_days),
+        annual_heavy_rain_days=("heavy_rain_days", _annualize_observed_monthly_days),
         max_monthly_rainfall_mm=("rainfall_sum_mm", "max"),
     )
 

@@ -249,7 +249,7 @@ export type QuadrantProvince = {
   shock_intensity: number | null
   exposure_score: number | null
   avg_monthly_revenue_mthb: number
-  avg_occupancy_rate: number
+  avg_occupancy_rate: number | null
   latest_occupancy_rate?: number | null
   debt_to_annual_income_all: number | null
   debt_to_annual_income_sme: number | null
@@ -334,8 +334,8 @@ export type EvaluationLayerItem = {
   evaluator_version?: string | null
   sample_size: number | null
   threshold_summary: string | null
-  metrics: Record<string, any>
-  freshness?: Record<string, any>
+  metrics: Record<string, unknown>
+  freshness?: Record<string, unknown>
   ai_assisted_review?: {
     label: string
     prompt_version?: string
@@ -414,7 +414,12 @@ export type DataHealthResponse = {
     token_count: number
     estimated_cost_thb: number
     ran_at: string
-    metrics_json: Record<string, any>
+    metrics_json: Record<string, unknown> & {
+      dim2_rag_qa?: {
+        median_latency_ms?: unknown
+        mean_trap_latency_ms?: unknown
+      }
+    }
   }[]
   layered_evaluation?: LayeredEvaluationSummary
 }

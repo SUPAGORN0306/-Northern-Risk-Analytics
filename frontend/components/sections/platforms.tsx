@@ -1,12 +1,14 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, useInView } from "motion/react"
 import {
   AlertTriangle,
   ArrowDownRight,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   LineChart as LineChartIcon,
   MapPin,
@@ -73,6 +75,9 @@ export function RiskOutlook({
   const [segmentsOpen, setSegmentsOpen] = useState(false)
   const [mobileTierListOpen, setMobileTierListOpen] = useState(false)
   const [mobileInspectorTab, setMobileInspectorTab] = useState<"summary" | "chart" | "advice">("summary")
+  const newsScrollerRef = useRef<HTMLDivElement | null>(null)
+  const [canScrollNewsLeft, setCanScrollNewsLeft] = useState(false)
+  const [canScrollNewsRight, setCanScrollNewsRight] = useState(false)
 
   const provinces = outlook?.provinces ?? []
   const selectedItem = useMemo(
@@ -401,6 +406,52 @@ export function RiskOutlook({
   const summary = outlook?.regional_summary
   const newsItems = outlook?.recent_verified_news ?? []
   const tierGroups = outlook?.vulnerability_tiers ?? []
+
+  const isProvinceNews = (detail?.verified_news?.length ?? 0) > 0
+  const displayedNews = useMemo(() => {
+    const raw = isProvinceNews ? (detail?.verified_news ?? []) : newsItems
+    return [...raw]
+      .sort((a, b) => {
+        const dateCmp = (b.event_date || "").localeCompare(a.event_date || "")
+        if (dateCmp !== 0) return dateCmp
+        return (b.event_id ?? 0) - (a.event_id ?? 0)
+      })
+      .slice(0, 10)
+  }, [detail?.verified_news, isProvinceNews, newsItems])
+
+  const updateNewsScrollButtons = useCallback(() => {
+    const el = newsScrollerRef.current
+    if (!el) {
+      setCanScrollNewsLeft(false)
+      setCanScrollNewsRight(false)
+      return
+    }
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+    setCanScrollNewsLeft(el.scrollLeft > 4)
+    setCanScrollNewsRight(el.scrollLeft < maxScroll - 4)
+  }, [])
+
+  useEffect(() => {
+    const el = newsScrollerRef.current
+    if (el) {
+      el.scrollTo({ left: 0, behavior: "auto" })
+    }
+    const raf = window.requestAnimationFrame(updateNewsScrollButtons)
+    return () => window.cancelAnimationFrame(raf)
+  }, [selectedProvinceCode, displayedNews, updateNewsScrollButtons])
+
+  useEffect(() => {
+    const onResize = () => updateNewsScrollButtons()
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [updateNewsScrollButtons])
+
+  const scrollNewsBy = (direction: -1 | 1) => {
+    const el = newsScrollerRef.current
+    if (!el) return
+    const step = Math.max(280, Math.round(el.clientWidth * 0.78))
+    el.scrollBy({ left: direction * step, behavior: "smooth" })
+  }
 
   const activeTierGroup = useMemo(
     () => tierGroups.find((g) => g.tier === selectedItem?.vulnerability_tier) ?? null,
@@ -1628,65 +1679,125 @@ export function RiskOutlook({
         </div>
 
         {/* Provincial News Strip Synced with Selected Province on Map */}
-        {((detail?.verified_news?.length ?? 0) > 0 || newsItems.length > 0) && (
+        {displayedNews.length > 0 && (
           <div className="mt-5 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
-            <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
-                <Newspaper aria-hidden="true" className="size-4 text-foreground" />
+                <Newspaper aria-hidden="true" className="size-4 shrink-0 text-foreground" />
                 <h3 className="font-display text-sm font-semibold text-foreground sm:text-base">
-                  {selectedItem
+                  {isProvinceNews && selectedItem
                     ? lang === "th"
                       ? `ข่าวเศรษฐกิจและเหตุการณ์ล่าสุด: จังหวัด${selectedItem.name_th}`
                       : `Latest Economic & Local News: ${selectedItem.name_en}`
                     : lang === "th"
-                      ? "ข่าวเศรษฐกิจและเหตุการณ์ล่าสุด"
-                      : "Latest Economic & Local News"}
+                      ? "ข่าวเศรษฐกิจและเหตุการณ์ล่าสุดภาคเหนือ"
+                      : "Latest Northern Economic & Local News"}
                 </h3>
               </div>
-              {selectedItem && (
+              <div className="flex items-center gap-2">
                 <span className="rounded-full bg-secondary px-3 py-1 text-[11px] font-medium text-foreground">
-                  {lang === "th"
-                    ? `จังหวัด${selectedItem.name_th}`
-                    : selectedItem.name_en}
+                  {isProvinceNews && selectedItem
+                    ? lang === "th"
+                      ? `จังหวัด${selectedItem.name_th} · ${displayedNews.length} ข่าว`
+                      : `${selectedItem.name_en} · ${displayedNews.length} items`
+                    : lang === "th"
+                      ? `ภาพรวมภาคเหนือ · ${displayedNews.length} ข่าว`
+                      : `Northern Region · ${displayedNews.length} items`}
                 </span>
-              )}
+                {displayedNews.length > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => scrollNewsBy(-1)}
+                      disabled={!canScrollNewsLeft}
+                      aria-label={lang === "th" ? "เลื่อนดูข่าวก่อนหน้า" : "Scroll news left"}
+                      className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-background text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-35"
+                    >
+                      <ChevronLeft aria-hidden="true" className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollNewsBy(1)}
+                      disabled={!canScrollNewsRight}
+                      aria-label={lang === "th" ? "เลื่อนดูข่าวเพิ่มเติม" : "Scroll news right"}
+                      className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-background text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-35"
+                    >
+                      <ChevronRight aria-hidden="true" className="size-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {(detail?.verified_news?.length ? detail.verified_news : newsItems).slice(0, 4).map((item, idx) => (
-                <a
-                  key={item.event_id ?? idx}
-                  href={item.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex flex-col justify-between rounded-2xl border border-border bg-secondary/30 p-3.5 transition-colors hover:bg-secondary/70"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
-                      <span className="rounded-full bg-background px-2.5 py-0.5 font-medium text-foreground">
-                        {selectedItem
-                          ? lang === "th"
-                            ? selectedItem.name_th
-                            : selectedItem.name_en
-                          : lang === "th"
-                            ? item.name_th || item.province_code
-                            : item.name_en || item.province_code}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {translateShockType(item.shock_type, lang)} · {item.event_date}
-                      </span>
+            <div className="relative">
+              {canScrollNewsLeft && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-background to-transparent"
+                />
+              )}
+              {canScrollNewsRight && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-background via-background/75 to-transparent"
+                />
+              )}
+
+              <div
+                ref={newsScrollerRef}
+                onScroll={updateNewsScrollButtons}
+                className="no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth pb-1 pr-2 touch-pan-x"
+              >
+                {displayedNews.map((item, idx) => (
+                  <a
+                    key={item.event_id ?? `${item.event_date}-${idx}`}
+                    href={item.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex w-[265px] shrink-0 snap-start flex-col justify-between rounded-2xl border border-border bg-secondary/30 p-3.5 transition-colors hover:bg-secondary/70 sm:w-[285px] lg:w-[280px]"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10px]">
+                        <div className="flex items-center gap-1">
+                          <span className="rounded-full bg-background px-2.5 py-0.5 font-medium text-foreground">
+                            {isProvinceNews && selectedItem
+                              ? lang === "th"
+                                ? selectedItem.name_th
+                                : selectedItem.name_en
+                              : lang === "th"
+                                ? item.name_th || item.province_code
+                                : item.name_en || item.province_code}
+                          </span>
+                          {idx === 0 && (
+                            <span className="rounded-full bg-foreground px-2 py-0.5 text-[9.5px] font-medium text-background">
+                              {lang === "th" ? "ล่าสุด" : "Latest"}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-muted-foreground">
+                          {translateShockType(item.shock_type, lang)} · {item.event_date}
+                        </span>
+                      </div>
+                      <p className="mt-2.5 line-clamp-3 min-h-[3.75rem] text-xs font-medium leading-5 text-foreground">
+                        {item.evidence_quote || item.title}
+                      </p>
                     </div>
-                    <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-foreground">
-                      {item.evidence_quote || item.title}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span className="truncate">{item.source_name || item.event_date}</span>
-                    <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
-                  </div>
-                </a>
-              ))}
+                    <div className="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                      <span className="truncate">{item.source_name || item.event_date}</span>
+                      <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+                    </div>
+                  </a>
+                ))}
+              </div>
             </div>
+
+            {(canScrollNewsLeft || canScrollNewsRight) && (
+              <p className="mt-2.5 text-[11px] text-muted-foreground">
+                {lang === "th"
+                  ? "เรียงจากข่าวใหม่สุดทางซ้าย · ปัดซ้าย–ขวาหรือกดลูกศรเพื่อดูข่าวเพิ่มเติม"
+                  : "Sorted newest first on the left · Swipe or use the arrows to browse more"}
+              </p>
+            )}
           </div>
         )}
       </div>

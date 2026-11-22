@@ -31,7 +31,7 @@ export default async function Image() {
             backgroundSize: "38px 38px",
           }}
         />
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, padding: "60px" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "44px", color: "rgba(255,255,255,0.72)", fontSize: 22, letterSpacing: "0.08em" }}>
             <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white" }} />
             NORTHRISK ANALYTICS
