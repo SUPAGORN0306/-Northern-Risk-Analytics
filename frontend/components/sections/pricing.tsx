@@ -10,12 +10,18 @@ import {
   BookOpenCheck,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
   Loader2,
+  MapPin,
+  MessageSquareText,
   PhoneCall,
   Printer,
   RotateCcw,
+  Scale,
   Sparkles,
 } from "lucide-react"
 import {
@@ -39,10 +45,14 @@ import {
 import {
   buildFinancialDossierHtml,
   buildLoanComparison,
+  buildNegotiationGuide,
+  buildPlainTextNegotiationSummary,
+  buildScenarioComparison,
   computeFinancialDiagnostic,
   type DebtStatusKey,
 } from "@/lib/financial-dossier"
-import { useAppState } from "@/lib/i18n"
+import { fullCalendarMonth, joinNaturalList, useAppState } from "@/lib/i18n"
+import { policyProgramsFor } from "@/lib/policy-catalog"
 
 const FALLBACK_PROVINCES = [
   { code: "CM", name_th: "เชียงใหม่", name_en: "Chiang Mai" },
@@ -137,138 +147,156 @@ function matchOfficialPrograms(params: {
   isSme: boolean
   dscr: number | null
   dsrPct: number | null
-  hasWaterOrDisaster: boolean
 }): ProgramMatch[] {
-  const { status, isSme, dscr, dsrPct, hasWaterOrDisaster } = params
+  const { status, isSme, dscr, dsrPct } = params
   const list: ProgramMatch[] = []
+  const audience = isSme ? "sme" : "individual"
+  const hasPolicy = (id: string) => policyProgramsFor(status, audience).some((program) => program.id === id)
 
-  if (status === "overdue_120_plus") {
+  if (status === "overdue_120_plus" && !isSme && hasPolicy("debt_clinic")) {
     list.push({
       id: "debt_clinic",
-      badge_th: "แนวทางคัดกรองเบื้องต้น · ตรวจสอบสิทธิ์กับ SAM",
+      badge_th: "ตรวจสอบสิทธิ์กับบริษัทบริหารสินทรัพย์สุขุมวิท",
       badge_en: "Initial Screening · Verify with SAM",
-      title_th: "คลินิกแก้หนี้ by SAM (โทร 1443)",
+      title_th: "คลินิกแก้หนี้ โดยบริษัทบริหารสินทรัพย์สุขุมวิท (โทร 1443)",
       title_en: "Debt Clinic by SAM (Call 1443)",
       benefit_th: "รวมหนี้เสียบัตรเครดิต บัตรกดเงินสด และสินเชื่อส่วนบุคคลที่ไม่มีหลักประกัน ปรับดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี ผ่อนสูงสุด 10 ปี",
       benefit_en: "Consolidates unsecured credit cards, cash cards, and personal loan NPLs at 3 to 5% p.a. for up to 10 years.",
-      criteria_th: "บุคคลธรรมดา ค้างชำระเกิน 120 วัน และต้องตรวจสอบคุณสมบัติเพิ่มเติมเรื่องประเภทสินเชื่อ เงินต้นรวมไม่เกิน 2 ล้านบาท อายุ และรายได้กับ SAM โดยตรง",
+      criteria_th: "บุคคลธรรมดา ค้างชำระเกิน 120 วัน และต้องตรวจสอบคุณสมบัติเพิ่มเติมเรื่องประเภทสินเชื่อ เงินต้นรวมไม่เกิน 2 ล้านบาท อายุ และรายได้กับหน่วยงานโดยตรง",
       criteria_en: "Individuals overdue >120 days; additional criteria on loan type, <= 2M THB principal, age, and income must be verified directly with SAM.",
       action_label_th: "ตรวจสอบสิทธิ์ที่เว็บไซต์คลินิกแก้หนี้",
       action_label_en: "Verify Eligibility at Debt Clinic",
       action_href: "https://www.debtclinicbysam.com/",
-      source_th: "แนวทางแก้หนี้ยั่งยืน ธปท. และ SAM (โปรดตรวจสอบสิทธิ์จริง)",
+      source_th: "แนวทางแก้หนี้ยั่งยืน ธนาคารแห่งประเทศไทย (โปรดตรวจสอบสิทธิ์จริง)",
       source_en: "BOT Sustainable Debt Relief & SAM (Verify Actual Eligibility)",
     })
-    list.push({
+    if (hasPolicy("clear_debt")) list.push({
       id: "fast_debt_exit_sam",
-      badge_th: "โครงการเฉพาะกิจ · ตรวจสอบสิทธิ์กับ ธปท./SAM",
+      badge_th: "โครงการเฉพาะกิจ · ตรวจสอบสิทธิ์กับ ธปท.",
       badge_en: "Special Program · Verify via BOT/SAM",
-      title_th: "โครงการปิดหนี้ไว ไปต่อได้ (SAM Social AMC · โทร 1213 / 1443 กด 6)",
+      title_th: "โครงการปิดหนี้ไว ไปต่อได้ (โทร 1213 หรือ 1443 กด 6)",
       title_en: "Fast-Close Move-Forward Program (SAM Social AMC · 1213 / 1443 ext. 6)",
       benefit_th: "สำหรับลูกหนี้รายย่อยที่เป็นหนี้เสียไม่มีหลักประกัน รับโอนหนี้มาปรับโครงสร้างโดยเลือกจ่ายปิดจบบางส่วนทันที หรือผ่อนสูงสุด 3 ปี ดอกเบี้ย 0% หากปฏิบัติตามเงื่อนไข",
       benefit_en: "Transfers eligible unsecured retail NPLs to SAM Social AMC with options for partial lump-sum settlement or up to 3-year installment at 0% interest.",
-      criteria_th: "บุคคลธรรมดาที่มีภาระหนี้เสีย (NPL) ทุกประเภทสินเชื่อรวมทุกแห่งไม่เกิน 100,000 บาท ณ วันที่ 30 กันยายน 2568 (เปิดลงทะเบียนตั้งแต่ 5 ม.ค. 2569 — โปรดตรวจสอบสิทธิ์ที่ช่องทางทางการ)",
+      criteria_th: "บุคคลธรรมดาที่มีภาระหนี้เสียทุกประเภทสินเชื่อรวมทุกแห่งไม่เกิน 100,000 บาท ณ วันที่ 30 กันยายน 2568 (เปิดลงทะเบียนตั้งแต่ 5 ม.ค. 2569 โปรดตรวจสอบสิทธิ์ที่ช่องทางทางการ)",
       criteria_en: "Individuals with combined NPLs across all lenders <= 100,000 THB as of 30 Sep 2025 (registration opened 5 Jan 2026 — verify eligibility via official channels).",
-      action_label_th: "ตรวจสอบสิทธิ์ที่ bot.or.th/cleardebt",
+      action_label_th: "ตรวจสอบสิทธิ์โครงการปิดหนี้ไว",
       action_label_en: "Check Eligibility at bot.or.th/cleardebt",
       action_href: "https://www.bot.or.th/cleardebt",
-      source_th: "ข่าว ธปท. ฉบับที่ 1/2569 (5 ม.ค. 2569) · LINE @samsocialamc",
-      source_en: "BOT Press Release 1/2569 (5 Jan 2026) · LINE @samsocialamc",
+      source_th: "ข่าวธนาคารแห่งประเทศไทย ฉบับที่ 1/2569 (5 ม.ค. 2569)",
+      source_en: "BOT Press Release 1/2569 (5 Jan 2026)",
     })
-  } else if (status === "persistent") {
+  } else if (status === "persistent" && !isSme && hasPolicy("persistent_debt")) {
     list.push({
       id: "persistent_debt",
-      badge_th: "แนวทางคัดกรองเบื้องต้น · ตรวจสอบสิทธิ์กับเจ้าหนี้",
+      badge_th: "ตรวจสอบสิทธิ์กับเจ้าหนี้เดิม",
       badge_en: "Initial Screening · Verify with Lender",
-      title_th: "มาตรการปิดจบหนี้เรื้อรัง (ขยายสูงสุด 7 ปี เริ่ม 1 ม.ค. 2568 · ดอกเบี้ยไม่เกิน 15%)",
-      title_en: "Persistent Debt Exit (Up to 7 Years Effective 1 Jan 2025 · Max 15% p.a.)",
-      benefit_th: "เปลี่ยนสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียนเป็นสินเชื่อผ่อนรายงวด อัตราดอกเบี้ยที่แท้จริงไม่เกิน 15% ต่อปี ปิดจบภายในสูงสุด 7 ปี (ขยายจากเดิม 5 ปี เริ่ม 1 ม.ค. 2568)",
-      benefit_en: "Converts revolving personal loans into fixed installments capped at 15% p.a. for up to 7 years (expanded from 5 to 7 years effective 1 Jan 2025).",
-      criteria_th: "เฉพาะสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียน (ยังไม่เป็น NPL ไม่รวมบัตรเครดิต/จำนำทะเบียน) ที่จ่ายดอกเบี้ยรวมมากกว่าเงินต้นย้อนหลัง 5 ปี และเข้าเกณฑ์รายได้ ธปท. (< 20,000 บาท/เดือน สำหรับธนาคาร/กลุ่มธุรกิจ หรือ < 10,000 บาท/เดือน สำหรับ Non-bank อื่น)",
+      title_th: "มาตรการปิดจบหนี้เรื้อรัง (ขยายสูงสุด 7 ปี · ดอกเบี้ยไม่เกิน 15%)",
+      title_en: "Persistent Debt Exit (Up to 7 Years · Max 15% p.a.)",
+      benefit_th: "เปลี่ยนสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียนเป็นสินเชื่อผ่อนรายงวด อัตราดอกเบี้ยที่แท้จริงไม่เกิน 15% ต่อปี ปิดจบภายในสูงสุด 7 ปีตามหลักเกณฑ์ที่ปรับปรุงในปี 2568",
+      benefit_en: "Converts eligible revolving personal loans into fixed installments capped at 15% p.a. for up to 7 years under the updated 2025 rules.",
+      criteria_th: "เฉพาะสินเชื่อส่วนบุคคลประเภทวงเงินหมุนเวียน (ยังไม่เป็นหนี้เสีย ไม่รวมบัตรเครดิตและจำนำทะเบียน) ที่จ่ายดอกเบี้ยรวมมากกว่าเงินต้นย้อนหลัง 5 ปี และเข้าเกณฑ์รายได้ของธนาคารแห่งประเทศไทย (ต่ำกว่า 20,000 บาทต่อเดือนสำหรับธนาคาร หรือต่ำกว่า 10,000 บาทต่อเดือนสำหรับผู้ให้บริการที่ไม่ใช่ธนาคาร)",
       criteria_en: "Revolving personal loans (Non-NPL, excluding credit cards/auto-title) paying more interest than principal for 5+ years and meeting BOT income criteria (<20,000 THB/mo bank/group or <10,000 THB/mo other non-bank).",
       action_label_th: "เปิดอ่านประกาศหลักเกณฑ์ ธปท.",
       action_label_en: "Open Official BOT Guideline (PDF)",
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
-      source_th: "ประกาศ Responsible Lending ปรับปรุง 2568 (โปรดตรวจสอบสิทธิ์กับเจ้าหนี้)",
+      source_th: "ประกาศหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ ปรับปรุง 2568 (ตรวจสอบสิทธิ์กับเจ้าหนี้)",
       source_en: "Updated Responsible Lending 2568 (Verify with Lender)",
     })
-  } else if (status === "overdue_31_120") {
+  } else if (status === "persistent" && isSme && hasPolicy("responsible_lending")) {
     list.push({
-      id: "khunsoo",
-      badge_th: "ตัวอย่างแนวทางเจรจา (คุณสู้ เราช่วย ปิดรับสมัครใหม่แล้ว)",
-      badge_en: "Negotiation Reference (Khun Soo Closed to New Signups)",
-      title_th: "ติดต่อเจ้าหนี้เดิมเพื่อขอปรับโครงสร้างหนี้ (ใช้แผนขั้นบันไดเป็นตัวอย่างประกอบการเจรจา)",
-      title_en: "Contact Original Lender for Restructuring (Use Stepped Plan as Illustrative Reference)",
-      benefit_th: "สามารถใช้ตารางลดค่างวดขั้นบันได (เช่น 50% / 70% / 90%) เป็นตัวอย่างสถานการณ์ประกอบการเจรจากับเจ้าหนี้ตามเกณฑ์ Responsible Lending ทั้งนี้เงื่อนไขจริงขึ้นอยู่กับการพิจารณาของแต่ละสถาบันการเงิน",
-      benefit_en: "Use the stepped payment schedule (50% / 70% / 90%) as an illustrative scenario when negotiating with your lender under Responsible Lending; actual approval and terms depend on the lender.",
-      criteria_th: "โครงการคุณสู้ เราช่วย ปิดลงทะเบียนใหม่แล้วตั้งแต่วันที่ 30 กันยายน 2568 (ผู้ลงทะเบียนเดิมยังดำเนินการต่อได้ ส่วนลูกหนี้ใหม่ให้ติดต่อเจรจาปรับโครงสร้างหนี้กับเจ้าหนี้โดยตรง)",
-      criteria_en: "Khun Soo Rao Chuay closed new registration on 30 Sep 2025 (existing registrants continue; new applicants must negotiate restructuring directly with their lender).",
-      action_label_th: "เปิดอ่านหลักเกณฑ์ปรับโครงสร้างหนี้ 2568",
-      action_label_en: "Open 2568 Restructuring Guideline (PDF)",
-      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
-      source_th: "หลักเกณฑ์ Responsible Lending 2568 (ไม่ใช่การยืนยันอนุมัติอัตโนมัติ)",
+      id: "sme_persistent_restructuring",
+      badge_th: "สำหรับกิจการที่จ่ายขั้นต่ำต่อเนื่อง",
+      badge_en: "SME Revolving Debt Option",
+      title_th: "ขอปรับโครงสร้างหนี้หมุนเวียนกิจการเป็นงวดผ่อนคงที่",
+      title_en: "Convert Revolving SME Debt into Fixed Installments",
+      benefit_th: "หารือเจ้าหนี้เพื่อเปลี่ยนหนี้วงเงินหมุนเวียนหรือสินเชื่อระยะสั้นให้เป็นค่างวดรายเดือนที่ชัดเจนและสอดคล้องกับกระแสเงินสดของกิจการ การพิจารณาขึ้นอยู่กับเจ้าหนี้และสัญญา",
+      benefit_en: "Discuss converting short term or revolving business credit into manageable monthly installments suited to cash flow, subject to lender and contract terms.",
+      criteria_th: "เตรียมข้อมูลรายรับ รายจ่าย ยอดหนี้หมุนเวียน และยอดค่างวดที่จ่ายไหวจริงต่อเดือนเพื่อหารือกับเจ้าหนี้ หรือสอบถามแนวทางเบื้องต้นได้ที่สายด่วน ธปท. 1213",
+      criteria_en: "Prepare revenue, expenses, revolving balance, and affordable payment figures for your lender, or call BOT hotline 1213 for general guidance.",
+      action_label_th: "เปิดอ่านแนวทางช่วยลูกหนี้ (เอกสารแนบ 7 หน้า 37)",
+      action_label_en: "Open Borrower Relief Annex 7 (p. 37)",
+      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf#page=37",
+      source_th: "หลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568 (เอกสารแนบ 7 สำหรับสินเชื่อธุรกิจ)",
+      source_en: "Responsible Lending Guideline 2568 (Annex 7 for SME Loans)",
+    })
+  } else if ((status === "overdue_31_120" || (status === "overdue_120_plus" && isSme)) && hasPolicy("responsible_lending")) {
+    list.push({
+      id: "lender_restructuring_overdue",
+      badge_th: "เริ่มจากติดต่อเจ้าหนี้เดิม",
+      badge_en: "Start with your current lender",
+      title_th: "ขอปรับโครงสร้างหนี้ตามความสามารถในการชำระ",
+      title_en: "Request restructuring based on repayment capacity",
+      benefit_th: "แจ้งเจ้าหนี้เมื่อเริ่มจ่ายไม่ไหว และขอให้พิจารณาค่างวดหรือเงื่อนไขที่สอดคล้องกับรายรับจริง แนวทางและผลอนุมัติขึ้นอยู่กับเจ้าหนี้และสัญญา",
+      benefit_en: "Contact your lender early and request installments or terms suited to actual income; options and approval depend on the lender and contract.",
+      criteria_th: "แจ้งยอดหนี้ รายรับที่เปลี่ยนไป และจำนวนเงินที่ยังจ่ายไหว เพื่อให้เจ้าหนี้ประเมินเป็นรายกรณี",
+      criteria_en: "Share the outstanding balance, income changes, and an affordable payment amount for a case-by-case review.",
+      action_label_th: "เปิดอ่านแนวทางช่วยลูกหนี้ (เอกสารแนบ 7 หน้า 37)",
+      action_label_en: "Open Borrower Relief Annex 7 (p. 37)",
+      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf#page=37",
+      source_th: "หลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568 (ไม่ใช่การยืนยันอนุมัติอัตโนมัติ)",
       source_en: "Responsible Lending 2568 (Not an Automatic Approval)",
     })
-  } else if (status === "disaster") {
+  } else if (status === "disaster" && hasPolicy("disaster_relief")) {
     list.push({
-      id: "disaster_2568",
-      badge_th: "แนวทางคัดกรองเบื้องต้น · พื้นที่ประสบภัย",
+      id: "disaster_lender_relief",
+      badge_th: "ติดต่อเจ้าหนี้เพื่อขอความช่วยเหลือ",
       badge_en: "Initial Screening · Hazard Relief",
-      title_th: "มาตรการช่วยเหลือลูกหนี้ผู้ประสบสาธารณภัย 2568",
-      title_en: "2568 Disaster Borrower Relief",
-      benefit_th: "ขอพักชำระเงินต้นชั่วคราว ลดค่างวด หรือขอวงเงินฟื้นฟูกิจการกับเจ้าหนี้เดิมตามเงื่อนไขของสถาบันการเงิน",
-      benefit_en: "Request temporary principal deferral, payment step down, or recovery credit subject to lender review.",
-      criteria_th: "เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น บิลยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อยื่นตรวจสอบสิทธิ์กับเจ้าหนี้",
+      title_th: "สอบถามแนวทางช่วยเหลือเมื่อรายได้ได้รับผลกระทบ",
+      title_en: "Ask about relief when income is affected",
+      benefit_th: "เจ้าหนี้อาจพิจารณาปรับค่างวดหรือเงื่อนไขตามผลกระทบและสัญญา ไม่มีเงื่อนไขเดียวที่ใช้ได้กับทุกภัยหรือทุกสถาบันการเงิน",
+      benefit_en: "Your lender may review payments or terms based on the impact and contract; options vary by event and lender.",
+      criteria_th: "เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น ใบเสร็จยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อยื่นตรวจสอบสิทธิ์กับเจ้าหนี้",
       criteria_en: "Prepare evidence of income drop or impact (sales receipts, bank statements, or site photos) for lender verification.",
-      action_label_th: "เปิดอ่านหนังสือเวียน ธปท.ว. 2302/2568",
-      action_label_en: "Open Circular 2302/2568 (PDF)",
-      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680065.pdf",
-      source_th: "หนังสือเวียน ธปท.ว. 2302/2568 (โปรดตรวจสอบเงื่อนไขกับเจ้าหนี้)",
-      source_en: "Official Circular 2302/2568 (Verify with Lender)",
+      action_label_th: "ดูมาตรการช่วยเหลือจาก ธปท.",
+      action_label_en: "View BOT Relief Measures",
+      action_href: "https://www.bot.or.th/th/our-roles/special-measures.html",
+      source_th: "มาตรการช่วยเหลือ ธปท. (ตรวจสอบตามเหตุการณ์และเจ้าหนี้)",
+      source_en: "BOT Relief Measures (check event and lender-specific terms)",
     })
-  } else if (isSme) {
+  } else if (isSme && status === "current" && hasPolicy("responsible_lending")) {
     list.push({
-      id: "sme_3reduce",
-      badge_th: dscr != null && dscr < 1.25 ? "แนวทางสำหรับ SME ตึงมือ" : "แนวทางหักเงินต้น SME",
-      badge_en: dscr != null && dscr < 1.25 ? "SME Screening Option" : "SME Principal Cut Option",
-      title_th: "มาตรการ 3 ลด (ธนาคารพัฒนาวิสาหกิจขนาดกลางและขนาดย่อม · โทร 1357)",
-      title_en: "SME D Bank 3 Reduce Program (Call 1357)",
-      benefit_th: "ลดเงินต้น (นำค่างวดไปหักเงินต้นก่อนสูงสุด 100% นาน 2 ปี) ลดอัตราดอกเบี้ย และปรับลดค่างวดให้สอดคล้องกำไรจริง",
-      benefit_en: "Applies up to 100% of payments directly to principal for 2 years plus interest and installment relief.",
-      criteria_th: "เฉพาะลูกหนี้หรือผู้ประกอบการที่เข้าเกณฑ์ของ SME D Bank โปรดตรวจสอบคุณสมบัติและเงื่อนไขสัญญาจริงกับสาขาหรือโทร 1357",
-      criteria_en: "Subject to SME D Bank borrower eligibility criteria; verify actual contract terms via branch or call 1357.",
-      action_label_th: "เปิดอ่านหลักเกณฑ์ปรับโครงสร้างหนี้",
-      action_label_en: "Review Restructuring Rules (PDF)",
-      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
-      source_th: "มาตรการ 3 ลด และ Responsible Lending 2568 (ตรวจสอบสิทธิ์จริงกับธนาคาร)",
-      source_en: "SME D Bank 3 Reduce & Responsible Lending 2568 (Verify with Bank)",
+      id: "sme_lender_restructuring",
+      badge_th: dscr != null && dscr < 1.25 ? "กิจการที่กระแสเงินสดตึงตัว" : "คุยกับเจ้าหนี้เรื่องกระแสเงินสด",
+      badge_en: dscr != null && dscr < 1.25 ? "Tight business cash flow" : "Discuss business cash flow",
+      title_th: "หารือเจ้าหนี้เรื่องค่างวดและสภาพคล่องของกิจการ",
+      title_en: "Discuss business cash flow and installments with your lender",
+      benefit_th: "ขอให้เจ้าหนี้ช่วยทบทวนค่างวดหรือเงื่อนไขให้เหมาะกับกระแสเงินสดของกิจการ การพิจารณาขึ้นอยู่กับเจ้าหนี้และสัญญา",
+      benefit_en: "Ask your lender to review installments or terms against business cash flow; review depends on the lender and contract.",
+      criteria_th: "เตรียมรายรับ รายจ่ายธุรกิจ ค่างวดหนี้ และประมาณการกระแสเงินสดเพื่อหารือกับเจ้าหนี้",
+      criteria_en: "Prepare business revenue, expenses, debt installments, and a cash-flow estimate for your lender.",
+      action_label_th: "เปิดอ่านแนวทางช่วยลูกหนี้ (เอกสารแนบ 7 หน้า 37)",
+      action_label_en: "Open Borrower Relief Annex 7 (p. 37)",
+      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf#page=37",
+      source_th: "หลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568 (เอกสารแนบ 7)",
+      source_en: "Responsible Lending Guideline 2568 (Annex 7)",
     })
   }
 
-  // Only show pre-NPL Responsible Lending or SME Working Capital options when borrower is NOT already overdue/persistent
-  if (isSme && (status === "current" || status === "disaster") && (dscr == null || dscr >= 1.0)) {
+  // Only show pre NPL Responsible Lending or SME Working Capital options when borrower is not already overdue or persistent
+  if (isSme && (status === "current" || status === "disaster") && hasPolicy("sme_credit_guarantee") && (dscr == null || dscr >= 1.0)) {
     list.push({
       id: "credit_boost_tcg",
-      badge_th: hasWaterOrDisaster ? "เสริมสภาพคล่องพื้นที่เสี่ยง" : "สินเชื่อหมุนเวียนและค้ำประกัน",
-      badge_en: "SME Liquidity & Guarantee",
-      title_th: "โครงการสนับสนุนสินเชื่อใหม่และค้ำประกันสินเชื่อ บสย. (โทร 02-890-9999)",
-      title_en: "SMEs Credit Boost & TCG PGS 11 Guarantee",
-      benefit_th: "กลไกช่วยค้ำประกันและแบ่งเบาความเสี่ยงสำหรับสินเชื่อหมุนเวียนธุรกิจท่องเที่ยวและบริการ พร้อมสิทธิฟรีค่าธรรมเนียมค้ำประกันช่วง 2 ถึง 3 ปีแรก",
-      benefit_en: "Credit risk sharing for new working capital loans in tourism and services, plus TCG PGS 11 fee waivers.",
-      criteria_th: "ผู้ประกอบการภาคบริการที่มีศักยภาพดำเนินธุรกิจต่อและผ่านเกณฑ์พิจารณาสินเชื่อของธนาคารพาณิชย์และ บสย.",
-      criteria_en: "Viable tourism and service SMEs subject to commercial bank and TCG credit underwriting.",
-      action_label_th: "เปิดดูรายงานเศรษฐกิจภาคเหนือ (ธปท.)",
-      action_label_en: "Open Northern Economy Portal",
-      action_href: "https://www.bot.or.th/th/thai-economy/regional-economy/northern-economy.html",
-      source_th: "มาตรการสินเชื่อฟื้นฟูและค้ำประกันสินเชื่อ บสย.",
-      source_en: "SMEs Credit Boost & TCG PGS 11 Framework",
+      badge_th: "ขึ้นกับโครงการ บสย. ที่เปิดอยู่",
+      badge_en: "Subject to active TCG programs",
+      title_th: "ช่องทางสินเชื่อและค้ำประกันสำหรับกิจการ (บสย.)",
+      title_en: "SME Credit and Guarantee Channels (TCG)",
+      benefit_th: "สอบถามช่องทางค้ำประกันสินเชื่อที่เปิดรับในปัจจุบัน ผลอนุมัติขึ้นอยู่กับการพิจารณาของ บสย. และผู้ให้กู้",
+      benefit_en: "Ask about currently available credit guarantee channels; approval depends on TCG and lender underwriting.",
+      criteria_th: "ตรวจสอบโครงการที่ยังเปิดอยู่ คุณสมบัติ และเงื่อนไขกับ บสย. และสถาบันการเงินก่อนสมัคร",
+      criteria_en: "Verify currently open programs, eligibility, and terms with TCG and the financial institution before applying.",
+      action_label_th: "เปิดเว็บไซต์ บสย. (ค้ำประกันสินเชื่อ)",
+      action_label_en: "Open TCG Official Website",
+      action_href: "https://www.tcg.or.th/",
+      source_th: "บรรษัทประกันสินเชื่ออุตสาหกรรมขนาดย่อม (บสย.) · ตรวจสอบสถานะโครงการ",
+      source_en: "Thai Credit Guarantee Corporation (TCG) · Verify current programs",
     })
   } else if (status === "current" || status === "disaster") {
     list.push({
       id: "responsible_lending",
       badge_th: dsrPct == null || dsrPct >= 40 || (dscr != null && dscr < 1.25) ? "แนวทางเจรจาเจ้าหนี้เดิม" : "วางแผนเชิงป้องกัน",
       badge_en: dsrPct == null || dsrPct >= 40 ? "Direct Lender Option" : "Preventive Option",
-      title_th: "สิทธิขอปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (Responsible Lending 2568)",
+      title_th: "สิทธิขอปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (หลักเกณฑ์ปี 2568)",
       title_en: "Pre Emptive Restructuring Before NPL (Responsible Lending 2568)",
       benefit_th: "เจ้าหนี้มีหน้าที่เสนอแนวทางปรับโครงสร้างหนี้ที่เหมาะกับความสามารถชำระจริงอย่างน้อย 1 ครั้งก่อนเป็นหนี้เสีย โดยไม่เรียกเก็บค่าธรรมเนียม",
       benefit_en: "Lenders must offer tailored restructuring at least once before NPL with zero restructuring fee.",
@@ -282,10 +310,27 @@ function matchOfficialPrograms(params: {
     })
   }
 
-  return list.slice(0, 3)
+  return list.map((match) => {
+    const catalogId = match.id === "fast_debt_exit_sam"
+      ? "clear_debt"
+      : match.id === "lender_restructuring_overdue" || match.id === "sme_lender_restructuring" || match.id === "sme_persistent_restructuring"
+        ? "responsible_lending"
+        : match.id === "disaster_lender_relief"
+          ? "disaster_relief"
+          : match.id === "credit_boost_tcg"
+            ? "sme_credit_guarantee"
+            : match.id
+    const catalogProgram = policyProgramsFor(status, audience).find((program) => program.id === catalogId)
+    if (!catalogProgram) return match
+    const resolvedHref =
+      catalogId === "responsible_lending" && match.action_href.includes("#page=")
+        ? `${catalogProgram.source_url.split("#")[0]}#page=37`
+        : catalogProgram.source_url
+    return { ...match, action_href: resolvedHref }
+  }).slice(0, 3)
 }
 
-type PresetKey = "individual_tight" | "sme_tight" | "khunsoo_sme" | "disaster_cr" | null
+type PresetKey = "individual_tight" | "sme_tight" | "restaurant_overdue" | "disaster_cr" | null
 
 type LoanCategory = "card" | "personal" | "auto" | "home" | "sme" | "informal"
 
@@ -312,19 +357,36 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const ref = useRef(null)
   const dossierDialogRef = useRef<HTMLDialogElement | null>(null)
   const docPageDialogRef = useRef<HTMLDialogElement | null>(null)
+  const formRef = useRef<HTMLFormElement | null>(null)
   const resultPanelRef = useRef<HTMLDivElement | null>(null)
   const isInView = useInView(ref, { once: true, margin: "-60px" })
-  const { lang, selectedProvinceCode, setSelectedProvinceCode } = useAppState()
+  const {
+    lang,
+    selectedProvinceCode,
+    setSelectedProvinceCode,
+    setActiveDebtStatus,
+    setActiveBorrowerType,
+    provinceDetail,
+  } = useAppState()
 
   const [formStep, setFormStep] = useState<1 | 2 | 3>(1)
   const [stepDir, setStepDir] = useState<1 | -1>(1)
+  const [copiedSummary, setCopiedSummary] = useState(false)
+  const [showDetailedChart, setShowDetailedChart] = useState(false)
+  const [showScenarioTable, setShowScenarioTable] = useState(false)
+  const [showAdvancedDetails, setShowAdvancedDetails] = useState(false)
+  const [showBankQuestions, setShowBankQuestions] = useState(false)
+  const [resultFlash, setResultFlash] = useState(false)
   const [activePreset, setActivePreset] = useState<PresetKey>(null)
+  const docPageScrollRef = useRef<HTMLDivElement>(null)
   const [activeDocPage, setActiveDocPage] = useState<{
     docTitle: string
     pageNum: number
     docUrl: string
     fullText: string
     totalPages?: number
+    prevPage?: number | null
+    nextPage?: number | null
     loading: boolean
   } | null>(null)
   const [userType, setUserType] = useState<"individual" | "business">("individual")
@@ -343,15 +405,38 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [stepValidationError, setStepValidationError] = useState<string | null>(null)
   const [result, setResult] = useState<ReliefCheckResponse | null>(null)
 
   function goToStep(next: 1 | 2 | 3) {
+    if (next > formStep && next === 3 && (!hasEnteredRevenue || numDebt <= 0)) {
+      setStepValidationError(
+        lang === "th"
+          ? "กรุณากรอกรายได้และค่างวดหนี้ให้ครบก่อน"
+          : "Please enter monthly income and debt payment first.",
+      )
+      if (formStep === 1) {
+        setStepDir(1)
+        setFormStep(2)
+      }
+      return
+    }
+    setStepValidationError(null)
     setStepDir(next >= formStep ? 1 : -1)
     setFormStep(next)
   }
 
   function scrollToResults() {
     resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    setResultFlash(true)
+    setTimeout(() => setResultFlash(false), 1600)
+  }
+
+  function editStepFromResults(step: 1 | 2 | 3) {
+    setStepValidationError(null)
+    setStepDir(step >= formStep ? 1 : -1)
+    setFormStep(step)
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
 
   const isSme = userType === "business" && business !== "household"
@@ -385,12 +470,18 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const basePrincipal = parseMoney(totalPrincipal)
   const extraPrincipalSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.principal), 0)
   const numPrincipal = basePrincipal > 0 ? basePrincipal : extraPrincipalSum
-  const [mobileResultTab, setMobileResultTab] = useState<"sim" | "programs" | "dossier">("sim")
   const maxHorizonYears = debtStatus === "persistent" ? 7 : 30
 
   useEffect(() => {
     setHorizonYears((years) => Math.min(years, maxHorizonYears))
   }, [maxHorizonYears])
+
+  useEffect(() => {
+    setActiveDebtStatus(debtStatus)
+  }, [debtStatus, setActiveDebtStatus])
+  useEffect(() => {
+    setActiveBorrowerType(isSme ? "sme" : "individual")
+  }, [isSme, setActiveBorrowerType])
   const hasAnyInput = Boolean(
     revenue.trim() ||
       opex.trim() ||
@@ -548,9 +639,184 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       isSme,
       dscr: diagnostic.dscr,
       dsrPct: diagnostic.dsrPct,
-      hasWaterOrDisaster: Boolean(selectedProvData?.has_active_water_pollution || selectedProvData?.has_active_external_shock),
     })
   }, [diagnostic, debtStatus, isSme, selectedProvData])
+
+  // Bridge real provincial seasonality and active alerts into personal payment guidance
+  const provincialAdvisory = useMemo(() => {
+    const matchingDetail =
+      provinceDetail?.province?.province_code === selectedProvinceCode ? provinceDetail : null
+    const cal = matchingDetail?.seasonality_calendar ?? []
+    const validOcc = cal.filter((c) => c.avg_occupancy_rate != null)
+    let lowMonthsText = ""
+    let dropFromPeakPct = 0
+    if (validOcc.length >= 2) {
+      const sortedDesc = [...validOcc].sort((a, b) => (b.avg_occupancy_rate ?? 0) - (a.avg_occupancy_rate ?? 0))
+      const sortedAsc = [...validOcc].sort((a, b) => (a.avg_occupancy_rate ?? 0) - (b.avg_occupancy_rate ?? 0))
+      const peakOcc = sortedDesc[0]?.avg_occupancy_rate ?? 0
+      const lowOcc = sortedAsc[0]?.avg_occupancy_rate ?? 0
+      dropFromPeakPct = peakOcc > 0 ? Math.round(((peakOcc - lowOcc) / peakOcc) * 100) : 0
+      lowMonthsText = joinNaturalList(
+        sortedAsc.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+        lang,
+      )
+    }
+
+    const hazeExceed = cal
+      .filter((c) => (c.avg_pm25_mean ?? 0) >= 37.5)
+      .sort((a, b) => (b.avg_pm25_mean ?? 0) - (a.avg_pm25_mean ?? 0))
+    const hazeMonthsText = joinNaturalList(
+      hazeExceed.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+      lang,
+    )
+
+    const rainSorted = [...cal]
+      .filter((c) => c.avg_rainfall_mm != null)
+      .sort((a, b) => (b.avg_rainfall_mm ?? 0) - (a.avg_rainfall_mm ?? 0))
+    const rainMonthsText = joinNaturalList(
+      rainSorted.slice(0, 2).map((c) => fullCalendarMonth(c.cal_month, lang)),
+      lang,
+    )
+
+    const hasWaterAlert = Boolean(selectedProvData?.has_active_water_pollution)
+    const hasShockAlert = Boolean(selectedProvData?.has_active_external_shock)
+    const suggestedDropPct = isSme
+      ? dropFromPeakPct > 0
+        ? Math.min(40, Math.max(20, Math.round(dropFromPeakPct * 0.65)))
+        : hasShockAlert
+          ? 30
+          : 25
+      : hasShockAlert
+        ? 25
+        : 20
+
+    const safeSeasonalCap =
+      diagnostic && diagnostic.monthlyRevenue > 0
+        ? Math.max(0, Math.round(diagnostic.monthlyRevenue * (1 - suggestedDropPct / 100) - diagnostic.monthlyOpex))
+        : null
+
+    const partsTh: string[] = []
+    const partsEn: string[] = []
+    if (lowMonthsText) {
+      partsTh.push(
+        `ช่วงนอกฤดูท่องเที่ยวอยู่ในเดือน${lowMonthsText}${dropFromPeakPct > 0 ? ` (ยอดเข้าพักลดลงเฉลี่ย ${dropFromPeakPct}% จากช่วงสูงสุด)` : ""}`,
+      )
+      partsEn.push(
+        `low season falls in ${lowMonthsText}${dropFromPeakPct > 0 ? ` (occupancy drops ~${dropFromPeakPct}% from peak)` : ""}`,
+      )
+    }
+    if (hazeMonthsText) {
+      partsTh.push(`ฝุ่นละอองขนาดเล็กเกินเกณฑ์ในเดือน${hazeMonthsText}`)
+      partsEn.push(`PM2.5 exceeds 37.5 in ${hazeMonthsText}`)
+    }
+    if (rainMonthsText) {
+      partsTh.push(`ฝนตกชุกในเดือน${rainMonthsText}`)
+      partsEn.push(`heavy rainfall peaks in ${rainMonthsText}`)
+    }
+    if (hasWaterAlert) {
+      partsTh.push("ขณะนี้มีข่าวเฝ้าระวังมลพิษทางน้ำในพื้นที่")
+      partsEn.push("an active local water pollution alert is present")
+    } else if (hasShockAlert) {
+      partsTh.push("ขณะนี้มีสัญญาณแรงกดดันจากภัยพิบัติหรือสภาพอากาศในพื้นที่")
+      partsEn.push("active local weather or hazard stress signals are present")
+    }
+
+    const tierTh = selectedProvData?.tier_short_th || ""
+    const tierEn = selectedProvData?.tier_short_en || ""
+    const summaryTh =
+      partsTh.length === 1
+        ? partsTh[0]
+        : partsTh.length === 2
+          ? `${partsTh[0]} และ${partsTh[1]}`
+          : partsTh.length > 2
+            ? `${partsTh[0]} โดยมี${partsTh.slice(1, -1).join(" ")} และ${partsTh[partsTh.length - 1]}`
+            : tierTh
+              ? `ระดับสัญญาณความเปราะบางพื้นที่อยู่ในกลุ่ม "${tierTh}"`
+              : `ติดตามความผันผวนตามฤดูกาลในจังหวัด${selectedProvName}`
+    const summaryEn =
+      partsEn.length > 0
+        ? joinNaturalList(partsEn, "en")
+        : tierEn
+          ? `Provincial vulnerability signal is "${tierEn}"`
+          : `Monitor seasonal swings in ${selectedProvName}`
+
+    return {
+      summaryTh,
+      summaryEn,
+      suggestedDropPct,
+      safeSeasonalCap,
+      hasActiveAlert: hasWaterAlert || hasShockAlert,
+      tierShortTh: tierTh,
+      tierShortEn: tierEn,
+    }
+  }, [provinceDetail, selectedProvinceCode, selectedProvData, selectedProvName, isSme, diagnostic, lang])
+
+  const scenarioRows = useMemo(() => {
+    if (!diagnostic || numDebt <= 0) return []
+    return buildScenarioComparison({
+      status: debtStatus,
+      isSme,
+      monthlyDebt: numDebt,
+      totalPrincipalInput: numPrincipal,
+      customAnnualRatePct: numAnnualRate,
+      horizonYears,
+      deferMonths,
+    })
+  }, [diagnostic, debtStatus, isSme, numDebt, numPrincipal, numAnnualRate, horizonYears, deferMonths])
+
+  const negotiationGuide = useMemo(() => {
+    if (!diagnostic) return null
+    const primary = matchedPrograms[0]
+    return buildNegotiationGuide({
+      provinceName: selectedProvName,
+      isSme,
+      status: debtStatus,
+      diag: diagnostic,
+      comparison: loanComparison,
+      primaryProgramTitleTh: primary?.title_th,
+      primaryProgramTitleEn: primary?.title_en,
+      safeSeasonalCap: provincialAdvisory.safeSeasonalCap,
+      provincialSeasonSummaryTh: provincialAdvisory.summaryTh,
+      provincialSeasonSummaryEn: provincialAdvisory.summaryEn,
+    })
+  }, [diagnostic, matchedPrograms, selectedProvName, isSme, debtStatus, loanComparison, provincialAdvisory])
+
+  async function handleCopySummary() {
+    if (!diagnostic || !negotiationGuide) return
+    const bizObj = BUSINESS_OPTIONS.find((b) => b.id === business)
+    const statusObj = DEBT_STATUS_OPTIONS.find((s) => s.id === debtStatus)
+    const text = buildPlainTextNegotiationSummary({
+      lang,
+      provinceName: selectedProvName,
+      businessLabel: bizObj ? (lang === "th" ? bizObj.th : bizObj.en) : business,
+      statusLabel: statusObj ? (lang === "th" ? statusObj.th : statusObj.en) : debtStatus,
+      diag: diagnostic,
+      comparison: loanComparison,
+      guide: negotiationGuide,
+      matchedPrograms: matchedPrograms.map((p) => ({
+        title: lang === "th" ? p.title_th : p.title_en,
+        benefit: lang === "th" ? p.benefit_th : p.benefit_en,
+      })),
+      provincialNote: lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn,
+      safeSeasonalCap: provincialAdvisory.safeSeasonalCap,
+    })
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedSummary(true)
+      setTimeout(() => setCopiedSummary(false), 2600)
+    } catch {
+      const area = document.createElement("textarea")
+      area.value = text
+      area.style.position = "fixed"
+      area.style.opacity = "0"
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand("copy")
+      document.body.removeChild(area)
+      setCopiedSummary(true)
+      setTimeout(() => setCopiedSummary(false), 2600)
+    }
+  }
 
   async function runBackendAssessment(params: {
     prov: string
@@ -587,7 +853,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     }
   }
 
-  function applyPreset(preset: "individual_tight" | "sme_tight" | "khunsoo_sme" | "disaster_cr") {
+  function applyPreset(preset: "individual_tight" | "sme_tight" | "restaurant_overdue" | "disaster_cr") {
     setActivePreset(preset)
     setApiError(null)
     setExtraLoans([])
@@ -611,7 +877,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       setDebtPayment("48,000")
       setCashReserve("240,000")
       setTotalPrincipal("1,850,000")
-    } else if (preset === "khunsoo_sme") {
+    } else if (preset === "restaurant_overdue") {
       setUserType("business")
       setBusiness("restaurant")
       setDebtStatus("overdue_31_120")
@@ -638,8 +904,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     if (!hasEnteredRevenue || numDebt <= 0) {
       setApiError(
         lang === "th"
-          ? "กรุณากรอกรายได้ต่อเดือน (หากไม่มีรายได้ใส่ 0) และค่างวดหนี้ต่อเดือนก่อนกดคำนวณ"
-          : "Please enter monthly revenue (enter 0 if no income) and monthly debt payment before evaluating.",
+          ? "กรุณากรอกรายได้และค่างวดหนี้ให้ครบก่อน"
+          : "Please enter monthly income and debt payment first.",
       )
       return
     }
@@ -661,14 +927,22 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
     const title = cite.doc_title || "เอกสารทางการ"
     const pNum = Number(cite.page_num) || 1
     const fallbackText = cite.page_excerpt || cite.excerpt || ""
-    setActiveDocPage({
+    setActiveDocPage((prev) => ({
       docTitle: title,
       pageNum: pNum,
-      docUrl: cite.doc_url || "",
+      docUrl: cite.doc_url || prev?.docUrl || "",
       fullText: fallbackText,
+      totalPages: prev?.docTitle === title ? prev.totalPages : undefined,
+      prevPage: pNum > 1 ? pNum - 1 : null,
+      nextPage: null,
       loading: !fallbackText,
-    })
-    docPageDialogRef.current?.showModal()
+    }))
+    if (docPageDialogRef.current && !docPageDialogRef.current.open) {
+      docPageDialogRef.current.showModal()
+    }
+    if (docPageScrollRef.current) {
+      docPageScrollRef.current.scrollTop = 0
+    }
     try {
       const pageData: PolicyPageResponse = await fetchPolicyPage(title, pNum)
       setActiveDocPage({
@@ -677,6 +951,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
         docUrl: pageData.doc_url || cite.doc_url || "",
         fullText: pageData.full_text || fallbackText,
         totalPages: pageData.total_pages,
+        prevPage: pageData.prev_page ?? null,
+        nextPage: pageData.next_page ?? null,
         loading: false,
       })
     } catch {
@@ -702,6 +978,9 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
         source: lang === "th" ? p.source_th : p.source_en,
       })),
       checklist,
+      negotiationGuide,
+      provincialNote: lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn,
+      safeSeasonalCap: provincialAdvisory.safeSeasonalCap,
     })
 
     const iframe = document.createElement("iframe")
@@ -735,13 +1014,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
           "รายการเดินบัญชีย้อนหลัง 6 เดือน (บัญชีส่วนตัว หรือบัญชีร้านค้า)",
           "ใบแจ้งยอดหนี้คงเหลือและตารางค่างวดล่าสุดของสถาบันการเงินเจ้าหนี้",
           "หลักฐานรายได้ลดลงตามฤดูกาลหรือผลกระทบจากน้ำท่วม ฝุ่น หรือมลพิษทางน้ำในพื้นที่ (ถ้ามี)",
-          "ใบสรุปความพร้อมทางการเงิน 1 หน้า (สั่งพิมพ์จากระบบนี้เพื่อถือไปยื่นประกอบการพูดคุย)",
+          "บันทึกสรุปตัวเลขและแนวทางเจรจาเบื้องต้น (คัดลอกไว้ในมือถือหรือพิมพ์ถือไปคุยกับเจ้าหน้าที่)",
         ]
       : [
           "6 month bank statements (personal or business account)",
           "Latest loan statements and installment schedules from your lenders",
           "Evidence of seasonal drop or regional hazard/water pollution impact (if applicable)",
-          "One page Financial Readiness Dossier printed from this tool",
+          "Personal financial summary and negotiation notes (copied on phone or printed)",
         ]
 
   return (
@@ -760,90 +1039,90 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
         >
           <div className="max-w-2xl">
             <p className="mb-2 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              {lang === "th" ? "เช็กสุขภาพการเงินและคำนวณค่างวดใหม่" : "Financial Health & Restructuring Simulator"}
+              {lang === "th" ? "ประเมินการเงินส่วนตัว" : "Personal Financial Check"}
             </p>
             <h2
               id="relief-heading"
               className="font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl"
             >
               {lang === "th"
-                ? "ตรวจสุขภาพการเงิน คำนวณค่างวด และสร้างใบสรุปยื่นธนาคาร"
-                : "Diagnose Cashflow, Simulate Relief & Export 1 Page Dossier"}
+                ? "กรอกรายรับ รายจ่าย และค่างวดหนี้ของคุณ"
+                : "Enter Your Income, Expenses & Monthly Debt"}
             </h2>
           </div>
           <p className="max-w-md text-sm leading-6 text-muted-foreground">
             {lang === "th"
-              ? "คำนวณความสามารถในการจ่ายหนี้ ระยะเวลาที่เงินเก็บอยู่รอดได้ และเปรียบเทียบค่างวดเดิมกับค่างวดใหม่ พร้อมพิมพ์ใบสรุปไปคุยกับธนาคารได้ทันที"
-              : "Evaluate debt affordability, cash reserve runway, and policy aligned payment comparisons with a printable 1 page lender dossier."}
+              ? "ใส่ตัวเลขคร่าวๆ ใน 3 ขั้นตอน หรือกดดูตัวอย่างด้านล่าง เพื่อดูผลวิเคราะห์ทันที"
+              : "Fill in rough figures across 3 steps, or tap an example below to see instant results."}
           </p>
         </motion.div>
 
         {/* Single Unified Quick Action Bar with Dynamic Active Highlight */}
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <Sparkles aria-hidden="true" className="size-3.5" />
-              {lang === "th" ? "ลองกดดูตัวอย่างทันที:" : "Instant live examples:"}
-            </span>
-            {(
-              [
-                {
-                  key: "individual_tight" as const,
-                  th: "บุคคลทั่วไป / มนุษย์เงินเดือน",
-                  en: "Individual / Salaried",
-                  onClick: () => applyPreset("individual_tight"),
-                },
-                {
-                  key: "sme_tight" as const,
-                  th: "โรงแรมที่การเงินเริ่มตึงมือ",
-                  en: "Tight Hotel SME",
-                  onClick: () => applyPreset("sme_tight"),
-                },
-                {
-                  key: "khunsoo_sme" as const,
-                  th: "ร้านอาหารค้างชำระ 1–4 เดือน",
-                  en: "Restaurant 31 to 120d",
-                  onClick: () => applyPreset("khunsoo_sme"),
-                },
-                {
-                  key: "disaster_cr" as const,
-                  th: "ร้านอาหารริมน้ำกระทบมลพิษ",
-                  en: "Riverside Hazard SME",
-                  onClick: () => applyPreset("disaster_cr"),
-                },
-              ] as const
-            ).map((btn) => {
-              const isSelected = activePreset === btn.key
-              return (
-                <button
-                  key={btn.key}
-                  type="button"
-                  aria-pressed={isSelected}
-                  onClick={btn.onClick}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    isSelected
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border bg-background text-foreground hover:bg-secondary"
-                  }`}
-                >
-                  {lang === "th" ? btn.th : btn.en}
-                </button>
-              )
-            })}
-          </div>
-
-          {hasAnyInput && (
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={resetAllInputs}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              >
-                <RotateCcw aria-hidden="true" className="size-3" />
-                {lang === "th" ? "ล้างข้อมูล" : "Clear"}
-              </button>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+                <Sparkles aria-hidden="true" className="size-3.5" />
+                {lang === "th" ? "ลองกดดูตัวอย่างทันที:" : "Instant live examples:"}
+              </span>
+              {(
+                [
+                  {
+                    key: "individual_tight" as const,
+                    th: "บุคคลทั่วไป / มนุษย์เงินเดือน",
+                    en: "Individual / Salaried",
+                    onClick: () => applyPreset("individual_tight"),
+                  },
+                  {
+                    key: "sme_tight" as const,
+                    th: "โรงแรมที่การเงินเริ่มตึงมือ",
+                    en: "Tight Hotel SME",
+                    onClick: () => applyPreset("sme_tight"),
+                  },
+                  {
+                    key: "restaurant_overdue" as const,
+                    th: "ร้านอาหารค้างชำระ 1–4 เดือน",
+                    en: "Restaurant 31 to 120d",
+                    onClick: () => applyPreset("restaurant_overdue"),
+                  },
+                  {
+                    key: "disaster_cr" as const,
+                    th: "ร้านอาหารริมน้ำกระทบมลพิษ",
+                    en: "Riverside Hazard SME",
+                    onClick: () => applyPreset("disaster_cr"),
+                  },
+                ] as const
+              ).map((btn) => {
+                const isSelected = activePreset === btn.key
+                return (
+                  <button
+                    key={btn.key}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={btn.onClick}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      isSelected
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border bg-background text-foreground hover:bg-secondary"
+                    }`}
+                  >
+                    {lang === "th" ? btn.th : btn.en}
+                  </button>
+                )
+              })}
             </div>
-          )}
+
+            {hasAnyInput && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resetAllInputs}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  <RotateCcw aria-hidden="true" className="size-3" />
+                  {lang === "th" ? "ล้างข้อมูล" : "Clear"}
+                </button>
+              </div>
+            )}
         </div>
 
         <div
@@ -854,14 +1133,15 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
           }
         >
           {/* Left Sticky Control Column on Desktop holding the 3 Step Stepper and Live Summary Snapshot */}
-          <div className={diagnostic ? "space-y-4 lg:sticky lg:top-24" : ""}>
+          <div className={diagnostic ? "min-w-0 space-y-4 lg:sticky lg:top-24" : "min-w-0"}>
             {/* Connected 3 Step Horizontal Slide Wizard Form */}
             <motion.form
+              ref={formRef}
               onSubmit={handleSubmit}
               initial={{ opacity: 0, y: 20 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.5, delay: 0.06 }}
-              className="rounded-[1.75rem] border border-border bg-card p-5 sm:p-6"
+              className="scroll-mt-24 rounded-[1.75rem] border border-border bg-card p-5 sm:p-6"
             >
             <div className="mb-4 flex items-start justify-between gap-2">
               <div>
@@ -1055,6 +1335,25 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       )}
                     </div>
 
+                    {/* Live Provincial Risk Preview Linked Directly to Selected Province */}
+                    <div
+                      className={`rounded-xl border px-3 py-2.5 text-[11px] leading-5 ${
+                        provincialAdvisory.hasActiveAlert
+                          ? "border-amber-600/30 bg-amber-500/10 text-amber-950 dark:text-amber-200"
+                          : "border-border bg-secondary/45 text-muted-foreground"
+                      }`}
+                    >
+                      <p className="inline-flex items-center gap-1.5 font-semibold text-foreground">
+                        <MapPin aria-hidden="true" className="size-3.5 shrink-0" />
+                        {lang === "th"
+                          ? `บริบทพื้นที่จังหวัด${selectedProvName} (ใช้ประกอบการคำนวณอัตโนมัติ)`
+                          : `${selectedProvName} Local Context (Auto-Linked)`}
+                      </p>
+                      <p className="mt-0.5">
+                        {lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn}
+                      </p>
+                    </div>
+
                     {/* Repayment Status Selector */}
                     <fieldset>
                       <legend className="mb-2 text-xs font-medium text-foreground">
@@ -1098,7 +1397,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         onClick={() => goToStep(2)}
                         className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85 sm:w-auto"
                       >
-                        <span>{lang === "th" ? "ถัดไป · กรอกรายรับและค่างวด" : "Next · Income & Debt"}</span>
+                        <span>{lang === "th" ? "ถัดไป" : "Next"}</span>
                         <ArrowRight aria-hidden="true" className="size-3.5" />
                       </button>
                     </div>
@@ -1132,10 +1431,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             value={formatMoneyInput(revenue)}
                             onChange={(e) => {
                               setActivePreset(null)
+                              setStepValidationError(null)
                               setRevenue(formatMoneyInput(e.target.value))
                             }}
                             placeholder={lang === "th" ? "กรอกรายได้ต่อเดือน (ไม่มีใส่ 0)" : "Enter monthly income"}
-                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                            className={`h-10 w-full rounded-xl border bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10 ${
+                              stepValidationError && !hasEnteredRevenue ? "border-red-500/75" : "border-input"
+                            }`}
                           />
                           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
                             {lang === "th" ? "บาท" : "THB"}
@@ -1161,10 +1463,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             value={formatMoneyInput(debtPayment)}
                             onChange={(e) => {
                               setActivePreset(null)
+                              setStepValidationError(null)
                               setDebtPayment(formatMoneyInput(e.target.value))
                             }}
                             placeholder={lang === "th" ? "กรอกค่างวดต่อเดือน" : "Enter monthly payment"}
-                            className="h-10 w-full rounded-xl border border-input bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10"
+                            className={`h-10 w-full rounded-xl border bg-background px-3 pr-11 text-sm font-medium text-foreground outline-none transition placeholder:text-xs placeholder:font-normal placeholder:text-muted-foreground/60 focus:border-foreground/45 focus:ring-2 focus:ring-foreground/10 ${
+                              stepValidationError && numDebt <= 0 ? "border-red-500/75" : "border-input"
+                            }`}
                           />
                           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
                             {lang === "th" ? "บาท" : "THB"}
@@ -1258,8 +1563,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             <Check aria-hidden="true" className="size-3.5" />
                           )}
                           {lang === "th"
-                            ? "คำนวณผลวิเคราะห์เบื้องต้นแล้ว · กรอกเงินต้นและดอกเบี้ยต่อในขั้นที่ 3 ได้"
-                            : "Diagnostic ready · Add loan principal or rate in Step 3"}
+                            ? "คำนวณผลเบื้องต้นแล้ว กดถัดไปเพื่อใส่รายละเอียดหนี้เพิ่มได้"
+                            : "Initial results are ready. Tap Next to add loan principal or rate."}
                         </span>
                         <button
                           type="button"
@@ -1268,6 +1573,15 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         >
                           {lang === "th" ? "ดูผลวิเคราะห์ด้านล่าง ↓" : "View results ↓"}
                         </button>
+                      </div>
+                    )}
+
+                    {stepValidationError && (
+                      <div
+                        role="alert"
+                        className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-800"
+                      >
+                        {stepValidationError}
                       </div>
                     )}
 
@@ -1286,7 +1600,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         onClick={() => goToStep(3)}
                         className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85"
                       >
-                        <span>{lang === "th" ? "ถัดไป · ใส่เงินต้น/ดอกเบี้ยเพิ่ม" : "Next · Loan Details"}</span>
+                        <span>{lang === "th" ? "ถัดไป" : "Next"}</span>
                         <ArrowRight aria-hidden="true" className="size-3.5" />
                       </button>
                     </div>
@@ -1373,10 +1687,10 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                               {lang === "th"
                                 ? debtStatus === "persistent"
-                                  ? "เลือกได้ไม่เกิน 7 ปีตามกรอบมาตรการหนี้เรื้อรัง ตัวเลขนี้ใช้จำลองแผน ไม่ใช่การยืนยันสิทธิ์หรือเงื่อนไขจากเจ้าหนี้"
+                                  ? "เลือกได้ไม่เกิน 7 ปีตามหลักเกณฑ์ ธปท. ที่ปรับปรุงในปี 2568 ตัวเลขนี้ใช้จำลองแผน ไม่ใช่การยืนยันสิทธิ์หรือเงื่อนไขจากเจ้าหนี้"
                                   : "เลือกปีที่ต้องการดูในตารางจำลอง ไม่ใช่ระยะเวลาที่เจ้าหนี้อนุมัติแน่นอน"
                                 : debtStatus === "persistent"
-                                  ? "Limited to 7 years for the persistent-debt measure. This is a simulation, not confirmed eligibility or lender terms."
+                                  ? "Limited to 7 years under the BOT rules updated in 2025. This is a simulation, not confirmed eligibility or lender terms."
                                   : "Choose the period to display in the simulation. It is not a guaranteed lender-approved term."}
                             </p>
                           </div>
@@ -1642,14 +1956,34 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={openDossierModal}
-                  className="mt-3.5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
-                >
-                  <FileText aria-hidden="true" className="size-3.5" />
-                  {lang === "th" ? "เปิดดูและพิมพ์ใบสรุปยื่นธนาคาร" : "Preview & Print Bank Dossier"}
-                </button>
+                <div className="mt-3.5 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleCopySummary()}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                  >
+                    {copiedSummary ? (
+                      <Check aria-hidden="true" className="size-3.5" />
+                    ) : (
+                      <Copy aria-hidden="true" className="size-3.5" />
+                    )}
+                    {copiedSummary
+                      ? lang === "th"
+                        ? "คัดลอกสรุปไว้เรียบร้อยแล้ว"
+                        : "Summary Copied"
+                      : lang === "th"
+                        ? "คัดลอกสรุปและคำพูดคุยกับธนาคาร"
+                        : "Copy Summary & Talking Points"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openDossierModal}
+                    className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                  >
+                    <FileText aria-hidden="true" className="size-3.5" />
+                    {lang === "th" ? "ดูตัวอย่างเอกสารพร้อมพิมพ์ (ทางเลือกเสริม)" : "Preview Printable Notes (Optional)"}
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1661,9 +1995,286 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35 }}
-              className="scroll-mt-28 flex flex-col rounded-[1.75rem] border border-border bg-secondary/45 p-5 sm:p-6"
+              className={`scroll-mt-28 flex min-w-0 flex-col rounded-[1.75rem] border bg-secondary/45 p-5 transition-all duration-300 sm:p-6 ${
+                resultFlash ? "border-teal-600 ring-2 ring-teal-600/25" : "border-border"
+              }`}
             >
               <>
+                {resultFlash && (
+                  <div className="mb-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-teal-700 px-3 py-1 text-[11px] font-medium text-white">
+                    <Check aria-hidden="true" className="size-3.5" />
+                    {lang === "th" ? "อัปเดตผลคำนวณตามข้อมูลล่าสุดแล้ว" : "Updated with your latest numbers"}
+                  </div>
+                )}
+                {/* 0. Plain Language Summary + Side by Side Payment Comparison for Parents and Citizens */}
+                <div className="rounded-2xl border border-foreground/20 bg-background p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-foreground">
+                      {lang === "th" ? "สรุปผลให้เข้าใจง่ายๆ ตอนนี้" : "Easy-to-Read Summary"}
+                    </p>
+                    <span
+                      className={`rounded-full border px-3 py-1 text-[11px] font-medium ${
+                        diagnostic.netMonthlyCashflow < 0
+                          ? "border-red-600/30 bg-red-500/10 text-red-800"
+                          : diagnostic.netMonthlyCashflow < diagnostic.monthlyDebt * 0.25
+                            ? "border-amber-600/30 bg-amber-500/10 text-amber-900"
+                            : "border-emerald-700/25 bg-emerald-700/10 text-emerald-800"
+                      }`}
+                    >
+                      {diagnostic.netMonthlyCashflow >= 0
+                        ? lang === "th"
+                          ? "ตอนนี้ยังจ่ายไหว"
+                          : "Currently Affordable"
+                        : lang === "th"
+                          ? "ตอนนี้ค่างวดหนักเกินไป"
+                          : "Payment Too Heavy"}
+                    </span>
+                  </div>
+
+                  {/* Everyday Math Line */}
+                  <div className="mt-3 rounded-xl bg-secondary/45 px-3.5 py-2.5 text-xs leading-6 text-foreground">
+                    {lang === "th" ? (
+                      <>
+                        รับมาเดือนละ <strong>{Math.round(diagnostic.monthlyRevenue).toLocaleString()}</strong> บาท
+                        {" − "}{userType === "business" ? "รายจ่ายกิจการ" : "ค่ากินอยู่/รายจ่าย"}{" "}
+                        <strong>{Math.round(diagnostic.monthlyOpex).toLocaleString()}</strong> บาท
+                        {" − "}จ่ายหนี้ <strong>{Math.round(diagnostic.monthlyDebt).toLocaleString()}</strong> บาท
+                        {" = "}
+                        <strong className={diagnostic.netMonthlyCashflow < 0 ? "text-red-700" : "text-teal-700"}>
+                          {diagnostic.netMonthlyCashflow >= 0
+                            ? `เหลือเดือนละ +${Math.round(diagnostic.netMonthlyCashflow).toLocaleString()} บาท`
+                            : `เงินขาดมือเดือนละ ${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} บาท`}
+                        </strong>
+                      </>
+                    ) : (
+                      <>
+                        Income <strong>{Math.round(diagnostic.monthlyRevenue).toLocaleString()}</strong>
+                        {" − "}Expenses <strong>{Math.round(diagnostic.monthlyOpex).toLocaleString()}</strong>
+                        {" − "}Debt <strong>{Math.round(diagnostic.monthlyDebt).toLocaleString()}</strong>
+                        {" = "}
+                        <strong className={diagnostic.netMonthlyCashflow < 0 ? "text-red-700" : "text-teal-700"}>
+                          {diagnostic.netMonthlyCashflow >= 0
+                            ? `+${Math.round(diagnostic.netMonthlyCashflow).toLocaleString()} THB left/mo`
+                            : `-${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} THB short/mo`}
+                        </strong>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Two Big Side by Side Numbers */}
+                  {loanComparison && debtStatus !== "overdue_120_plus" && (() => {
+                    const isDisaster = loanComparison.mode === "disaster_defer"
+                    const proposedPay = isDisaster
+                      ? (loanComparison.policyGracePayment ?? loanComparison.policyYear1Payment)
+                      : loanComparison.policyYear1Payment
+                    const savedMonthly = Math.max(0, loanComparison.originalMonthlyPayment - proposedPay)
+                    return (
+                      <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                        <div className="rounded-xl border border-border bg-secondary/25 px-4 py-3">
+                          <p className="text-[11px] text-muted-foreground">
+                            {lang === "th" ? "ตอนนี้จ่ายอยู่เดือนละ" : "Current Payment / Month"}
+                          </p>
+                          <p className="mt-1 font-display text-xl font-semibold tabular-nums text-foreground">
+                            {loanComparison.originalMonthlyPayment.toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-teal-700/25 bg-teal-700/5 px-4 py-3">
+                          <p className="text-[11px] text-teal-900">
+                            {lang === "th" ? "ถ้าขอปรับแผนแล้ว จ่ายเดือนละ" : "Target Plan Payment / Month"}
+                          </p>
+                          <p className="mt-1 font-display text-xl font-semibold tabular-nums text-teal-800">
+                            {proposedPay.toLocaleString()} {lang === "th" ? "บาท" : "THB"}
+                          </p>
+                          {savedMonthly > 0 && (
+                            <p className="mt-0.5 text-[11px] font-medium text-teal-800">
+                              {lang === "th"
+                                ? `เบาลงเดือนละ ${savedMonthly.toLocaleString()} บาท`
+                                : `Saves ${savedMonthly.toLocaleString()} THB/mo`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* 3 Bullet Plain Action Guidance */}
+                  <ul className="mt-3 space-y-1.5 text-xs leading-6 text-muted-foreground">
+                    {provincialAdvisory.safeSeasonalCap != null && (
+                      <li>
+                        <strong className="text-foreground">
+                          {lang === "th" ? "• เผื่อช่วงรายได้ลดในจังหวัด" + selectedProvName + ": " : `• ${selectedProvName} Slow-Month Buffer: `}
+                        </strong>
+                        {provincialAdvisory.safeSeasonalCap > 0
+                          ? lang === "th"
+                            ? `หากรายได้ลดลง -${provincialAdvisory.suggestedDropPct}% ตามฤดูกาล จะเหลือเงินจ่ายหนี้ได้ราวเดือนละ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท (ควรกันเงินสำรองเพิ่มหรือขอลดค่างวดให้ใกล้ระดับนี้)`
+                            : `If income drops -${provincialAdvisory.suggestedDropPct}% seasonally, ~${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo remains for debt (build reserve or target near this level).`
+                          : lang === "th"
+                            ? "หากรายได้ลดลงตามฤดูกาล เงินจะไม่พอจ่าย ควรรีบติดต่อเจ้าหนี้เพื่อขอพักเงินต้นหรือลดค่างวด"
+                            : "If income dips seasonally, contact your lender early for payment relief."}
+                      </li>
+                    )}
+                    {matchedPrograms[0] && (
+                      <li>
+                        <strong className="text-foreground">
+                          {lang === "th" ? "• ช่องทางที่ควรติดต่อก่อน: " : "• First Place to Contact: "}
+                        </strong>
+                        {lang === "th" ? matchedPrograms[0].title_th : matchedPrograms[0].title_en}
+                      </li>
+                    )}
+                  </ul>
+                </div>
+
+                {/* Friendly Bank Negotiation Card */}
+                {negotiationGuide && (
+                  <div className="mt-4 rounded-2xl border border-border bg-background p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="max-w-md">
+                        <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                          <MessageSquareText aria-hidden="true" className="size-4" />
+                          {lang === "th"
+                            ? "จะเริ่มคุยกับธนาคารยังไงดี? (คัดลอกไปใช้ได้เลย)"
+                            : "What to Say When Contacting Your Bank"}
+                        </p>
+                        <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
+                          {lang === "th"
+                            ? "ใช้ข้อความนี้เวลาโทรเข้าศูนย์บริการลูกค้าหรือส่งข้อความคุยกับเจ้าหน้าที่ได้เลย"
+                            : "Copy this personalized script for phone calls or chat with your lender."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopySummary()}
+                        className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                      >
+                        {copiedSummary ? (
+                          <Check aria-hidden="true" className="size-3.5" />
+                        ) : (
+                          <Copy aria-hidden="true" className="size-3.5" />
+                        )}
+                        {copiedSummary
+                          ? lang === "th"
+                            ? "คัดลอกเรียบร้อยแล้ว"
+                            : "Copied"
+                          : lang === "th"
+                            ? "คัดลอกข้อความนี้"
+                            : "Copy Script"}
+                      </button>
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-border bg-secondary/35 p-3.5 text-xs leading-6 text-foreground">
+                      &ldquo;{lang === "th" ? negotiationGuide.openingTh : negotiationGuide.openingEn}&rdquo;
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        aria-expanded={showBankQuestions}
+                        onClick={() => setShowBankQuestions((open) => !open)}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline-offset-4 hover:underline"
+                      >
+                        <span>
+                          {showBankQuestions
+                            ? lang === "th"
+                              ? "ซ่อนคำถามที่ควรถามเจ้าหน้าที่"
+                              : "Hide questions to ask"
+                            : lang === "th"
+                              ? "ดูคำถามที่ควรถามเจ้าหน้าที่ (4 ข้อ)"
+                              : "View 4 questions to ask"}
+                        </span>
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={`size-3.5 transition-transform ${showBankQuestions ? "rotate-180" : ""}`}
+                        />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={openDossierModal}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary"
+                      >
+                        <FileText aria-hidden="true" className="size-3.5" />
+                        {lang === "th" ? "ดูเอกสารพร้อมพิมพ์ (ทางเลือกเสริม)" : "Printable Notes"}
+                      </button>
+                    </div>
+
+                    {showBankQuestions && (
+                      <ul className="mt-3 space-y-1.5 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
+                        {(lang === "th" ? negotiationGuide.questionsTh : negotiationGuide.questionsEn).map((q, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold text-foreground">
+                              {idx + 1}
+                            </span>
+                            <span>{q}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {/* Priority #1 Official Program or Lender Step Direct Action Card */}
+                {matchedPrograms[0] && (
+                  <div className="mt-4 rounded-2xl border border-border bg-background p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="rounded-full bg-foreground px-2.5 py-0.5 text-[10px] font-semibold text-background">
+                        {["debt_clinic", "fast_debt_exit_sam", "persistent_debt", "credit_boost_tcg"].includes(
+                          matchedPrograms[0].id,
+                        )
+                          ? lang === "th"
+                            ? "โครงการที่แนะนำให้ติดต่อก่อน"
+                            : "Priority Program to Contact"
+                          : lang === "th"
+                            ? "แนวทางที่แนะนำให้เริ่มก่อน"
+                            : "Priority Step to Start With"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {lang === "th" ? matchedPrograms[0].badge_th : matchedPrograms[0].badge_en}
+                      </span>
+                    </div>
+                    <h4 className="mt-2 font-display text-sm font-semibold text-foreground">
+                      {lang === "th" ? matchedPrograms[0].title_th : matchedPrograms[0].title_en}
+                    </h4>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {lang === "th" ? matchedPrograms[0].benefit_th : matchedPrograms[0].benefit_en}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <a
+                        href={matchedPrograms[0].action_href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                      >
+                        {lang === "th" ? matchedPrograms[0].action_label_th : matchedPrograms[0].action_label_en}
+                        <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {/* Single Clean Toggle for Detailed Banking Numbers, Stress Test, Charts & Policy Docs */}
+                <button
+                  type="button"
+                  aria-expanded={showAdvancedDetails}
+                  onClick={() => setShowAdvancedDetails((open) => !open)}
+                  className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-border bg-background px-4 py-3 text-left text-xs font-medium text-foreground transition-colors hover:bg-secondary/60"
+                >
+                  <span>
+                    {showAdvancedDetails
+                      ? lang === "th"
+                        ? "ซ่อนรายละเอียดตัวเลขเชิงลึกและกราฟ"
+                        : "Hide detailed numbers, charts & documents"
+                      : lang === "th"
+                        ? "ดูรายละเอียดตัวเลขเพิ่มเติม (จำลองรายได้ลด · กราฟ · เทียบ 4 ทางเลือก · เอกสารทางการ)"
+                        : "View detailed numbers (stress test, charts, 4 options & official docs)"}
+                  </span>
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform ${showAdvancedDetails ? "rotate-180" : ""}`}
+                  />
+                </button>
+
+                {showAdvancedDetails && (
+                  <div className="mt-4">
                 {/* 1. Financial Health Diagnostic Cards */}
                 <div className="rounded-2xl border border-border bg-background p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1723,8 +2334,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       </p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
                         {lang === "th"
-                          ? `เงินเหลือหลังหักค่าใช้จ่ายจำเป็น (ใช้คำนวณ DSCR) ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท · ค่างวดต่อรายได้รวม (Gross DSR) ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "คำนวณไม่ได้ (ไม่มีรายได้ · วิกฤต)"}`
-                          : `Post-expense CF (DSCR base) ${Math.round(diagnostic.operatingCashflow).toLocaleString()} · Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income · Critical)"}`}
+                          ? `เงินเหลือหลังหักค่าใช้จ่ายจำเป็น ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท · ค่างวดคิดเป็น ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}% ของรายได้รวม` : "คำนวณไม่ได้ (ไม่มีรายได้)"}`
+                          : `Post-expense CF ${Math.round(diagnostic.operatingCashflow).toLocaleString()} · Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income)"}`}
                       </p>
                     </div>
 
@@ -1768,8 +2379,67 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                     </div>
                   </div>
 
+                  {/* Provincial Risk Context & Safe Seasonal Payment Cap */}
+                  <div className="mt-3.5 rounded-xl border border-sky-700/20 bg-sky-500/5 p-3.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                          <MapPin aria-hidden="true" className="size-3.5 shrink-0 text-sky-700" />
+                          {lang === "th"
+                            ? `บริบทความเสี่ยงจังหวัด${selectedProvName}และเพดานค่างวดที่ปลอดภัย`
+                            : `${selectedProvName} Local Risk Context & Safe Payment Cap`}
+                        </p>
+                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                          {lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn}
+                        </p>
+                        {provincialAdvisory.safeSeasonalCap != null && (
+                          <p className="mt-1.5 text-xs leading-5 text-foreground">
+                            {provincialAdvisory.safeSeasonalCap > 0 ? (
+                              lang === "th" ? (
+                                <>
+                                  หากรายได้ลดลงตามจังหวะพื้นที่ราว -{provincialAdvisory.suggestedDropPct}% แนะนำเจรจาตั้งค่างวดใหม่{" "}
+                                  <strong className="font-semibold text-teal-800">
+                                    ไม่เกินประมาณ {provincialAdvisory.safeSeasonalCap.toLocaleString()} บาทต่อเดือน
+                                  </strong>{" "}
+                                  เพื่อให้ยังพอจ่ายได้โดยไม่ดึงเงินเก็บสำรองจนหมด
+                                </>
+                              ) : (
+                                <>
+                                  If income dips ~-{provincialAdvisory.suggestedDropPct}% with local seasonality, aim for a restructured payment{" "}
+                                  <strong className="font-semibold text-teal-800">
+                                    at or below ~{provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo
+                                  </strong>{" "}
+                                  to protect your cash reserve.
+                                </>
+                              )
+                            ) : lang === "th" ? (
+                              <>
+                                หากรายได้ลดลงราว -{provincialAdvisory.suggestedDropPct}% เงินเหลือหลังหักค่าใช้จ่ายจำเป็นจะไม่เพียงพอต่อค่างวด ควรเร่งติดต่อเจ้าหนี้เพื่อขอพักชำระเงินต้นหรือปรับลดค่างวดล่วงหน้า
+                              </>
+                            ) : (
+                              <>
+                                A -{provincialAdvisory.suggestedDropPct}% local dip would leave zero post-expense surplus. Contact your lender early for principal deferral or step-down relief.
+                              </>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      {stressDropPct !== provincialAdvisory.suggestedDropPct && (
+                        <button
+                          type="button"
+                          onClick={() => setStressDropPct(provincialAdvisory.suggestedDropPct)}
+                          className="shrink-0 rounded-full border border-border bg-background px-3 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-secondary"
+                        >
+                          {lang === "th"
+                            ? `ใช้เกณฑ์จังหวัดนี้ (-${provincialAdvisory.suggestedDropPct}%)`
+                            : `Apply -${provincialAdvisory.suggestedDropPct}% dip`}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Interactive Revenue Drop Simulation */}
-                  <div className="mt-3.5 rounded-xl border border-amber-600/25 bg-amber-500/5 p-3.5">
+                  <div className="mt-3 rounded-xl border border-amber-600/25 bg-amber-500/5 p-3.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-semibold text-foreground">
                         {lang === "th"
@@ -1847,37 +2517,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </div>
                 </div>
 
-                {/* Mobile result section switcher so citizens on phones can browse results without an overwhelming scroll */}
-                <div
-                  role="tablist"
-                  aria-label={lang === "th" ? "เลือกดูผลลัพธ์การคำนวณ" : "Result section tabs"}
-                  className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-border bg-background p-1 md:hidden"
-                >
-                  {(
-                    [
-                      { id: "sim", th: "จำลองค่างวด", en: "Installment" },
-                      { id: "programs", th: "แนวทางแก้หนี้", en: "Programs" },
-                      { id: "dossier", th: "ใบสรุปยื่นธนาคาร", en: "Bank Summary" },
-                    ] as const
-                  ).map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={mobileResultTab === t.id}
-                      onClick={() => setMobileResultTab(t.id)}
-                      className={`rounded-xl px-2 py-2 text-center text-xs font-medium transition-colors ${
-                        mobileResultTab === t.id
-                          ? "bg-foreground text-background shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {lang === "th" ? t.th : t.en}
-                    </button>
-                  ))}
-                </div>
-
-                <div className={mobileResultTab === "sim" ? "block" : "hidden md:block"}>
+                <div>
                   {/* 2A. If Overdue > 120 Days Show Official Debt Clinic Referral Bridge */}
                   {debtStatus === "overdue_120_plus" ? (
                   <div className="mt-4 rounded-2xl border border-amber-600/35 bg-background p-5">
@@ -1936,11 +2576,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                       <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
                         {lang === "th" ? loanComparison.ruleCaptionTh : loanComparison.ruleCaptionEn}
                       </p>
-                      {loanComparison.mode === "khunsoo" && (
+                      {loanComparison.mode === "step_up_illustration" && (
                         <p className="mt-1 text-[11px] font-medium text-amber-800">
                           {lang === "th"
-                            ? "หมายเหตุ: รองรับสินเชื่อบ้าน รถยนต์ และสินเชื่อธุรกิจ SME (กรณีบัตรเครดิต/สินเชื่อบุคคล ใช้เกณฑ์ปรับโครงสร้างหนี้เชิงป้องกัน)"
-                            : "Note: Covers home, auto, and SME loans (unsecured cards/personal loans use Responsible Lending restructuring)."}
+                            ? "ตัวเลข 50% / 70% / 90% เป็นสมมติฐานเพื่อเปรียบเทียบเท่านั้น ไม่ใช่เงื่อนไขมาตรการหรือข้อเสนอจากเจ้าหนี้"
+                            : "The 50% / 70% / 90% figures are comparison assumptions only, not program terms or an offer from a lender."}
                         </p>
                       )}
 
@@ -2032,235 +2672,311 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         )
                       })()}
 
-                      {/* Side by Side Monthly Payment Bar Chart against Affordable Operating Profit Line */}
-                      <div className="mt-4">
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                      {/* Side by Side Monthly Payment Bar Chart Collapsed by Default for Clarity */}
+                      <div className="mt-4 border-t border-border pt-3">
+                        <button
+                          type="button"
+                          aria-expanded={showDetailedChart}
+                          onClick={() => setShowDetailedChart((open) => !open)}
+                          className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-secondary/70"
+                        >
                           <span>
-                            {lang === "th"
-                              ? userType === "individual"
-                                ? "ค่างวดที่ต้องจ่ายต่อเดือน เทียบกับ เงินเหลือหลังหักค่าใช้จ่ายจำเป็น"
-                                : "ค่างวดที่ต้องจ่ายต่อเดือน เทียบกับ กำไรที่กิจการมีจ่ายไหว"
-                              : "Monthly Payment vs Affordable Cashflow"}
+                            {showDetailedChart
+                              ? lang === "th"
+                                ? "ซ่อนกราฟเปรียบเทียบค่างวดรายปี"
+                                : "Hide yearly installment chart"
+                              : lang === "th"
+                                ? "ดูกราฟเปรียบเทียบค่างวดรายปีและคำอธิบายเพิ่มเติม"
+                                : "View yearly installment chart & breakdown"}
                           </span>
-                          <div className="flex flex-wrap items-center gap-3">
-                            <span className="inline-flex items-center gap-1">
-                              <span className="size-2 rounded-sm bg-slate-400" aria-hidden="true" />
-                              {lang === "th" ? "ค่างวดเดิม/เดือน" : "Original Payment"}
-                            </span>
-                            <span className="inline-flex items-center gap-1">
-                              <span className="size-2 rounded-sm bg-teal-700" aria-hidden="true" />
-                              {lang === "th" ? "ค่างวดใหม่หลังปรับโครงสร้าง" : "Restructured Payment"}
-                            </span>
-                            {diagnostic.operatingCashflow > 0 && (
-                              <span className="inline-flex items-center gap-1">
-                                <span className="h-0.5 w-3 border-t-2 border-dashed border-amber-600" aria-hidden="true" />
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`size-4 shrink-0 transition-transform ${showDetailedChart ? "rotate-180" : ""}`}
+                          />
+                        </button>
+
+                        {showDetailedChart && (
+                          <div className="mt-3">
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                              <span>
                                 {lang === "th"
-                                  ? `${userType === "individual" ? "เงินเหลือที่มีจ่ายไหว" : "กำไรที่มีจ่ายไหว"} (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท)`
-                                  : `Affordable Cashflow (${Math.round(diagnostic.operatingCashflow).toLocaleString()})`}
+                                  ? userType === "individual"
+                                    ? "ค่างวดที่ต้องจ่ายต่อเดือน เทียบกับ เงินเหลือหลังหักค่าใช้จ่ายจำเป็น"
+                                    : "ค่างวดที่ต้องจ่ายต่อเดือน เทียบกับ กำไรที่กิจการมีจ่ายไหว"
+                                  : "Monthly Payment vs Affordable Cashflow"}
                               </span>
-                            )}
-                          </div>
-                        </div>
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="size-2 rounded-sm bg-slate-400" aria-hidden="true" />
+                                  {lang === "th" ? "ค่างวดเดิม/เดือน" : "Original Payment"}
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="size-2 rounded-sm bg-teal-700" aria-hidden="true" />
+                                  {lang === "th" ? "ค่างวดใหม่หลังปรับโครงสร้าง" : "Restructured Payment"}
+                                </span>
+                                {diagnostic.operatingCashflow > 0 && (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="h-0.5 w-3 border-t-2 border-dashed border-amber-600" aria-hidden="true" />
+                                    {lang === "th"
+                                      ? `${userType === "individual" ? "เงินเหลือที่มีจ่ายไหว" : "กำไรที่มีจ่ายไหว"} (${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท)`
+                                      : `Affordable Cashflow (${Math.round(diagnostic.operatingCashflow).toLocaleString()})`}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
 
-                        <div className="h-[190px] w-full">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={paymentChartData} margin={{ top: 8, right: 10, left: 4, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="hsl(var(--border))" />
-                              <XAxis dataKey="yearLabel" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                              <YAxis
-                                domain={[0, chartYAxisMax || "auto"]}
-                                tick={{ fontSize: 10 }}
-                                tickLine={false}
-                                axisLine={false}
-                                tickFormatter={(v: number) =>
-                                  lang === "th"
-                                    ? v >= 1_000_000
-                                      ? `${(v / 1_000_000).toFixed(1)} ล้าน`
-                                      : `${Math.round(v / 1000).toLocaleString()} พัน`
-                                    : `${Math.round(v / 1000)}k`
-                                }
-                              />
-                              {diagnostic.operatingCashflow > 0 && (
-                                <ReferenceLine
-                                  y={diagnostic.operatingCashflow}
-                                  stroke="#d97706"
-                                  strokeDasharray="4 4"
-                                  strokeWidth={1.8}
-                                />
-                              )}
-                              <Tooltip
-                                formatter={(value: number, name: string) => [
-                                  `${Math.round(value).toLocaleString()} ${lang === "th" ? "บาท/เดือน" : "THB/mo"}`,
-                                  name,
-                                ]}
-                                contentStyle={{
-                                  backgroundColor: "hsl(var(--background))",
-                                  border: "1px solid hsl(var(--border))",
-                                  borderRadius: "0.75rem",
-                                  fontSize: "11px",
-                                }}
-                              />
-                              <Bar
-                                dataKey="originalPayment"
-                                name={lang === "th" ? "ค่างวดสัญญาเดิม" : "Original Payment"}
-                                fill="#94a3b8"
-                                radius={[4, 4, 0, 0]}
-                                barSize={18}
-                              />
-                              <Bar
-                                dataKey="policyPayment"
-                                name={lang === "th" ? "ค่างวดใหม่หลังปรับโครงสร้าง" : "Restructured Payment"}
-                                fill="#0f766e"
-                                radius={[4, 4, 0, 0]}
-                                barSize={18}
-                              />
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                        </div>
+                            <div className="h-[190px] w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={paymentChartData} margin={{ top: 8, right: 10, left: 4, bottom: 0 }}>
+                                  <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="hsl(var(--border))" />
+                                  <XAxis dataKey="yearLabel" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                                  <YAxis
+                                    domain={[0, chartYAxisMax || "auto"]}
+                                    tick={{ fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickFormatter={(v: number) =>
+                                      lang === "th"
+                                        ? v >= 1_000_000
+                                          ? `${(v / 1_000_000).toFixed(1)} ล้าน`
+                                          : `${Math.round(v / 1000).toLocaleString()} พัน`
+                                        : `${Math.round(v / 1000)}k`
+                                    }
+                                  />
+                                  {diagnostic.operatingCashflow > 0 && (
+                                    <ReferenceLine
+                                      y={diagnostic.operatingCashflow}
+                                      stroke="#d97706"
+                                      strokeDasharray="4 4"
+                                      strokeWidth={1.8}
+                                    />
+                                  )}
+                                  <Tooltip
+                                    formatter={(value: number, name: string) => [
+                                      `${Math.round(value).toLocaleString()} ${lang === "th" ? "บาท/เดือน" : "THB/mo"}`,
+                                      name,
+                                    ]}
+                                    contentStyle={{
+                                      backgroundColor: "hsl(var(--background))",
+                                      border: "1px solid hsl(var(--border))",
+                                      borderRadius: "0.75rem",
+                                      fontSize: "11px",
+                                    }}
+                                  />
+                                  <Bar
+                                    dataKey="originalPayment"
+                                    name={lang === "th" ? "ค่างวดสัญญาเดิม" : "Original Payment"}
+                                    fill="#94a3b8"
+                                    radius={[4, 4, 0, 0]}
+                                    barSize={18}
+                                  />
+                                  <Bar
+                                    dataKey="policyPayment"
+                                    name={lang === "th" ? "ค่างวดใหม่หลังปรับโครงสร้าง" : "Restructured Payment"}
+                                    fill="#0f766e"
+                                    radius={[4, 4, 0, 0]}
+                                    barSize={18}
+                                  />
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            </div>
 
-                        {/* Clear Plain Thai Explanation of What the User Gains from this Simulation */}
-                        <div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
-                          <p className="font-semibold text-teal-900">
-                            {lang === "th"
-                              ? `สิ่งที่${beneficiaryNounTh}ได้รับจากแผนปรับโครงสร้างนี้:`
-                              : "Key Benefit of This Restructuring Plan:"}
-                          </p>
-                          {(() => {
-                            const isDisaster = loanComparison.mode === "disaster_defer"
-                            const gMonths = loanComparison.graceMonths ?? deferMonths
-                            const activePayment = isDisaster
-                              ? (loanComparison.policyGracePayment ?? loanComparison.policyYear1Payment)
-                              : loanComparison.policyYear1Payment
-                            const activeRelief = Math.max(0, loanComparison.originalMonthlyPayment - activePayment)
-                            const periodLabelTh = isDisaster ? `ช่วงพักเงินต้น ${gMonths} เดือนแรก` : "ปีแรก"
+                            {/* Clear Plain Thai Explanation of What the User Gains from this Simulation */}
+                            <div className="mt-3 rounded-xl border border-teal-700/25 bg-teal-700/5 p-3 text-xs leading-5 text-foreground">
+                              <p className="font-semibold text-teal-900">
+                                {lang === "th"
+                                  ? `สิ่งที่${beneficiaryNounTh}ได้รับจากแผนปรับโครงสร้างนี้:`
+                                  : "Key Benefit of This Restructuring Plan:"}
+                              </p>
+                              {(() => {
+                                const isDisaster = loanComparison.mode === "disaster_defer"
+                                const gMonths = loanComparison.graceMonths ?? deferMonths
+                                const activePayment = isDisaster
+                                  ? (loanComparison.policyGracePayment ?? loanComparison.policyYear1Payment)
+                                  : loanComparison.policyYear1Payment
+                                const activeRelief = Math.max(0, loanComparison.originalMonthlyPayment - activePayment)
+                                const periodLabelTh = isDisaster ? `ช่วงพักเงินต้น ${gMonths} เดือนแรก` : "ปีแรก"
 
-                            return (
-                              <>
-                                <p className="mt-1 text-muted-foreground">
+                                return (
+                                  <>
+                                    <p className="mt-1 text-muted-foreground">
+                                      {lang === "th"
+                                        ? diagnostic.netMonthlyCashflow < 0
+                                          ? `1. แก้ปัญหาเงินสดติดลบรายเดือน: เดิมมีเงินเหลือหลังหักค่าใช้จ่าย ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน แต่ต้องจ่ายค่างวดเดิม ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน (ทำให้เงินขาดมือ ${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} บาททุกเดือน) เมื่อลดค่างวด${periodLabelTh}เหลือ ${activePayment.toLocaleString()} บาท/เดือน จะทำให้จ่ายหนี้ไหวและพลิกกลับมามีเงินเหลือ ${Math.round(diagnostic.operatingCashflow - activePayment).toLocaleString()} บาท/เดือน`
+                                          : `1. เพิ่มสภาพคล่องหมุนเวียนทันที: ลดภาระค่างวด${periodLabelTh}จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท เหลือ ${activePayment.toLocaleString()} บาท/เดือน ทำให้มีเงินสดเหลือในมือเพิ่มขึ้น +${activeRelief.toLocaleString()} บาท/เดือน สำหรับสำรองรับ${lowSeasonPhraseTh}`
+                                        : `Reduces ${isDisaster ? `first ${gMonths}-month grace period` : "Year 1"} monthly installment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${activePayment.toLocaleString()} THB/mo, freeing +${activeRelief.toLocaleString()} THB/mo in working capital.`}
+                                    </p>
+                                    <p className="mt-0.5 text-muted-foreground">
+                                      {loanComparison.totalInterestSaved <= 0
+                                        ? lang === "th"
+                                          ? "2. ข้อเท็จจริงด้านดอกเบี้ยและการผ่อนชำระ: มาตรการนี้เป็นการชะลอภาระเงินสดฉุกเฉินชั่วคราว ดอกเบี้ยยังคงคำนวณตามสัญญาปกติ จึงไม่ได้ลดยอดดอกเบี้ยรวม (0 บาท) แต่มุ่งเน้นรักษาสภาพคล่องเพื่อฟื้นฟูกิจการ และป้องกันการเกิดหนี้เสียในระหว่างวิกฤต"
+                                          : "2. Interest & Cashflow Reality: This measure provides temporary emergency liquidity relief. Interest continues as contractual without cumulative interest reduction (0 THB saved), focusing on preventing default during recovery."
+                                        : lang === "th"
+                                          ? `2. ลดภาระดอกเบี้ยระยะยาว: ตลอดแผนช่วยประหยัดดอกเบี้ยรวมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท (จากเงินต้นตั้งต้น ${loanComparison.principalUsed.toLocaleString()} บาท)`
+                                          : `2. Saves approximately ${loanComparison.totalInterestSaved.toLocaleString()} THB in cumulative interest over the plan horizon.`}
+                                    </p>
+                                  </>
+                                )
+                              })()}
+                              {debtStatus === "disaster" && (
+                                <p className="mt-1 font-medium text-amber-900">
                                   {lang === "th"
-                                    ? diagnostic.netMonthlyCashflow < 0
-                                      ? `1. แก้ปัญหาเงินสดติดลบรายเดือน: เดิมมีเงินเหลือหลังหักค่าใช้จ่าย ${Math.round(diagnostic.operatingCashflow).toLocaleString()} บาท/เดือน แต่ต้องจ่ายค่างวดเดิม ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท/เดือน (ทำให้เงินขาดมือ ${Math.abs(Math.round(diagnostic.netMonthlyCashflow)).toLocaleString()} บาททุกเดือน) เมื่อลดค่างวด${periodLabelTh}เหลือ ${activePayment.toLocaleString()} บาท/เดือน จะทำให้จ่ายหนี้ไหวและพลิกกลับมามีเงินเหลือ ${Math.round(diagnostic.operatingCashflow - activePayment).toLocaleString()} บาท/เดือน`
-                                      : `1. เพิ่มสภาพคล่องหมุนเวียนทันที: ลดภาระค่างวด${periodLabelTh}จาก ${loanComparison.originalMonthlyPayment.toLocaleString()} บาท เหลือ ${activePayment.toLocaleString()} บาท/เดือน ทำให้มีเงินสดเหลือในมือเพิ่มขึ้น +${activeRelief.toLocaleString()} บาท/เดือน สำหรับสำรองรับ${lowSeasonPhraseTh}`
-                                    : `Reduces ${isDisaster ? `first ${gMonths}-month grace period` : "Year 1"} monthly installment from ${loanComparison.originalMonthlyPayment.toLocaleString()} to ${activePayment.toLocaleString()} THB/mo, freeing +${activeRelief.toLocaleString()} THB/mo in working capital.`}
+                                    ? "3. คำแนะนำการเตรียมหลักฐาน: เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น ใบเสร็จยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อประกอบการพิจารณาของธนาคาร"
+                                    : "3. Evidence Tip: Prepare proof of income drop or hazard impact (past sales bills, bank statements, or site photos) for bank consideration."}
                                 </p>
-                                <p className="mt-0.5 text-muted-foreground">
-                                  {loanComparison.totalInterestSaved <= 0
-                                    ? lang === "th"
-                                      ? "2. ข้อเท็จจริงด้านดอกเบี้ยและการผ่อนชำระ: มาตรการนี้เป็นการชะลอภาระเงินสดฉุกเฉินชั่วคราว ดอกเบี้ยยังคงคำนวณตามสัญญาปกติ จึงไม่ได้ลดยอดดอกเบี้ยรวม (0 บาท) แต่มุ่งเน้นรักษาสภาพคล่องเพื่อฟื้นฟูกิจการ และป้องกันการเกิดหนี้เสีย (NPL) ในช่วงวิกฤต"
-                                      : "2. Interest & Cashflow Reality: This measure provides temporary emergency liquidity relief. Interest continues as contractual without cumulative interest reduction (0 THB saved), focusing on preventing default and protecting working capital during recovery."
-                                    : lang === "th"
-                                      ? `2. ลดภาระดอกเบี้ยระยะยาว: ตลอดแผนช่วยประหยัดดอกเบี้ยรวมประมาณ ${loanComparison.totalInterestSaved.toLocaleString()} บาท (จากเงินต้นตั้งต้น ${loanComparison.principalUsed.toLocaleString()} บาท)`
-                                      : `2. Saves approximately ${loanComparison.totalInterestSaved.toLocaleString()} THB in cumulative interest over the plan horizon.`}
-                                </p>
-                              </>
-                            )
-                          })()}
-                          {debtStatus === "disaster" && (
-                            <p className="mt-1 font-medium text-amber-900">
-                              {lang === "th"
-                                ? "3. คำแนะนำการเตรียมหลักฐาน: เตรียมหลักฐานแสดงผลกระทบหรือรายได้ที่ลดลง (เช่น บิลยอดขายย้อนหลัง รายการเดินบัญชี หรือภาพถ่ายพื้นที่ได้รับผลกระทบ) เพื่อประกอบการพิจารณาของธนาคาร"
-                                : "3. Evidence Tip: Prepare proof of income drop or hazard impact (past sales bills, bank statements, or site photos) for bank consideration."}
-                            </p>
-                          )}
-                        </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
                 )}
-                </div>
 
-                {/* 3. Actionable One Page Financial Dossier Preview & Print */}
-                <div
-                  className={`${
-                    mobileResultTab === "dossier" ? "flex" : "hidden md:flex"
-                  } mt-4 flex-wrap items-center justify-between gap-3 rounded-2xl border border-foreground/20 bg-background p-4`}
-                >
-                  <div className="max-w-md">
-                    <p className="text-xs font-semibold text-foreground">
-                      {lang === "th"
-                        ? "3. ใบสรุปความพร้อมทางการเงิน สำหรับยื่นธนาคาร"
-                        : "3. One Page Financial Readiness Dossier"}
-                    </p>
-                    <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
-                      {lang === "th"
-                        ? "เปิดดูหน้าเอกสารสรุปความสามารถจ่ายหนี้ เงินสำรอง ผลจำลองเมื่อรายได้หดตัว และตารางเปรียบเทียบค่างวด พร้อมสั่งพิมพ์หรือบันทึกได้ทันที"
-                        : "Preview and print your 1 page A4 financial summary with DSCR, runway, payment comparison table, and matched programs."}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={openDossierModal}
-                      className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85"
-                    >
-                      <FileText aria-hidden="true" className="size-3.5" />
-                      {lang === "th" ? "เปิดดูและพิมพ์ใบสรุป" : "Preview & Print Dossier"}
-                    </button>
-                  </div>
-                </div>
+                  {/* 2C. Side by Side Debt Relief Option Comparison Collapsible for Calm Reading */}
+                  {scenarioRows.length > 0 && (
+                    <div className="mt-4 rounded-2xl border border-border bg-background p-4 sm:p-5">
+                      <button
+                        type="button"
+                        aria-expanded={showScenarioTable}
+                        onClick={() => setShowScenarioTable((open) => !open)}
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                      >
+                        <div>
+                          <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <Scale aria-hidden="true" className="size-3.5" />
+                            {lang === "th"
+                              ? "เปรียบเทียบทางเลือกการแก้หนี้ 4 แนวทาง"
+                              : "Compare 4 Debt Relief Paths & Trade Offs"}
+                          </p>
+                          <h4 className="mt-0.5 font-display text-sm font-semibold text-foreground sm:text-base">
+                            {lang === "th"
+                              ? "ดูข้อดี ข้อควรระวัง และผลต่อประวัติข้อมูลเครดิตของแต่ละวิธี"
+                              : "View Advantages, Trade Offs & Credit Record Impact"}
+                          </h4>
+                        </div>
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={`size-4 shrink-0 text-muted-foreground transition-transform ${showScenarioTable ? "rotate-180" : ""}`}
+                        />
+                      </button>
 
-                {/* 4. Potentially Relevant Programs Initial Screening Only */}
-                <div
-                  className={`${
-                    mobileResultTab === "programs" ? "block" : "hidden md:block"
-                  } mt-4 space-y-2.5`}
-                >
-                  <div className="px-1">
-                    <h3 className="text-xs font-semibold text-foreground">
-                      {lang === "th"
-                        ? "แนวทางที่อาจเกี่ยวข้อง — กรุณาตรวจสอบสิทธิ์จริงกับเจ้าหนี้หรือหน่วยงานทางการ"
-                        : "Potentially Relevant Options — Verify Actual Eligibility with Your Lender or Agency"}
-                    </h3>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {lang === "th"
-                        ? "เป็นการคัดกรองเบื้องต้นตามสถานะที่คุณเลือกเท่านั้น ยังไม่ได้ตรวจสอบสัญญา ประเภทสินเชื่อ ยอดหนี้ อายุ หรือเกณฑ์รายได้จริง"
-                        : "Initial screening based on your selected status only; actual loan type, balance, age, and income criteria must be verified with the lender."}
-                    </p>
-                  </div>
-                  {matchedPrograms.map((prog) => (
-                    <div key={prog.id} className="rounded-2xl border border-border bg-background p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h4 className="font-display text-sm font-semibold text-foreground">
-                          {lang === "th" ? prog.title_th : prog.title_en}
-                        </h4>
-                        <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-medium text-foreground">
-                          {lang === "th" ? prog.badge_th : prog.badge_en}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 text-xs leading-5 text-foreground">
-                        {lang === "th" ? prog.benefit_th : prog.benefit_en}
-                      </p>
-                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                        <strong className="font-medium text-foreground">
-                          {lang === "th" ? "เงื่อนไขสำคัญ:" : "Eligibility:"}
-                        </strong>{" "}
-                        {lang === "th" ? prog.criteria_th : prog.criteria_en}
-                      </p>
-                      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
-                        <span className="text-[10px] text-muted-foreground">
-                          {lang === "th" ? prog.source_th : prog.source_en}
-                        </span>
-                        <a
-                          href={prog.action_href}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-full bg-foreground px-3.5 py-1.5 text-[11px] font-medium text-background transition-opacity hover:opacity-85"
-                        >
-                          {lang === "th" ? prog.action_label_th : prog.action_label_en}
-                          <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                        </a>
-                      </div>
+                      {showScenarioTable && (
+                        <div className="mt-3 space-y-2.5 border-t border-border pt-3">
+                          {scenarioRows.map((row) => (
+                            <div
+                              key={row.id}
+                              className={`rounded-xl border p-3.5 transition-colors ${
+                                row.matchesStatus
+                                  ? "border-foreground/40 bg-secondary/50"
+                                  : "border-border bg-secondary/20"
+                              }`}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-semibold text-foreground">
+                                  {lang === "th" ? row.titleTh : row.titleEn}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {row.matchesStatus && (
+                                    <span className="rounded-full bg-foreground px-2.5 py-0.5 text-[10px] font-medium text-background">
+                                      {lang === "th" ? "ตรงกับสถานะที่คุณเลือก" : "Matches your status"}
+                                    </span>
+                                  )}
+                                  <span className="rounded-full border border-border bg-background px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-teal-800">
+                                    {lang === "th" ? row.estimatedMonthlyTh : row.estimatedMonthlyEn}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mt-2 grid gap-2 text-[11px] leading-5 sm:grid-cols-3">
+                                <div className="rounded-lg bg-background px-2.5 py-2">
+                                  <span className="block text-[10px] font-semibold text-teal-800">
+                                    {lang === "th" ? "ข้อดีหลัก" : "Main Advantage"}
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    {lang === "th" ? row.prosTh : row.prosEn}
+                                  </span>
+                                </div>
+                                <div className="rounded-lg bg-background px-2.5 py-2">
+                                  <span className="block text-[10px] font-semibold text-amber-800">
+                                    {lang === "th" ? "ข้อควรระวัง" : "Trade Off"}
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    {lang === "th" ? row.tradeoffTh : row.tradeoffEn}
+                                  </span>
+                                </div>
+                                <div className="rounded-lg bg-background px-2.5 py-2">
+                                  <span className="block text-[10px] font-semibold text-foreground">
+                                    {lang === "th" ? "ผลต่อประวัติข้อมูลเครดิต" : "Credit Bureau Impact"}
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    {lang === "th" ? row.creditImpactTh : row.creditImpactEn}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
 
-                {/* 5. Grounded Policy Note from Backend RAG */}
+                {/* Additional Secondary Programs (only when there are more than 1 matched options) */}
+                {matchedPrograms.length > 1 && (
+                  <div className="mt-4 space-y-2.5">
+                    <div className="px-1">
+                      <h3 className="text-xs font-semibold text-foreground">
+                        {lang === "th"
+                          ? "ทางเลือกเสริมเพิ่มเติม (ตรวจสอบเงื่อนไขกับหน่วยงานทางการ)"
+                          : "Additional Secondary Options (Verify with Official Agency)"}
+                      </h3>
+                    </div>
+                    {matchedPrograms.slice(1).map((prog, idx) => (
+                      <div key={prog.id} className="rounded-2xl border border-border bg-background p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[10px] font-semibold text-foreground">
+                              {lang === "th" ? `ทางเลือกที่ ${idx + 2}` : `Option ${idx + 2}`}
+                            </span>
+                            <h4 className="font-display text-sm font-semibold text-foreground">
+                              {lang === "th" ? prog.title_th : prog.title_en}
+                            </h4>
+                          </div>
+                          <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-medium text-foreground">
+                            {lang === "th" ? prog.badge_th : prog.badge_en}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs leading-5 text-foreground">
+                          {lang === "th" ? prog.benefit_th : prog.benefit_en}
+                        </p>
+                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                          <strong className="font-medium text-foreground">
+                            {lang === "th" ? "เงื่อนไขสำคัญ:" : "Eligibility:"}
+                          </strong>{" "}
+                          {lang === "th" ? prog.criteria_th : prog.criteria_en}
+                        </p>
+                        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
+                          <span className="text-[10px] text-muted-foreground">
+                            {lang === "th" ? prog.source_th : prog.source_en}
+                          </span>
+                          <a
+                            href={prog.action_href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-full bg-foreground px-3.5 py-1.5 text-[11px] font-medium text-background transition-opacity hover:opacity-85"
+                          >
+                            {lang === "th" ? prog.action_label_th : prog.action_label_en}
+                            <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Grounded Policy Note from Backend RAG */}
                 {result && (
-                  <div
-                    className={`${
-                      mobileResultTab === "programs" ? "block" : "hidden md:block"
-                    } mt-4 rounded-2xl border border-border bg-background p-4`}
-                  >
+                  <div className="mt-4 rounded-2xl border border-border bg-background p-4">
                     <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
                       <BookOpenCheck aria-hidden="true" className="size-4" />
                       {lang === "th" ? "ข้อกำหนดอ้างอิงจากเอกสารทางการ" : "Grounded Policy Document Excerpt"}
@@ -2294,6 +3010,38 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                     )}
                   </div>
                 )}
+                  </div>
+                )}
+
+                {/* Mobile Quick Jump Back to Edit Any Step Without Manual Scrolling */}
+                <div className="mt-4 rounded-2xl border border-border bg-background p-4 lg:hidden">
+                  <p className="text-xs font-semibold text-foreground">
+                    {lang === "th" ? "ต้องการแก้ไขข้อมูลที่กรอก?" : "Want to edit your inputs?"}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => editStepFromResults(1)}
+                      className="inline-flex items-center rounded-full border border-border bg-secondary/45 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                    >
+                      {lang === "th" ? "แก้จังหวัด/สถานะ ↑" : "Edit Province/Status ↑"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => editStepFromResults(2)}
+                      className="inline-flex items-center rounded-full border border-border bg-secondary/45 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                    >
+                      {lang === "th" ? "แก้รายรับ/ค่างวด ↑" : "Edit Income/Debt ↑"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => editStepFromResults(3)}
+                      className="inline-flex items-center rounded-full border border-border bg-secondary/45 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                    >
+                      {lang === "th" ? "แก้เงินต้น/ดอกเบี้ย ↑" : "Edit Principal/Rate ↑"}
+                    </button>
+                  </div>
+                </div>
               </>
             </motion.div>
           )}
@@ -2311,8 +3059,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
             <span className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <FileText aria-hidden="true" className="size-4" />
               {lang === "th"
-                ? "ตัวอย่างเอกสารประกอบคำขอปรับปรุงโครงสร้างหนี้"
-                : "Bank Submission Document Preview"}
+                ? "ตัวอย่างบันทึกสรุปข้อมูลการเงินและแนวทางคุยกับธนาคาร"
+                : "Personal Financial Summary & Negotiation Notes Preview"}
             </span>
             <button
               type="button"
@@ -2326,10 +3074,10 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
           {diagnostic && (
             <>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              <p className="text-[11px] font-medium tracking-[0.06em] text-muted-foreground">
                 {lang === "th"
-                  ? "เอกสารประกอบคำขอปรับปรุงโครงสร้างหนี้และพิจารณาสินเชื่อ"
-                  : "Debt Restructuring & Credit Assessment Summary"} ·{" "}
+                  ? "บันทึกช่วยจำส่วนตัวสำหรับเตรียมคุยกับเจ้าหนี้ (ไม่ใช่ใบคำร้องทางการของธนาคาร)"
+                  : "Personal preparation notes for lender discussion (not an official bank form)"} ·{" "}
                 {lang === "th" ? `จังหวัด${selectedProvName}` : selectedProvName} ·{" "}
                 {userType === "individual"
                   ? lang === "th"
@@ -2342,8 +3090,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 className="mt-1.5 font-display text-xl font-semibold leading-snug tracking-tight sm:text-2xl"
               >
                 {lang === "th"
-                  ? "เอกสารสรุปข้อมูลทางการเงินและแผนการชำระหนี้"
-                  : "Financial Summary & Proposed Repayment Schedule"}
+                  ? "สรุปข้อมูลการเงินและแนวทางเจรจาเบื้องต้น"
+                  : "Financial Summary & Debt Negotiation Notes"}
               </h2>
 
               <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -2374,8 +3122,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   </p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
                     {lang === "th"
-                      ? `ค่างวดต่อรายได้รวม (Gross DSR) ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "คำนวณไม่ได้ (รายได้เป็น 0)"} (เกณฑ์คัดกรองภายใน 40/60/80%)`
-                      : `Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income)"} (internal 40/60/80% heuristic)`}
+                      ? `ค่างวดคิดเป็น ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}% ของรายได้รวม` : "คำนวณไม่ได้ (รายได้เป็น 0)"}`
+                      : `Gross-income DSR ${diagnostic.dsrPct != null ? `${diagnostic.dsrPct.toFixed(1)}%` : "Undefined (Zero Income)"}`}
                   </p>
                 </div>
 
@@ -2418,6 +3166,20 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 </div>
               </div>
 
+              <div className="mt-3.5 rounded-2xl border border-sky-700/20 bg-sky-500/5 px-4 py-3 text-xs leading-6 text-muted-foreground">
+                <strong className="font-semibold text-foreground">
+                  {lang === "th" ? `บริบทความเสี่ยงจังหวัด${selectedProvName}: ` : `${selectedProvName} Context: `}
+                </strong>
+                {lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn}
+                {provincialAdvisory.safeSeasonalCap != null && provincialAdvisory.safeSeasonalCap > 0 && (
+                  <span className="font-semibold text-teal-800">
+                    {lang === "th"
+                      ? ` · เพดานค่างวดปลอดภัยช่วงรายได้ชะลอตัว: ไม่เกินประมาณ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท/เดือน`
+                      : ` · Suggested low-season cap: <= ${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo`}
+                  </span>
+                )}
+              </div>
+
               {loanComparison && (
                 <div className="mt-4 rounded-2xl border border-border bg-secondary/35 p-4 text-xs leading-6">
                   <p className="font-semibold text-foreground">
@@ -2449,7 +3211,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             {lang === "th" ? "ค่างวดสัญญาเดิม/เดือน" : "Original Payment/mo"}
                           </th>
                           <th className="px-3 py-2 text-right font-medium">
-                            {lang === "th" ? "ค่างวดใหม่หลังปรับ/เดือน" : "Proposed Payment/mo"}
+                            {lang === "th" ? "ค่างวดใหม่ที่ตั้งเป้า/เดือน" : "Target Payment/mo"}
                           </th>
                           <th className="px-3 py-2 text-right font-medium">
                             {lang === "th" ? "เงินต้นคงเหลือ (สัญญาเดิม)" : "Original Balance"}
@@ -2483,16 +3245,38 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 </div>
               )}
 
+              {negotiationGuide && (
+                <div className="mt-4 rounded-2xl border border-border bg-secondary/25 p-4 text-xs">
+                  <h3 className="font-semibold text-foreground">
+                    {lang === "th"
+                      ? "3. ตัวอย่างคำพูดเริ่มต้นและคำถามที่ควรถามเจ้าหน้าที่ธนาคาร"
+                      : "3. Opening Talking Points & Questions for Your Bank"}
+                  </h3>
+                  <p className="mt-1.5 leading-6 text-foreground">
+                    &ldquo;{lang === "th" ? negotiationGuide.openingTh : negotiationGuide.openingEn}&rdquo;
+                  </p>
+                  <ul className="mt-2.5 space-y-1 text-[11px] leading-5 text-muted-foreground">
+                    {(lang === "th" ? negotiationGuide.questionsTh : negotiationGuide.questionsEn).map((q, i) => (
+                      <li key={i}>
+                        {i + 1}. {q}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="mt-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {lang === "th"
-                    ? "3. มาตรการทางการที่เข้าเกณฑ์และเอกสารประกอบการยื่น"
-                    : "3. Matched Official Programs & Required Documents"}
+                    ? "4. แนวทางทางการที่ควรสอบถามเรียงตามลำดับ"
+                    : "4. Priority Official Programs to Discuss"}
                 </h3>
                 <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
-                  {matchedPrograms.map((p) => (
+                  {matchedPrograms.map((p, idx) => (
                     <div key={p.id} className="rounded-xl border border-border bg-secondary/20 px-3.5 py-2.5 text-xs">
-                      <p className="font-semibold text-foreground">{lang === "th" ? p.title_th : p.title_en}</p>
+                      <p className="font-semibold text-foreground">
+                        {idx + 1}. {lang === "th" ? p.title_th : p.title_en}
+                      </p>
                       <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
                         {lang === "th" ? p.benefit_th : p.benefit_en}
                       </p>
@@ -2503,15 +3287,40 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
             </>
           )}
 
-          <div className="mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
-            <button
-              type="button"
-              onClick={handlePrintDossier}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background hover:opacity-85"
-            >
-              <Printer aria-hidden="true" className="size-3.5" />
-              {lang === "th" ? "สั่งพิมพ์ / บันทึกเป็นไฟล์ PDF" : "Print / Save PDF"}
-            </button>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
+            <p className="text-[11px] text-muted-foreground">
+              {lang === "th"
+                ? "ไม่มีช่องลงชื่อผู้ยื่นคำขอ เพราะเป็นบันทึกส่วนตัวสำหรับใช้เตรียมคุยกับเจ้าหน้าที่"
+                : "No signature block included; this is a personal preparation sheet, not a bank application form."}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopySummary()}
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+              >
+                {copiedSummary ? (
+                  <Check aria-hidden="true" className="size-3.5" />
+                ) : (
+                  <Copy aria-hidden="true" className="size-3.5" />
+                )}
+                {copiedSummary
+                  ? lang === "th"
+                    ? "คัดลอกเรียบร้อยแล้ว"
+                    : "Copied"
+                  : lang === "th"
+                    ? "คัดลอกข้อความสรุป"
+                    : "Copy Text Summary"}
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintDossier}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-5 text-xs font-medium text-background hover:opacity-85"
+              >
+                <Printer aria-hidden="true" className="size-3.5" />
+                {lang === "th" ? "สั่งพิมพ์หรือบันทึกเอกสาร" : "Print / Save Document"}
+              </button>
+            </div>
           </div>
         </div>
       </dialog>
@@ -2582,15 +3391,78 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                   : activeDocPage.docTitle}
               </h2>
 
-              <div className="mt-4 max-h-[380px] overflow-y-auto rounded-2xl border border-border bg-secondary/30 p-4 sm:p-5">
+              <div ref={docPageScrollRef} className="mt-4 max-h-[390px] overflow-y-auto rounded-2xl border border-border bg-secondary/25 p-4 sm:p-5">
                 {activeDocPage.loading ? (
                   <div className="flex h-32 items-center justify-center gap-2 text-xs text-muted-foreground">
                     <Loader2 aria-hidden="true" className="size-4 animate-spin" />
                     <span>{lang === "th" ? "กำลังดึงข้อความต้นฉบับจากหน้าเอกสาร…" : "Loading verbatim page text…"}</span>
                   </div>
                 ) : activeDocPage.fullText ? (
-                  <div className="space-y-3 whitespace-pre-line text-xs leading-6 text-foreground">
-                    {activeDocPage.fullText}
+                  <div className="space-y-3 text-[13px] leading-6 text-foreground">
+                    {activeDocPage.fullText
+                      .split(/\n{2,}/)
+                      .map((block) => block.trim())
+                      .filter(Boolean)
+                      .map((block, bIdx) => {
+                        const lines = block.split("\n").map((line) => line.trim()).filter(Boolean)
+                        if (lines.length > 1) {
+                          return (
+                            <div key={bIdx} className="rounded-xl border border-border/60 bg-background/75 px-3.5 py-2.5">
+                              <p className="font-semibold text-foreground">{lines[0]}</p>
+                              <div className="mt-1 space-y-1.5 text-foreground/90">
+                                {lines.slice(1).map((bodyLine, lIdx) => (
+                                  <p key={lIdx}>{bodyLine}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        }
+                        const isBullet = /^[-•▪]\s+/.test(block)
+                        if (isBullet) {
+                          return (
+                            <p key={bIdx} className="pl-3.5 text-foreground/90">
+                              {block}
+                            </p>
+                          )
+                        }
+                        const isStandaloneHeading =
+                          /^(?:\d+\.\d+(?:\.\d+)?\s+[^\n]{1,65}|เอกสารแนบ\s*\d+|ตัวอย่าง[^\n]{0,80}|หลักเกณฑ์\s*·\s*สรุปสาระสำคัญ)/.test(block) &&
+                          block.length <= 90
+                        if (isStandaloneHeading) {
+                          return (
+                            <p key={bIdx} className="pt-1 font-semibold text-foreground">
+                              {block}
+                            </p>
+                          )
+                        }
+                        return (
+                          <p key={bIdx} className="text-foreground/90">
+                            {block}
+                          </p>
+                        )
+                      })}
+                    {activeDocPage.nextPage != null && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void openCitationModal({
+                              doc_title: activeDocPage.docTitle,
+                              page_num: activeDocPage.nextPage!,
+                              doc_url: activeDocPage.docUrl,
+                            })
+                          }
+                          className="inline-flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-background px-3.5 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary"
+                        >
+                          <span>
+                            {lang === "th"
+                              ? `มีเนื้อหาต่อในหน้าถัดไป (อ่านต่อหน้าที่ ${activeDocPage.nextPage})`
+                              : `Continues on next page (Open p. ${activeDocPage.nextPage})`}
+                          </span>
+                          <ChevronRight aria-hidden="true" className="size-4 shrink-0" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground">
@@ -2602,11 +3474,56 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               </div>
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
-                <span className="text-[11px] text-muted-foreground">
-                  {lang === "th"
-                    ? "ข้อความดึงตรงจากไฟล์เอกสารทางการในฐานข้อมูลโดยไม่มีการดัดแปลง"
-                    : "Verbatim text extracted directly from indexed official PDF pages."}
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={activeDocPage.loading || activeDocPage.prevPage == null}
+                    onClick={() =>
+                      activeDocPage.prevPage != null &&
+                      void openCitationModal({
+                        doc_title: activeDocPage.docTitle,
+                        page_num: activeDocPage.prevPage,
+                        doc_url: activeDocPage.docUrl,
+                      })
+                    }
+                    className="inline-flex h-9 items-center gap-1 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <ChevronLeft aria-hidden="true" className="size-3.5" />
+                    <span>
+                      {activeDocPage.prevPage != null
+                        ? lang === "th"
+                          ? `หน้า ${activeDocPage.prevPage}`
+                          : `p. ${activeDocPage.prevPage}`
+                        : lang === "th"
+                          ? "หน้าก่อน"
+                          : "Prev"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={activeDocPage.loading || activeDocPage.nextPage == null}
+                    onClick={() =>
+                      activeDocPage.nextPage != null &&
+                      void openCitationModal({
+                        doc_title: activeDocPage.docTitle,
+                        page_num: activeDocPage.nextPage,
+                        doc_url: activeDocPage.docUrl,
+                      })
+                    }
+                    className="inline-flex h-9 items-center gap-1 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <span>
+                      {activeDocPage.nextPage != null
+                        ? lang === "th"
+                          ? `หน้า ${activeDocPage.nextPage}`
+                          : `p. ${activeDocPage.nextPage}`
+                        : lang === "th"
+                          ? "หน้าถัดไป"
+                          : "Next"}
+                    </span>
+                    <ChevronRight aria-hidden="true" className="size-3.5" />
+                  </button>
+                </div>
                 {activeDocPage.docUrl && (
                   <a
                     href={`${activeDocPage.docUrl}#page=${activeDocPage.pageNum}`}

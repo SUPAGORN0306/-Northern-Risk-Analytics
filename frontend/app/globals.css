@@ -101,6 +101,11 @@ body {
   * {
     @apply border-border;
   }
+  html,
+  body {
+    overflow-x: clip;
+    max-width: 100%;
+  }
   body {
     @apply bg-background text-foreground;
   }

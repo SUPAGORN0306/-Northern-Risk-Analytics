@@ -1,7 +1,8 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
-import type { Lang } from "@/lib/api"
+import type { Lang, ProvinceDetailResponse } from "@/lib/api"
+import type { DebtStatusKey } from "@/lib/financial-dossier"
 
 type AppContextValue = {
   lang: Lang
@@ -9,6 +10,12 @@ type AppContextValue = {
   toggleLang: () => void
   selectedProvinceCode: string
   setSelectedProvinceCode: (code: string) => void
+  activeDebtStatus: DebtStatusKey
+  setActiveDebtStatus: (status: DebtStatusKey) => void
+  activeBorrowerType: "individual" | "sme"
+  setActiveBorrowerType: (type: "individual" | "sme") => void
+  provinceDetail: ProvinceDetailResponse | null
+  setProvinceDetail: (detail: ProvinceDetailResponse | null) => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -17,6 +24,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // Default language is Thai per product preference with seamless switch to English
   const [lang, setLangState] = useState<Lang>("th")
   const [selectedProvinceCode, setSelectedProvinceCode] = useState<string>("CM")
+  const [activeDebtStatus, setActiveDebtStatus] = useState<DebtStatusKey>("current")
+  const [activeBorrowerType, setActiveBorrowerType] = useState<"individual" | "sme">("individual")
+  const [provinceDetail, setProvinceDetail] = useState<ProvinceDetailResponse | null>(null)
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -40,6 +50,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         toggleLang,
         selectedProvinceCode,
         setSelectedProvinceCode,
+        activeDebtStatus,
+        setActiveDebtStatus,
+        activeBorrowerType,
+        setActiveBorrowerType,
+        provinceDetail,
+        setProvinceDetail,
       }}
     >
       {children}
@@ -323,12 +339,14 @@ export function translateDsrBand(band: string, lang: Lang): string {
     watch: "เฝ้าระวัง (40% ถึงต่ำกว่า 60%)",
     tight: "ตึงตัวสูง (60% ถึงต่ำกว่า 80%)",
     critical: "เปราะบางวิกฤต (80% ขึ้นไป)",
+    not_assessable: "ยังคำนวณสัดส่วนไม่ได้",
   }
   const en: Record<string, string> = {
     stable: "Stable Liquidity (Under 40%)",
     watch: "Moderate Watch (40% to under 60%)",
     tight: "Tight Liquidity (60% to under 80%)",
     critical: "Critical Stress (80% and above)",
+    not_assessable: "Ratio not assessable",
   }
   return (lang === "th" ? th[band] : en[band]) || band
 }

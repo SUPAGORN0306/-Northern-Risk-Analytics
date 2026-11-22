@@ -154,7 +154,7 @@ def test_dsr_calculator_bands_edges_and_ui_copy_rules() -> None:
     assert calculate_dsr(100000, 85000).band == "critical"
 
     zero_zero = calculate_dsr(0, 0)
-    assert zero_zero.dsr_pct == 0.0 and zero_zero.band == "stable"
+    assert zero_zero.dsr_pct is None and zero_zero.band == "not_assessable"
     zero_debt = calculate_dsr(0, 15000)
     assert zero_debt.dsr_pct is None and zero_debt.band == "critical"
 
@@ -193,7 +193,7 @@ def test_rag_verifier_enforces_threshold_and_exact_citations() -> None:
 
 def test_thai_pdf_normalizer_and_garble_quality_gate() -> None:
     """Verify broken Thai PDF glyphs are repaired and legacy garbled fonts are rejected."""
-    raw = "ธนำคำรแห่งประเทศไทย ส ำนักงำนภำคเหนือ ช าระหนี้ ต่ า ซ ้า ส่าคัญ"
+    raw = "ธนำคำรแห่งประเทศไทย ส ำนักงำนภำคเหนือ ช าระหนี้ ต่ า ซ ้า ส่าคัญ ด ารงชีพ ท าได้ ค าเตือน ก าลัง"
     fixed = normalize_thai_pdf_text(raw)
     assert "ธนาคารแห่งประเทศไทย" in fixed
     assert "สำนักงานภาคเหนือ" in fixed
@@ -201,6 +201,7 @@ def test_thai_pdf_normalizer_and_garble_quality_gate() -> None:
     assert "ต่ำ" in fixed
     assert "ซ้ำ" in fixed
     assert "สำคัญ" in fixed
+    assert "ดำรงชีพ ทำได้ คำเตือน กำลัง" in fixed
 
     garbled_ok, _ = assess_pdf_text_quality([{"raw_text": "·°âÀπ’È§√∫ ®∫„π‡≈à¡‡¥’¬« " * 30}])
     assert garbled_ok is False

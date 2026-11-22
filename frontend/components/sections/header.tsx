@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react"
 import { motion } from "motion/react"
 import Link from "next/link"
-import { Activity, ArrowUpRight, Menu, PhoneCall, X } from "lucide-react"
+import { usePathname } from "next/navigation"
+import { Activity, ArrowUpRight, Menu, MessageCircle, PhoneCall, X } from "lucide-react"
 import { useAppState } from "@/lib/i18n"
 
 export function Header() {
   const { lang, setLang } = useAppState()
+  const pathname = usePathname()
+  const homePath = pathname === "/" ? "" : "/"
   const [menuOpen, setMenuOpen] = useState(false)
 
   // Automatically close the mobile drawer when resizing to desktop view
@@ -23,27 +26,27 @@ export function Header() {
   const desktopNavigation =
     lang === "th"
       ? [
-          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
-          { label: "เอกสารและสายด่วน", href: "#official-resources" },
+          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: `${homePath}#relief-assistant` },
+          { label: "สถานการณ์รายจังหวัด", href: `${homePath}#risk-outlook` },
+          { label: "เอกสารและสายด่วน", href: `${homePath}#official-resources` },
         ]
       : [
-          { label: "Check Debt & Relief", href: "#relief-assistant" },
-          { label: "Provincial Outlook", href: "#risk-outlook" },
-          { label: "Documents & Hotlines", href: "#official-resources" },
+          { label: "Check Debt & Relief", href: `${homePath}#relief-assistant` },
+          { label: "Provincial Outlook", href: `${homePath}#risk-outlook` },
+          { label: "Documents & Hotlines", href: `${homePath}#official-resources` },
         ]
 
   const mobileNavigation =
     lang === "th"
       ? [
-          { label: "คำนวณค่างวดและเช็กสิทธิ", href: "#relief-assistant" },
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
-          { label: "เอกสารที่ต้องเตรียมและลิงก์โครงการ", href: "#official-resources" },
+          { label: "คำนวณค่างวดและเช็กสิทธิ", href: `${homePath}#relief-assistant` },
+          { label: "สถานการณ์รายจังหวัด", href: `${homePath}#risk-outlook` },
+          { label: "เอกสารที่ต้องเตรียมและลิงก์โครงการ", href: `${homePath}#official-resources` },
         ]
       : [
-          { label: "Payment Simulator & Relief", href: "#relief-assistant" },
-          { label: "Provincial Outlook", href: "#risk-outlook" },
-          { label: "Document Checklist & Official Links", href: "#official-resources" },
+          { label: "Payment Simulator & Relief", href: `${homePath}#relief-assistant` },
+          { label: "Provincial Outlook", href: `${homePath}#risk-outlook` },
+          { label: "Document Checklist & Official Links", href: `${homePath}#official-resources` },
         ]
 
   function handleMobileNavClick() {
@@ -69,12 +72,12 @@ export function Header() {
         >
           <Activity aria-hidden="true" className="size-5 shrink-0 text-foreground" />
           <span className="truncate font-display text-sm font-semibold tracking-tight text-foreground sm:text-base">
-            {lang === "th" ? "วิเคราะห์เศรษฐกิจภาคเหนือ" : "NorthRisk Analytics"}
+            {lang === "th" ? "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ" : "Northern Debt & Economic Planner"}
           </span>
         </Link>
 
         {/* Horizontal navigation links shown only on desktop (md and up) */}
-        <nav aria-label="Main navigation" className="hidden items-center justify-center gap-5 md:flex lg:gap-7">
+        <nav aria-label="Main navigation" className="hidden items-center justify-center gap-2 md:flex lg:gap-5">
           {desktopNavigation.map((item) => (
             <a
               key={item.href}
@@ -84,6 +87,16 @@ export function Header() {
               {item.label}
             </a>
           ))}
+          <Link
+            href="/chat"
+            title={lang === "th" ? "คุยกับผู้ช่วย" : "Chat with us"}
+            aria-label={lang === "th" ? "คุยกับผู้ช่วย" : "Chat with us"}
+            aria-current={pathname === "/chat" ? "page" : undefined}
+            className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium transition-colors hover:text-foreground ${pathname === "/chat" ? "text-foreground" : "text-muted-foreground"}`}
+          >
+            <MessageCircle aria-hidden="true" className="size-4" />
+            <span className="hidden lg:inline">{lang === "th" ? "คุยกับผู้ช่วย" : "Chat with us"}</span>
+          </Link>
         </nav>
 
         {/* Right-hand action controls */}
@@ -142,6 +155,15 @@ export function Header() {
           aria-label="Mobile navigation"
           className="flex flex-col gap-1 border-t border-border px-4 pb-4 pt-2.5 md:hidden"
         >
+          <Link
+            href="/chat"
+            onClick={handleMobileNavClick}
+            aria-current={pathname === "/chat" ? "page" : undefined}
+            className="flex items-center justify-between rounded-xl bg-secondary/70 px-3 py-3 text-sm font-semibold text-foreground transition-colors hover:bg-secondary"
+          >
+            <span className="inline-flex items-center gap-2"><MessageCircle aria-hidden="true" className="size-4" />{lang === "th" ? "คุยกับผู้ช่วย" : "Chat with us"}</span>
+            <ArrowUpRight aria-hidden="true" className="size-4 text-muted-foreground" />
+          </Link>
           {mobileNavigation.map((item) => (
             <a
               key={item.href}

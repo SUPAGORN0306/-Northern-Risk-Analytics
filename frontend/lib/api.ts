@@ -187,6 +187,8 @@ export type PolicyPageResponse = {
   doc_url: string
   page_num: number
   total_pages: number
+  prev_page?: number | null
+  next_page?: number | null
   chunks: string[]
   full_text: string
 }
@@ -204,7 +206,7 @@ export type ReliefCheckResponse = {
     monthly_revenue_thb: number
     monthly_debt_thb: number
     dsr_pct: number | null
-    band: "stable" | "watch" | "tight" | "critical"
+    band: "stable" | "watch" | "tight" | "critical" | "not_assessable"
     summary_en: string
     summary_th: string
   }
@@ -229,6 +231,12 @@ export type ChatResponse = {
   top_vector_sim: number
   model_used: string | null
   latency_ms: number
+  data_sources?: Array<{
+    title: string
+    source_name: string
+    observed_at: string
+    source_url?: string
+  }>
 }
 
 export type StaffAuthResponse = {
@@ -662,6 +670,8 @@ export function submitReliefCheck(
     business_type: string
     monthly_revenue_thb: number
     monthly_debt_thb: number
+    total_principal_thb?: number
+    debt_payment_unspecified?: boolean
     impact_tags: string[]
     language: Lang
   },
@@ -690,6 +700,8 @@ export function sendPolicyChat(
   payload: {
     question: string
     language: Lang
+    province?: string
+    regional_scope?: boolean
     recent_questions?: string[]
   },
   signal?: AbortSignal,

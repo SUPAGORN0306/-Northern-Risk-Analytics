@@ -2,22 +2,54 @@
 
 import Image from "next/image"
 import { motion } from "motion/react"
-import { ArrowDown, Activity, ShieldCheck, AlertTriangle } from "lucide-react"
+import { ArrowDown, Calculator, HeartHandshake, MessageCircle, ShieldCheck } from "lucide-react"
 import type { RiskOutlookResponse } from "@/lib/api"
-import { formatThaiMonth, useAppState } from "@/lib/i18n"
+import { useAppState } from "@/lib/i18n"
 
 export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
   const { lang } = useAppState()
-  const summary = outlook?.regional_summary
-  const latestLabel = formatThaiMonth(outlook?.latest_month, lang)
-  const cpiLabel = formatThaiMonth(summary?.th_cpi_month, lang)
-  const alertProvinceNames = (summary?.active_external_shock_provinces ?? []).map((code) => {
-    const match = outlook?.provinces.find((p) => p.province_code === code)
-    return match ? (lang === "th" ? match.name_th : match.name_en) : code
-  })
+  const provincesCount = outlook?.regional_summary?.provinces_count ?? 17
+
+  const benefits =
+    lang === "th"
+      ? [
+          {
+            icon: Calculator,
+            title: "รู้ค่างวดที่จ่ายไหวจริง",
+            desc: "คำนวณเงินเหลือหลังหักค่าใช้จ่าย เพื่อตั้งเป้าค่างวดใหม่ที่ไม่ตึงมือ",
+          },
+          {
+            icon: ShieldCheck,
+            title: "คัดโครงการและคำพูดให้พร้อม",
+            desc: "จับคู่มาตรการภาครัฐที่ตรงเงื่อนไข พร้อมตัวอย่างคำพูดไว้ติดต่อธนาคาร",
+          },
+          {
+            icon: MessageCircle,
+            title: "เตรียมรับมือรายได้สะดุด",
+            desc: "ใช้ข้อมูลจังหวัดประกอบการวางแผนสำรองเงินและรับมือภาระหนี้",
+          },
+        ]
+      : [
+          {
+            icon: Calculator,
+            title: "Find a Sustainable Payment",
+            desc: "See what monthly installment fits comfortably after daily living expenses.",
+          },
+          {
+            icon: ShieldCheck,
+            title: "Matched Programs & Script",
+            desc: "Get eligible official options and ready-to-use talking points for your bank.",
+          },
+          {
+            icon: MessageCircle,
+            title: "Prepare for Income Disruptions",
+            desc: "Use local conditions as context when planning for income changes and debt payments.",
+          },
+        ]
+
   return (
-    <section className="px-3 pb-6 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pt-28">
-      <div className="relative mx-auto min-h-[500px] max-w-7xl overflow-hidden rounded-[2rem] bg-foreground sm:min-h-[540px]">
+    <section className="px-3 pb-4 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pt-28">
+      <div className="relative mx-auto min-h-[420px] max-w-7xl overflow-hidden rounded-[2rem] bg-foreground sm:min-h-[460px]">
         <Image
           src="/images/hero-northern-thailand.jpg"
           alt=""
@@ -46,18 +78,18 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/40 to-black/65" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.3)_100%)]" />
 
-        <div className="relative z-10 flex min-h-[430px] flex-col items-center justify-center px-4 pb-8 pt-12 text-center sm:min-h-[540px] sm:px-10 sm:pb-12 sm:pt-20">
+        <div className="relative z-10 flex min-h-[420px] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[460px] sm:px-10 sm:py-16">
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-1.5 backdrop-blur-md sm:mb-5 sm:px-4"
+            className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-1.5 backdrop-blur-md"
           >
-            <Activity aria-hidden="true" className="size-3.5 shrink-0 text-white/80" />
-            <span className="text-[11px] font-medium tracking-wide text-white/85 sm:text-xs">
+            <HeartHandshake aria-hidden="true" className="size-3.5 shrink-0 text-white/90" />
+            <span className="text-[11px] font-medium tracking-wide text-white/95 sm:text-xs">
               {lang === "th"
-                ? "ครอบคลุม 17 จังหวัดภาคเหนือ · ข้อมูลหน่วยงานรัฐและ ธปท."
-                : "17 Northern Provinces · Official Data from Government & BOT"}
+                ? `${provincesCount} จังหวัดภาคเหนือ · ใช้งานฟรี ไม่เก็บข้อมูลส่วนตัว`
+                : `${provincesCount} Northern Provinces · Free & Private`}
             </span>
           </motion.div>
 
@@ -65,12 +97,12 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="max-w-4xl font-display text-2xl font-semibold leading-[1.2] tracking-[-0.03em] text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)] sm:text-5xl sm:leading-[1.15] lg:text-[3.4rem]"
+            className="max-w-3xl font-display text-2xl font-semibold leading-[1.28] tracking-[-0.02em] text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)] sm:text-4xl sm:leading-[1.22] lg:text-[3rem]"
           >
             <span className="text-balance">
               {lang === "th"
-                ? "เช็กสถานการณ์ใกล้ตัว และหาทางออกแก้หนี้ได้ใน 1 นาที"
-                : "Check Local Conditions & Find Debt Relief in 1 Minute."}
+                ? "เตรียมรับมือหนี้และวางแผนเมื่อรายได้สะดุด"
+                : "Prepare for Debt and Income Disruptions"}
             </span>
           </motion.h1>
 
@@ -78,126 +110,67 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.22 }}
-            className="mt-3 max-w-2xl text-xs leading-6 text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.65)] sm:mt-4 sm:text-base sm:leading-7"
+            className="mt-4 max-w-2xl text-sm leading-7 text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.65)] sm:text-base"
           >
             {lang === "th"
-              ? "ดูแนวโน้มค่าครองชีพ ภัยพิบัติ ในจังหวัดของคุณ พร้อมคำนวณค่างวดใหม่และพิมพ์ใบสรุปไปคุยกับธนาคารได้ทันที"
-              : "Track local living costs and hazard alerts in your province, calculate restructured payments, and print a 1-page bank summary instantly."}
+              ? "ประเมินภาระหนี้ ดูแนวทางช่วยเหลือ และเตรียมข้อมูลก่อนคุยกับเจ้าหนี้ พร้อมใช้สถานการณ์จังหวัดเป็นข้อมูลประกอบการวางแผน"
+              : "Understand your debt, explore support options, and prepare to talk with a lender, with local conditions available as planning context."}
           </motion.p>
 
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.32 }}
-            className="mt-5 flex w-full max-w-md flex-col items-stretch justify-center gap-2.5 sm:mt-7 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+            className="mt-7 flex w-full max-w-md flex-col items-stretch justify-center gap-3 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-center"
           >
             <a
-              href="#risk-outlook"
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black shadow-md transition-transform hover:scale-[1.02]"
+              href="#relief-assistant"
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-black shadow-md transition-transform hover:scale-[1.02]"
             >
-              {lang === "th" ? "เช็กสถานการณ์จังหวัดของคุณ" : "Check Your Province"}
+              {lang === "th" ? "เริ่มเช็กหนี้และคำนวณค่างวด" : "Start Debt & Payment Check"}
               <ArrowDown aria-hidden="true" className="size-4" />
             </a>
             <a
-              href="#relief-assistant"
-              className="inline-flex items-center justify-center rounded-full border border-white/45 bg-black/35 px-6 py-2.5 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
+              href="#risk-outlook"
+              className="inline-flex items-center justify-center rounded-full border border-white/45 bg-black/35 px-6 py-3 text-sm font-medium text-white backdrop-blur-md transition-colors hover:bg-black/50"
             >
-              {lang === "th" ? "คำนวณค่างวดและหาทางลดหนี้" : "Calculate Payment & Relief"}
+              {lang === "th" ? "ดูสถานการณ์จังหวัดของคุณ" : "Check Your Province"}
             </a>
-          </motion.div>
-
-          {/* Live Regional Pulse Strip */}
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.44 }}
-            className="mt-6 grid w-full max-w-5xl grid-cols-2 gap-2 text-left sm:mt-8 sm:gap-2.5 lg:grid-cols-4"
-          >
-            <HeroKpi
-              label={lang === "th" ? "อัตราเข้าพักเฉลี่ยภาคเหนือ" : "Regional Avg Occupancy"}
-              value={summary ? `${summary.avg_occupancy_pct.toFixed(1)}%` : "…"}
-              sub={
-                lang === "th"
-                  ? `การท่องเที่ยวและค้าขายยังทรงตัว${latestLabel ? ` (${latestLabel})` : ""}`
-                  : `Tourism & local trade steady${latestLabel ? ` (${latestLabel})` : ""}`
-              }
-            />
-            <HeroKpi
-              label={lang === "th" ? "รายได้ท่องเที่ยวทั้งภาค" : "Monthly Service Revenue"}
-              value={
-                summary
-                  ? lang === "th"
-                    ? `${(summary.total_monthly_revenue_mthb / 1000).toFixed(2)} พันล้าน`
-                    : `${(summary.total_monthly_revenue_mthb / 1000).toFixed(2)}B THB`
-                  : "…"
-              }
-              sub={lang === "th" ? "เม็ดเงินหมุนเวียนใน 17 จังหวัดต่อเดือน" : "Monthly cashflow across 17 provinces"}
-            />
-            <HeroKpi
-              label={lang === "th" ? "ค่าครองชีพ / ราคาน้ำมัน" : "Living Cost / Fuel Price"}
-              value={
-                summary && summary.th_cpi_yoy_pct != null
-                  ? `${summary.th_cpi_yoy_pct >= 0 ? "+" : ""}${summary.th_cpi_yoy_pct.toFixed(2)}%${
-                      summary.oil_brent_yoy_pct != null
-                        ? ` / ${summary.oil_brent_yoy_pct > 0 ? "+" : ""}${summary.oil_brent_yoy_pct.toFixed(0)}%`
-                        : ""
-                    }`
-                  : "…"
-              }
-              sub={
-                lang === "th"
-                  ? "ต้นทุนค่าเดินทางและราคาสินค้าสูงขึ้น"
-                  : `Higher transport & goods cost (${cpiLabel})`
-              }
-            />
-            <div className="rounded-2xl border border-amber-300/35 bg-white/15 px-3.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
-              <p className="text-[11px] font-medium text-white/85">
-                {lang === "th" ? "ภัยพิบัติและมลพิษ" : "Hazard & Pollution Watch"}
-              </p>
-              <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
-                {summary?.has_active_external_shock ? (
-                  <>
-                    <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0 text-amber-300 sm:size-4" />
-                    <span className="font-display text-base font-semibold text-amber-200 sm:text-lg">
-                      {lang === "th"
-                        ? `เฝ้าระวัง ${summary.active_external_shock_provinces.length}/17 จังหวัด`
-                        : `${summary.active_external_shock_provinces.length}/17 Alert`}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck aria-hidden="true" className="size-3.5 shrink-0 text-emerald-300 sm:size-4" />
-                    <span className="font-display text-base font-semibold text-white sm:text-lg">
-                      {lang === "th" ? "ภาวะปกติ (0/17)" : "Normal (0/17)"}
-                    </span>
-                  </>
-                )}
-              </div>
-              <p className="mt-0.5 hidden text-[10px] font-medium text-amber-100/95 sm:block">
-                {summary?.has_active_external_shock
-                  ? lang === "th"
-                    ? `เฝ้าระวัง: ${alertProvinceNames.join(", ")}`
-                    : `Watchlist: ${alertProvinceNames.join(", ")}`
-                  : lang === "th"
-                    ? "ไม่พบจังหวัดที่ฝุ่น ฝน หรือมลพิษเกินเกณฑ์"
-                    : "No active haze, flood, or water alert"}
-              </p>
-            </div>
           </motion.div>
         </div>
       </div>
-    </section>
-  )
-}
 
-function HeroKpi({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-2xl border border-white/15 bg-white/10 px-3.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
-      <p className="truncate text-[11px] text-white/75">{label}</p>
-      <p className="mt-0.5 font-display text-lg font-semibold tracking-tight text-white tabular-nums sm:mt-1 sm:text-2xl">
-        {value}
-      </p>
-      {sub && <p className="mt-0.5 hidden text-[10px] text-white/60 sm:block">{sub}</p>}
-    </div>
+      {/* Clear Benefits Strip on Clean Surface Below Hero */}
+      <div className="mx-auto mt-6 max-w-6xl">
+        <p className="mb-3 text-center text-xs font-semibold tracking-wide text-muted-foreground sm:text-sm">
+          {lang === "th" ? "เว็บนี้ช่วยให้คุณและครอบครัวได้ประโยชน์อะไรบ้าง" : "How This Website Helps You"}
+        </p>
+        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
+          {benefits.map((item, idx) => {
+            const Icon = item.icon
+            return (
+              <motion.div
+                key={item.title}
+                initial={{ opacity: 0, y: 20, scale: 0.98 }}
+                whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                viewport={{ once: true, amount: 0.25 }}
+                transition={{ duration: 0.45, delay: 0.08 + idx * 0.12, ease: "easeOut" }}
+                whileHover={{ y: -3 }}
+                whileTap={{ scale: 0.99 }}
+                className="group rounded-2xl border border-border bg-card px-5 py-4 transition-shadow hover:border-foreground/25 hover:shadow-md"
+              >
+                <p className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-transform duration-200 group-hover:scale-110">
+                    <Icon aria-hidden="true" className="size-3.5" />
+                  </span>
+                  <span>{item.title}</span>
+                </p>
+                <p className="mt-2 text-xs leading-6 text-muted-foreground sm:text-sm">{item.desc}</p>
+              </motion.div>
+            )
+          })}
+        </div>
+      </div>
+    </section>
   )
 }

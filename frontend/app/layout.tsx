@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next"
 import { IBM_Plex_Sans_Thai, Inter, Space_Grotesk } from "next/font/google"
+import { AppProviders } from "@/app/providers"
 
 import "./globals.css"
 
@@ -120,7 +121,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${spaceGrotesk.variable} ${ibmPlexThai.variable} font-sans antialiased`}
       >
-        {children}
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   )

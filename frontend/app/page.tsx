@@ -12,7 +12,6 @@ import { Pricing } from "@/components/sections/pricing"
 import { CTA } from "@/components/sections/cta"
 import { Footer } from "@/components/sections/footer"
 import { fetchRiskOutlook, type RiskOutlookResponse } from "@/lib/api"
-import { AppStateProvider } from "@/lib/i18n"
 
 function PublicExperience() {
   const [outlook, setOutlook] = useState<RiskOutlookResponse | null>(null)
@@ -40,7 +39,7 @@ function PublicExperience() {
     <SmoothScroll>
       <StructuredData />
       <Header />
-      <main>
+      <main className="overflow-x-clip">
         <Hero outlook={outlook} />
         <Pricing provinces={outlook?.provinces ?? []} />
         <RiskOutlook outlook={outlook} loading={loading} error={error} />
@@ -54,10 +53,8 @@ function PublicExperience() {
 
 export default function Home() {
   return (
-    <AppStateProvider>
-      <StaffPortalProvider>
-        <PublicExperience />
-      </StaffPortalProvider>
-    </AppStateProvider>
+    <StaffPortalProvider>
+      <PublicExperience />
+    </StaffPortalProvider>
   )
 }

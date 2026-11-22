@@ -35,7 +35,7 @@ export type LoanCurvePoint = {
 }
 
 export type LoanComparisonResult = {
-  mode: "sme_3reduce" | "responsible_lending" | "persistent_5y" | "khunsoo" | "debt_clinic" | "disaster_defer"
+  mode: "sme_scenario" | "responsible_lending" | "persistent_5y" | "step_up_illustration" | "debt_clinic" | "disaster_defer"
   policyTitleTh: string
   policyTitleEn: string
   ruleCaptionTh: string
@@ -242,53 +242,53 @@ export function buildLoanComparison(params: {
     ? `using your entered ${origRate.toFixed(1)}% p.a. rate`
     : `under an assumed ${origRate.toFixed(1)}% p.a. baseline rate (actual contract rate not entered)`
 
-  if (status === "overdue_120_plus") {
+  if (status === "overdue_120_plus" && !isSme) {
     mode = "debt_clinic"
     horizonMonths = Math.max(12, Math.min(120, clinicMonths))
     const clinicRate = horizonMonths <= 48 ? 3 : horizonMonths <= 84 ? 4 : 5
     policyRateLabel = `${clinicRate}%`
     policyTitleTh = `ตัวอย่างแผนคลินิกแก้หนี้ (ดอกเบี้ย ${clinicRate}% · ผ่อน ${horizonMonths} งวด)`
     policyTitleEn = `Illustrative Debt Clinic Schedule (${clinicRate}% p.a. · ${horizonMonths} mos)`
-    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับเกณฑ์คลินิกแก้หนี้ 3 ถึง 5% ต่อปี (ต้องตรวจสอบคุณสมบัติจริงกับ SAM)`
+    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับเกณฑ์คลินิกแก้หนี้ 3 ถึง 5% ต่อปี (ต้องตรวจสอบคุณสมบัติจริงกับบริษัทบริหารสินทรัพย์สุขุมวิท)`
     ruleCaptionEn = `Illustrative comparison ${rateSrcEn} against Debt Clinic 3 to 5% p.a. schedule (actual eligibility verified by SAM).`
   } else if (status === "overdue_31_120") {
-    mode = "khunsoo"
+    mode = "step_up_illustration"
     horizonMonths = userMonths
     policyRateLabel = lang === "th" ? "ตัวอย่างขั้นบันได 3 ปี" : "Illustrative 3yr Step-Up"
     policyTitleTh = "ตัวอย่างสถานการณ์ปรับค่างวดขั้นบันไดเพื่อเจรจากับเจ้าหนี้ (จ่าย 50% / 70% / 90%)"
     policyTitleEn = "Illustrative Stepped Restructuring Scenario for Lender Negotiation (50% / 70% / 90%)"
-    ruleCaptionTh = `เป็นตัวอย่างแนวทางเจรจาลดค่างวดขั้นบันได (${rateSrcTh}) ไม่ใช่เงื่อนไขโครงการที่ธนาคารต้องอนุมัติอัตโนมัติ ทั้งนี้โครงการคุณสู้ เราช่วย ปิดรับสมัครใหม่แล้วเมื่อ 30 ก.ย. 2568`
-    ruleCaptionEn = `Illustrative 3 year negotiation scenario (${rateSrcEn}), not an automatic bank commitment. Khun Soo Rao Chuay closed new registration on 30 Sep 2025.`
-  } else if (status === "persistent") {
+    ruleCaptionTh = `เป็นเพียงตัวอย่างจำลองค่างวดขั้นบันได (${rateSrcTh}) เพื่อใช้คุยกับเจ้าหนี้ ไม่ใช่มาตรการหรือข้อเสนอที่เจ้าหนี้ต้องอนุมัติ เงื่อนไขจริงต้องตกลงกับเจ้าหนี้โดยตรง`
+    ruleCaptionEn = `Illustrative stepped-payment simulation (${rateSrcEn}) for discussion with your lender; this is not a program or offer, and actual terms must be agreed with the lender.`
+  } else if (status === "persistent" && !isSme) {
     mode = "persistent_5y"
     const pdMonths = Math.min(84, userMonths)
     horizonMonths = pdMonths
     policyRateLabel = lang === "th" ? "ดอกเบี้ยไม่เกิน 15% (สูงสุด 7 ปี)" : "Max 15% (Up to 7 yrs)"
     policyTitleTh = `ตัวอย่างแผนปิดจบหนี้เรื้อรังภายในสูงสุด ${Math.round(pdMonths / 12)} ปี (เกณฑ์ปรับปรุง 1 ม.ค. 2568 · ดอกเบี้ยไม่เกิน 15%)`
     policyTitleEn = `Illustrative Persistent Debt Exit up to ${Math.round(pdMonths / 12)} Years (2025 Rule · Max 15% p.a.)`
-    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับสินเชื่อผ่อนงวดดอกเบี้ยไม่เกิน 15% ปิดจบภายใน ${Math.round(pdMonths / 12)} ปี (เฉพาะสินเชื่อหมุนเวียน Non-NPL ที่เข้าเกณฑ์รายได้ ธปท.)`
+    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับสินเชื่อผ่อนงวดดอกเบี้ยไม่เกิน 15% ปิดจบภายใน ${Math.round(pdMonths / 12)} ปี (เฉพาะสินเชื่อหมุนเวียนที่ยังไม่เป็นหนี้เสียและเข้าเกณฑ์รายได้ของธนาคารแห่งประเทศไทย)`
     ruleCaptionEn = `Illustrative comparison ${rateSrcEn} against ${pdMonths} month payoff capped at 15% p.a. (revolving Non-NPL borrowers meeting BOT income criteria).`
   } else if (status === "disaster") {
     mode = "disaster_defer"
     horizonMonths = userMonths
     policyRateLabel = lang === "th" ? `พักเงินต้น ${deferMonths} เดือน` : `${deferMonths}m Deferral`
-    policyTitleTh = `ตัวอย่างแผนพักชำระเงินต้นผู้ประสบภัย (${deferMonths} เดือน · อ้างอิง ธปท.ว. 2302/2568)`
-    policyTitleEn = `Illustrative Disaster Principal Deferral (${deferMonths}m · Ref. Circular 2302/2568)`
-    ruleCaptionTh = `ประมาณการพักชำระเงินต้น ${deferMonths} เดือนแรก (${rateSrcTh}) เงื่อนไขจริงขึ้นอยู่กับการพิจารณาของเจ้าหนี้`
-    ruleCaptionEn = `Illustrative ${deferMonths} month interest only relief (${rateSrcEn}); final terms subject to lender approval.`
-  } else if (isSme) {
-    mode = "sme_3reduce"
+    policyTitleTh = `ตัวอย่างจำลองพักเงินต้น ${deferMonths} เดือนเมื่อรายได้สะดุด`
+    policyTitleEn = `Illustrative Principal Deferral During an Income Shock (${deferMonths} months)`
+    ruleCaptionTh = `สมมติพักเงินต้น ${deferMonths} เดือนแรกและชำระดอกเบี้ยตามอัตราที่ระบุ (${rateSrcTh}) เพื่อเทียบตัวเลขเท่านั้น ไม่ใช่มาตรการหรือข้อเสนอจากเจ้าหนี้`
+    ruleCaptionEn = `Comparison scenario assuming principal deferral for ${deferMonths} months with interest paid at the entered rate (${rateSrcEn}); this is not a program or lender offer.`
+  } else if (isSme && status === "current") {
+    mode = "sme_scenario"
     horizonMonths = userMonths
-    policyRateLabel = lang === "th" ? "หักเงินต้น 100% (2 ปีแรก)" : "100% Principal Cut (2 yrs)"
-    policyTitleTh = "ตัวอย่างแผนหักเงินต้นก่อนสำหรับผู้ประกอบการ SME (อ้างอิงรูปแบบ 3 ลด)"
-    policyTitleEn = "Illustrative SME Principal First Scenario (Ref. 3 Reduce Model)"
-    ruleCaptionTh = `ประมาณการลดค่างวด 15% และนำค่างวด 24 เดือนแรกหักเงินต้นก่อน (${rateSrcTh}) โปรดตรวจสอบเงื่อนไขจริงกับธนาคารเจ้าของบัญชี`
-    ruleCaptionEn = `Illustrative 24 month principal first schedule (${rateSrcEn}); verify actual terms with your lender.`
+    policyRateLabel = lang === "th" ? "ตัวอย่างพักดอกเบี้ย 2 ปี" : "Illustrative 2yr Interest Pause"
+    policyTitleTh = "ตัวอย่างจำลองลดค่างวดและพักดอกเบี้ยสำหรับกิจการ"
+    policyTitleEn = "Illustrative SME Payment Reduction and Interest Pause"
+    ruleCaptionTh = `แบบจำลองสมมติลดค่างวด 15% และพักดอกเบี้ย 24 เดือนแรก (${rateSrcTh}) เพื่อเทียบตัวเลขเท่านั้น ไม่ใช่มาตรการหรือเงื่อนไขที่เจ้าหนี้เสนอ`
+    ruleCaptionEn = `A comparison scenario assuming 15% lower payments and a 24-month interest pause (${rateSrcEn}); these are not program terms or a lender offer.`
   } else {
     mode = "responsible_lending"
     horizonMonths = userMonths
     policyRateLabel = lang === "th" ? "ตัวอย่างลดดอกเบี้ย 2%" : "Illustrative -2% Rate"
-    policyTitleTh = "ตัวอย่างสถานการณ์ปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (Responsible Lending 2568)"
+    policyTitleTh = "ตัวอย่างสถานการณ์ปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (หลักเกณฑ์ปี 2568)"
     policyTitleEn = "Illustrative Pre Emptive Restructuring Scenario (Responsible Lending 2568)"
     ruleCaptionTh = `ประมาณการปรับลดค่างวดและอัตราดอกเบี้ย (${rateSrcTh}) เพื่อใช้ประกอบการเจรจากับเจ้าหนี้ ไม่ใช่ข้อผูกพันอนุมัติ`
     ruleCaptionEn = `Illustrative payment and rate reduction (${rateSrcEn}) to support lender negotiation, not an approval guarantee.`
@@ -311,7 +311,7 @@ export function buildLoanComparison(params: {
     policyY1Pay = pay
     policyY2Pay = pay
     policyY3Pay = pay
-  } else if (mode === "khunsoo") {
+  } else if (mode === "step_up_illustration") {
     policyY1Pay = Math.round(origMonthlyPay * 0.5)
     policyY2Pay = Math.round(origMonthlyPay * 0.7)
     policyY3Pay = Math.round(origMonthlyPay * 0.9)
@@ -327,14 +327,14 @@ export function buildLoanComparison(params: {
     policyY1Pay = Math.round((interestOnly * clampedDefer + origMonthlyPay * (12 - clampedDefer)) / 12)
     policyY2Pay = origMonthlyPay
     policyY3Pay = origMonthlyPay
-  } else if (mode === "sme_3reduce") {
+  } else if (mode === "sme_scenario") {
     const easedPay = Math.round(origMonthlyPay * 0.85)
     policyY1Pay = easedPay
     policyY2Pay = easedPay
     policyY3Pay = easedPay
   } else {
-    const safeTarget = monthlyRevenue > 0 ? Math.round(monthlyRevenue * 0.38) : Math.round(origMonthlyPay * 0.8)
-    const pay = Math.min(origMonthlyPay, Math.max(Math.round(calcAnnuityPayment(principal, reducedRlRate, 72)), safeTarget))
+    const annuityPay = Math.round(calcAnnuityPayment(principal, reducedRlRate, horizonMonths))
+    const pay = annuityPay > 0 ? Math.min(origMonthlyPay, annuityPay) : Math.round(origMonthlyPay * 0.8)
     policyY1Pay = pay
     policyY2Pay = pay
     policyY3Pay = pay
@@ -363,7 +363,7 @@ export function buildLoanComparison(params: {
   ]
 
   const totalYears = Math.max(1, Math.ceil(horizonMonths / 12))
-  const khunsooRates = [0.5, 0.7, 0.9, 1.0, 1.0]
+  const stepUpRates = [0.5, 0.7, 0.9, 1.0, 1.0]
 
   let yrStartOrigBal = principal
   let yrStartPolBal = principal
@@ -388,12 +388,12 @@ export function buildLoanComparison(params: {
 
     // Scheduled policy installment for this year
     let scheduledYearPolPay = policyY1Pay
-    if (mode === "khunsoo") {
-      const rate = khunsooRates[Math.min(yrIndex, 3)]
+    if (mode === "step_up_illustration") {
+      const rate = stepUpRates[Math.min(yrIndex, 3)]
       scheduledYearPolPay = Math.round(origMonthlyPay * rate)
     } else if (mode === "disaster_defer") {
       scheduledYearPolPay = yrIndex === 0 ? policyY1Pay : origMonthlyPay
-    } else if (mode === "sme_3reduce") {
+    } else if (mode === "sme_scenario") {
       scheduledYearPolPay = yrIndex < 2 ? policyY1Pay : Math.round(origMonthlyPay * 0.85)
     } else {
       scheduledYearPolPay = policyY1Pay
@@ -402,7 +402,7 @@ export function buildLoanComparison(params: {
     // Policy restructured month step
     let currentPolPay = scheduledYearPolPay
     if (balPol > 0) {
-      if (mode === "sme_3reduce") {
+      if (mode === "sme_scenario") {
         if (m <= 24) {
           grossWaivedInterest += balPol * (origRate / 100 / 12)
           currentPolPay = policyY1Pay
@@ -414,7 +414,7 @@ export function buildLoanComparison(params: {
           currentPolPay = scheduledYearPolPay
           balPol = Math.max(0, balPol - Math.max(0, currentPolPay - interestP))
         }
-      } else if (mode === "khunsoo") {
+      } else if (mode === "step_up_illustration") {
         if (m <= 36) {
           grossWaivedInterest += balPol * origR
           currentPolPay = scheduledYearPolPay
@@ -593,6 +593,333 @@ export function parseStatementCsv(csvText: string): ParsedCsvSummary | null {
   }
 }
 
+export type ScenarioComparisonItem = {
+  id: string
+  matchesStatus: boolean
+  titleTh: string
+  titleEn: string
+  estimatedMonthlyTh: string
+  estimatedMonthlyEn: string
+  prosTh: string
+  prosEn: string
+  tradeoffTh: string
+  tradeoffEn: string
+  creditImpactTh: string
+  creditImpactEn: string
+}
+
+export type NegotiationGuide = {
+  openingTh: string
+  openingEn: string
+  questionsTh: string[]
+  questionsEn: string[]
+}
+
+export function buildScenarioComparison(params: {
+  status: DebtStatusKey
+  isSme: boolean
+  monthlyDebt: number
+  totalPrincipalInput: number
+  customAnnualRatePct?: number
+  horizonYears: number
+  deferMonths: number
+}): ScenarioComparisonItem[] {
+  const { status, isSme, monthlyDebt, totalPrincipalInput, customAnnualRatePct, horizonYears, deferMonths } = params
+  const hasCustomRate = typeof customAnnualRatePct === "number" && Number.isFinite(customAnnualRatePct) && customAnnualRatePct > 0
+  const baseRate = hasCustomRate
+    ? Math.min(36, Math.max(0.5, customAnnualRatePct))
+    : status === "persistent"
+      ? 25
+      : status === "overdue_120_plus"
+        ? 18
+        : isSme
+          ? 9.5
+          : 10.5
+
+  const rEst = baseRate / 100 / 12
+  const estPrincipal =
+    rEst > 0
+      ? Math.round(monthlyDebt * ((1 - Math.pow(1 + rEst, -48)) / rEst))
+      : Math.round(monthlyDebt * 48)
+  const principal = totalPrincipalInput > 0 ? totalPrincipalInput : estPrincipal
+  if (principal <= 0) return []
+
+  const extendMonths = Math.max(60, Math.min(120, Math.round(horizonYears * 12) + 24))
+  const extendPay = Math.round(calcAnnuityPayment(principal, Math.max(3, baseRate - 2), extendMonths))
+  const gracePay = Math.round(principal * (baseRate / 100 / 12))
+  const persistMonths = Math.min(84, Math.max(36, Math.round(horizonYears * 12)))
+  const persistPay = Math.round(calcAnnuityPayment(principal, Math.min(15, baseRate), persistMonths))
+  const clinicPay = Math.round(calcAnnuityPayment(principal, 4, 84))
+
+  return [
+    {
+      id: "restructure_extend",
+      matchesStatus: status === "current" || status === "overdue_31_120",
+      titleTh: "ขอปรับลดค่างวดหรือขยายงวดกับเจ้าหนี้เดิม",
+      titleEn: "Adjust Installment or Extend Term with Current Lender",
+      estimatedMonthlyTh: `ราว ${extendPay.toLocaleString()} บาท/เดือน (ขยายเป็น ${Math.round(extendMonths / 12)} ปี)`,
+      estimatedMonthlyEn: `~${extendPay.toLocaleString()} THB/mo (${Math.round(extendMonths / 12)} yrs)`,
+      prosTh: "ลดภาระรายเดือนทันทีตั้งแต่ก่อนค้างชำระ และยังรักษาความสัมพันธ์กับเจ้าหนี้เดิมไว้ได้",
+      prosEn: "Lowers monthly burden early before delinquency while keeping your existing lender relationship.",
+      tradeoffTh: "หากยืดระยะเวลาผ่อนนานขึ้น ยอดดอกเบี้ยสะสมตลอดสัญญาอาจสูงกว่าการผ่อนจบเร็ว",
+      tradeoffEn: "Extending the term can increase total cumulative interest over the full loan life.",
+      creditImpactTh: "ไม่เสียประวัติหนี้เสียหากเจรจาปรับโครงสร้างก่อนค้างชำระเกินกำหนด",
+      creditImpactEn: "Avoids NPL status if restructured proactively before delinquency.",
+    },
+    {
+      id: "disaster_defer",
+      matchesStatus: status === "disaster",
+      titleTh: `ขอพักชำระเงินต้นชั่วคราว (${deferMonths} เดือน)`,
+      titleEn: `Temporary Principal Deferral (${deferMonths} Months)`,
+      estimatedMonthlyTh: `ราว ${gracePay.toLocaleString()} บาท/เดือน (จ่ายเฉพาะดอกเบี้ยช่วงพัก)`,
+      estimatedMonthlyEn: `~${gracePay.toLocaleString()} THB/mo (interest only during grace)`,
+      prosTh: "เก็บเงินสดไว้หมุนเวียนและฟื้นตัวได้ทันทีในช่วงรายได้สะดุดจากภัยพิบัติหรือช่วงเงียบ",
+      prosEn: "Frees immediate cashflow during hazard disruption or seasonal slowdowns.",
+      tradeoffTh: "เงินต้นและดอกเบี้ยรวมไม่ลดลง ต้องเตรียมแผนรับค่างวดที่กลับมาเต็มจำนวนหลังครบกำหนดพัก",
+      tradeoffEn: "Principal and total interest do not drop; payments return to full level after deferral ends.",
+      creditImpactTh: "ไม่บันทึกเป็นหนี้เสียหากยื่นคำขอและได้รับอนุมัติจากเจ้าหนี้ล่วงหน้า",
+      creditImpactEn: "Not recorded as NPL when approved in advance by your lender.",
+    },
+    {
+      id: "persistent_exit",
+      matchesStatus: status === "persistent",
+      titleTh: "เปลี่ยนหนี้หมุนเวียนเป็นผ่อนรายงวดปิดจบหนี้เรื้อรัง",
+      titleEn: "Convert Revolving Debt to Fixed Payoff (Persistent Debt)",
+      estimatedMonthlyTh: `ราว ${persistPay.toLocaleString()} บาท/เดือน (ดอกเบี้ยไม่เกิน 15% · ${Math.round(persistMonths / 12)} ปี)`,
+      estimatedMonthlyEn: `~${persistPay.toLocaleString()} THB/mo (max 15% · ${Math.round(persistMonths / 12)} yrs)`,
+      prosTh: "กดเพดานดอกเบี้ยลงมากและมีกำหนดวันปิดหนี้ชัดเจน ไม่วนจ่ายแต่ดอกเบี้ยขั้นต่ำ",
+      prosEn: "Caps interest at 15% p.a. with a clear payoff date instead of endless minimum payments.",
+      tradeoffTh: "ต้องปิดวงเงินเดิมของสินเชื่อที่เข้าร่วม และจำกัดเฉพาะลูกหนี้ที่เข้าเกณฑ์รายได้และยังไม่เป็นหนี้เสีย",
+      tradeoffEn: "Requires closing the converted revolving credit line and meeting official income thresholds.",
+      creditImpactTh: "มีบันทึกการปรับเงื่อนไขหนี้เรื้อรังในประวัติข้อมูลเครดิต แต่ช่วยป้องกันการกลายเป็นหนี้เสีย",
+      creditImpactEn: "Recorded as persistent debt restructuring, but prevents severe NPL default.",
+    },
+    {
+      id: "debt_clinic",
+      matchesStatus: status === "overdue_120_plus",
+      titleTh: "รวมหนี้เสียไม่มีหลักประกันผ่านคลินิกแก้หนี้",
+      titleEn: "Consolidate Unsecured NPL via Debt Clinic",
+      estimatedMonthlyTh: `ราว ${clinicPay.toLocaleString()} บาท/เดือน (ตัวอย่างดอกเบี้ย 4% · 7 ปี)`,
+      estimatedMonthlyEn: `~${clinicPay.toLocaleString()} THB/mo (sample 4% · 7 yrs)`,
+      prosTh: "รวมหนี้บัตรเครดิตและสินเชื่อบุคคลหลายแห่งมาจ่ายที่เดียว ดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี",
+      prosEn: "Combines multiple unsecured cards/loans into one low rate plan (3 to 5% p.a.).",
+      tradeoffTh: "เข้าเกณฑ์เฉพาะหนี้ไม่มีหลักประกันที่ค้างชำระเกิน 120 วันแล้ว และต้องงดก่อหนี้ใหม่ระหว่างผ่อน",
+      tradeoffEn: "Only for unsecured debt overdue >120 days; no new borrowing allowed during repayment.",
+      creditImpactTh: "แสดงสถานะกำลังปรับโครงสร้างหนี้เสียชั่วคราว และจะค่อยๆ ฟื้นเมื่อผ่อนครบตามสัญญา",
+      creditImpactEn: "Shows active NPL restructuring temporarily until the agreed schedule is completed.",
+    },
+  ]
+}
+
+export function buildNegotiationGuide(params: {
+  provinceName: string
+  isSme: boolean
+  status: DebtStatusKey
+  diag: FinancialDiagnostic
+  comparison: LoanComparisonResult | null
+  primaryProgramTitleTh?: string
+  primaryProgramTitleEn?: string
+  safeSeasonalCap?: number | null
+  provincialSeasonSummaryTh?: string | null
+  provincialSeasonSummaryEn?: string | null
+}): NegotiationGuide {
+  const {
+    provinceName,
+    isSme,
+    status,
+    diag,
+    comparison,
+    primaryProgramTitleTh,
+    primaryProgramTitleEn,
+    safeSeasonalCap,
+    provincialSeasonSummaryTh,
+    provincialSeasonSummaryEn,
+  } = params
+
+  const currentPay = Math.round(diag.monthlyDebt)
+  const operatingCf = Math.max(0, Math.round(diag.operatingCashflow))
+  const isDisaster = comparison?.mode === "disaster_defer"
+  const proposedPay =
+    status === "overdue_120_plus"
+      ? Math.max(0, Math.round(operatingCf * 0.65))
+      : comparison
+        ? Math.round(
+            isDisaster
+              ? (comparison.policyGracePayment ?? comparison.policyYear1Payment)
+              : comparison.policyYear1Payment,
+          )
+        : Math.max(0, Math.round(operatingCf * 0.7))
+
+  const targetCap =
+    safeSeasonalCap != null && safeSeasonalCap > 0 && proposedPay > 0
+      ? Math.min(proposedPay, safeSeasonalCap)
+      : proposedPay
+
+  const subjectTh = isSme ? `กิจการในจังหวัด${provinceName}` : `ผู้กู้ในจังหวัด${provinceName}`
+  const subjectEn = isSme ? `a business in ${provinceName}` : `a borrower in ${provinceName}`
+
+  const requestPhraseTh =
+    status === "overdue_120_plus"
+      ? "ต้องการตรวจสอบสิทธิ์การรวมหนี้และปรับโครงสร้างหนี้ผ่านคลินิกแก้หนี้หรือแนวทางปิดจบหนี้ของเจ้าหนี้"
+      : status === "disaster"
+        ? "ขอพิจารณาแนวทางพักชำระเงินต้นชั่วคราวหรือลดค่างวดสำหรับผู้ได้รับผลกระทบจากสถานการณ์ในพื้นที่"
+        : status === "persistent"
+          ? "ขอตรวจสอบสิทธิ์เปลี่ยนสินเชื่อหมุนเวียนเป็นสินเชื่อผ่อนรายงวดตามมาตรการปิดจบหนี้เรื้อรัง"
+          : "ขอพิจารณาปรับโครงสร้างหนี้เชิงป้องกันตามหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ เพื่อลดค่างวดให้สอดคล้องกับรายรับจริง"
+
+  const requestPhraseEn =
+    status === "overdue_120_plus"
+      ? "request eligibility screening for Debt Clinic consolidation or an official settlement plan"
+      : status === "disaster"
+        ? "request temporary principal deferral or hazard related installment relief"
+        : status === "persistent"
+          ? "check eligibility to convert my revolving credit into a capped rate fixed installment plan"
+          : "request proactive pre delinquency restructuring under the Responsible Lending framework"
+
+  const seasonalNoteTh = provincialSeasonSummaryTh ? ` และพื้นที่${provincialSeasonSummaryTh}` : ""
+  const seasonalNoteEn = provincialSeasonSummaryEn ? ` Given ${provincialSeasonSummaryEn},` : ""
+
+  const openingTh =
+    `สวัสดีครับ/ค่ะ ปัจจุบันเป็น${subjectTh} มีความตั้งใจชำระหนี้อย่างต่อเนื่อง แต่หลังหักค่าใช้จ่ายจำเป็นแล้วเหลือเงินพร้อมชำระหนี้ราว ${operatingCf.toLocaleString()} บาทต่อเดือน ขณะที่ค่างวดเดิมอยู่ที่ ${currentPay.toLocaleString()} บาทต่อเดือน${seasonalNoteTh} จึงขอ${requestPhraseTh}${targetCap > 0 ? ` โดยตั้งเป้าค่างวดที่สามารถจ่ายได้จริงไม่เกินประมาณ ${targetCap.toLocaleString()} บาทต่อเดือน` : ""}${primaryProgramTitleTh ? ` (อ้างอิงแนวทาง: ${primaryProgramTitleTh})` : ""} ไม่ทราบว่าธนาคารมีทางเลือกใดที่ใกล้เคียงบ้างครับ/ค่ะ`
+
+  const openingEn =
+    `Hello, as ${subjectEn} committed to repaying my loan, my post-expense cashflow is currently about ${operatingCf.toLocaleString()} THB/month against my current payment of ${currentPay.toLocaleString()} THB/month.${seasonalNoteEn} I would like to ${requestPhraseEn}${targetCap > 0 ? ` with a sustainable target installment around ${targetCap.toLocaleString()} THB/month` : ""}${primaryProgramTitleEn ? ` (reference: ${primaryProgramTitleEn})` : ""}. What restructuring options can you offer?`
+
+  return {
+    openingTh,
+    openingEn,
+    questionsTh: [
+      "ดอกเบี้ยในช่วงที่ลดค่างวดหรือพักชำระเงินต้นจะคำนวณอย่างไร และต้องชำระส่วนต่างในช่วงใด",
+      "การปรับเงื่อนไขครั้งนี้จะบันทึกสถานะในประวัติข้อมูลเครดิตอย่างไร และส่งผลต่อการขอสินเชื่อในอนาคตหรือไม่",
+      "มีค่าธรรมเนียมการปรับโครงสร้างหนี้หรือค่าใช้จ่ายแฝงอื่นเพิ่มเติมหรือไม่",
+      "เมื่อครบช่วงผ่อนปรนแล้ว ค่างวดจะปรับกลับเป็นเดือนละเท่าไร และขอทบทวนเพิ่มได้หรือไม่หากรายได้ยังไม่ฟื้นตัว",
+    ],
+    questionsEn: [
+      "How is interest calculated during the reduced payment or deferral period, and when is any deferred interest due?",
+      "How will this restructuring be reported to the National Credit Bureau, and will it affect future credit applications?",
+      "Are there any restructuring fees or hidden administrative charges?",
+      "What will the monthly installment be after the relief period ends, and can it be reviewed if income has not recovered?",
+    ],
+  }
+}
+
+export function buildPlainTextNegotiationSummary(params: {
+  lang: Lang
+  provinceName: string
+  businessLabel: string
+  statusLabel: string
+  diag: FinancialDiagnostic
+  comparison: LoanComparisonResult | null
+  guide: NegotiationGuide
+  matchedPrograms: { title: string; benefit: string }[]
+  provincialNote?: string | null
+  safeSeasonalCap?: number | null
+}): string {
+  const {
+    lang,
+    provinceName,
+    businessLabel,
+    statusLabel,
+    diag,
+    comparison,
+    guide,
+    matchedPrograms,
+    provincialNote,
+    safeSeasonalCap,
+  } = params
+  const fmt = (n: number) => `${Math.round(n).toLocaleString()} ${lang === "th" ? "บาท" : "THB"}`
+
+  if (lang === "th") {
+    const lines = [
+      `สรุปข้อมูลการเงินและแนวทางเจรจากับเจ้าหนี้ (จัดทำเพื่อเตรียมตัวพูดคุยเบื้องต้น)`,
+      `จังหวัด: ${provinceName} | ประเภท: ${businessLabel}`,
+      `สถานะการผ่อนปัจจุบัน: ${statusLabel}`,
+      ``,
+      `ตัวเลขการเงินปัจจุบัน`,
+      `• รายได้ต่อเดือน: ${fmt(diag.monthlyRevenue)}`,
+      `• ค่าใช้จ่ายจำเป็นต่อเดือน: ${fmt(diag.monthlyOpex)}`,
+      `• เงินเหลือหลังหักค่าใช้จ่ายจำเป็น: ${fmt(diag.operatingCashflow)}`,
+      `• ค่างวดหนี้เดิมต่อเดือน: ${fmt(diag.monthlyDebt)}`,
+      `• เงินเก็บสำรองฉุกเฉิน: ${fmt(diag.cashReserve)}`,
+    ]
+    if (comparison) {
+      const activePay =
+        comparison.mode === "disaster_defer"
+          ? (comparison.policyGracePayment ?? comparison.policyYear1Payment)
+          : comparison.policyYear1Payment
+      lines.push(`• ตัวอย่างค่างวดใหม่ที่ตั้งเป้าไว้: ${fmt(activePay)} / เดือน`)
+    }
+    if (provincialNote) {
+      lines.push(``)
+      lines.push(`บริบทพื้นที่จังหวัด${provinceName}`)
+      lines.push(`• ${provincialNote}`)
+      if (safeSeasonalCap != null && safeSeasonalCap > 0) {
+        lines.push(`• เพดานค่างวดที่ปลอดภัยช่วงรายได้ชะลอตัว: ไม่เกินประมาณ ${fmt(safeSeasonalCap)} / เดือน`)
+      }
+    }
+    if (matchedPrograms.length > 0) {
+      lines.push(``)
+      lines.push(`แนวทางที่ควรสอบถามเรียงตามลำดับ`)
+      matchedPrograms.forEach((p, i) => {
+        lines.push(`${i + 1}. ${p.title}`)
+      })
+    }
+    lines.push(``)
+    lines.push(`ตัวอย่างคำพูดเริ่มต้นคุยกับเจ้าหน้าที่`)
+    lines.push(`"${guide.openingTh}"`)
+    lines.push(``)
+    lines.push(`คำถามสำคัญที่ควรถามก่อนตกลง`)
+    guide.questionsTh.forEach((q, i) => {
+      lines.push(`${i + 1}. ${q}`)
+    })
+    return lines.join("\n")
+  }
+
+  const lines = [
+    `Personal Financial Summary & Lender Negotiation Notes`,
+    `Province: ${provinceName} | Profile: ${businessLabel}`,
+    `Current Status: ${statusLabel}`,
+    ``,
+    `Current Cashflow Snapshot`,
+    `- Monthly Income: ${fmt(diag.monthlyRevenue)}`,
+    `- Essential Monthly Expenses: ${fmt(diag.monthlyOpex)}`,
+    `- Post-Expense Cashflow: ${fmt(diag.operatingCashflow)}`,
+    `- Current Monthly Debt Payment: ${fmt(diag.monthlyDebt)}`,
+    `- Emergency Cash Reserve: ${fmt(diag.cashReserve)}`,
+  ]
+  if (comparison) {
+    const activePay =
+      comparison.mode === "disaster_defer"
+        ? (comparison.policyGracePayment ?? comparison.policyYear1Payment)
+        : comparison.policyYear1Payment
+    lines.push(`- Illustrative Target Payment: ${fmt(activePay)} / month`)
+  }
+  if (provincialNote) {
+    lines.push(``)
+    lines.push(`${provinceName} Local Risk Context`)
+    lines.push(`- ${provincialNote}`)
+    if (safeSeasonalCap != null && safeSeasonalCap > 0) {
+      lines.push(`- Suggested Low-Season Safe Payment Cap: <= ${fmt(safeSeasonalCap)} / month`)
+    }
+  }
+  if (matchedPrograms.length > 0) {
+    lines.push(``)
+    lines.push(`Priority Options to Discuss`)
+    matchedPrograms.forEach((p, i) => {
+      lines.push(`${i + 1}. ${p.title}`)
+    })
+  }
+  lines.push(``)
+  lines.push(`Suggested Opening Statement`)
+  lines.push(`"${guide.openingEn}"`)
+  lines.push(``)
+  lines.push(`Key Questions to Ask Before Agreeing`)
+  guide.questionsEn.forEach((q, i) => {
+    lines.push(`${i + 1}. ${q}`)
+  })
+  return lines.join("\n")
+}
+
 export function buildFinancialDossierHtml(params: {
   lang: Lang
   provinceName: string
@@ -602,8 +929,23 @@ export function buildFinancialDossierHtml(params: {
   comparison: LoanComparisonResult | null
   matchedPrograms: { title: string; benefit: string; criteria: string; source: string }[]
   checklist: string[]
+  negotiationGuide?: NegotiationGuide | null
+  provincialNote?: string | null
+  safeSeasonalCap?: number | null
 }): string {
-  const { lang, provinceName, businessLabel, statusLabel, diag, comparison, matchedPrograms, checklist } = params
+  const {
+    lang,
+    provinceName,
+    businessLabel,
+    statusLabel,
+    diag,
+    comparison,
+    matchedPrograms,
+    checklist,
+    negotiationGuide,
+    provincialNote,
+    safeSeasonalCap,
+  } = params
   const today = new Date().toLocaleDateString(lang === "th" ? "th-TH" : "en-US", {
     year: "numeric",
     month: "long",
@@ -625,26 +967,27 @@ export function buildFinancialDossierHtml(params: {
     .join("")
 
   const primaryProgram = matchedPrograms[0]
+  const questions = negotiationGuide ? (lang === "th" ? negotiationGuide.questionsTh : negotiationGuide.questionsEn) : []
 
   return `<!doctype html>
 <html lang="${lang}">
 <head>
 <meta charset="utf-8" />
-<title>${lang === "th" ? "เอกสารสรุปข้อมูลทางการเงินและแผนการชำระหนี้" : "Financial Summary & Debt Restructuring Proposal"}</title>
+<title>${lang === "th" ? "สรุปข้อมูลการเงินและแนวทางเจรจาเบื้องต้น" : "Personal Financial Summary & Negotiation Notes"}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
-  @page { size: A4 portrait; margin: 14mm; }
+  @page { size: A4 portrait; margin: 13mm; }
   * { box-sizing: border-box; }
   body {
     font-family: 'IBM Plex Sans Thai', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     color: #0f172a;
     background: #ffffff;
     margin: 0;
-    padding: 8px;
-    font-size: 11px;
-    line-height: 1.5;
+    padding: 6px;
+    font-size: 10.5px;
+    line-height: 1.48;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -653,67 +996,76 @@ export function buildFinancialDossierHtml(params: {
     justify-content: space-between;
     align-items: flex-start;
     border-bottom: 1.5px solid #0f172a;
-    padding-bottom: 10px;
-    margin-bottom: 12px;
+    padding-bottom: 9px;
+    margin-bottom: 10px;
   }
-  .brand { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: #64748b; text-transform: uppercase; }
-  h1 { margin: 3px 0 0; font-size: 17px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; }
-  .meta-right { text-align: right; font-size: 10px; color: #475569; line-height: 1.6; }
+  .brand { font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; color: #64748b; }
+  h1 { margin: 3px 0 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; }
+  .meta-right { text-align: right; font-size: 9.5px; color: #475569; line-height: 1.55; }
   .context-bar {
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     background: #f8fafc;
-    padding: 8px 12px;
-    margin-bottom: 12px;
+    padding: 7px 11px;
+    margin-bottom: 10px;
     display: flex;
     flex-wrap: wrap;
-    gap: 18px;
-    font-size: 10.5px;
+    gap: 16px;
+    font-size: 10px;
     color: #334155;
   }
   .kpi-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .kpi {
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     background: #f8fafc;
-    padding: 8px 10px;
+    padding: 7px 9px;
   }
-  .kpi-label { font-size: 9.5px; color: #64748b; font-weight: 500; }
-  .kpi-val { font-size: 14px; font-weight: 700; margin-top: 3px; color: #0f172a; }
-  .kpi-sub { font-size: 9px; color: #64748b; margin-top: 2px; }
+  .kpi-label { font-size: 9px; color: #64748b; font-weight: 500; }
+  .kpi-val { font-size: 13px; font-weight: 700; margin-top: 2px; color: #0f172a; }
+  .kpi-sub { font-size: 8.8px; color: #64748b; margin-top: 2px; }
   h2 {
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #0f172a;
-    margin: 12px 0 6px;
-    padding-bottom: 4px;
+    margin: 10px 0 5px;
+    padding-bottom: 3px;
     border-bottom: 1px solid #e2e8f0;
   }
   .stress-box {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
+    gap: 8px;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
     border-radius: 10px;
-    padding: 9px 12px;
-    margin-bottom: 10px;
-    font-size: 10.5px;
+    padding: 8px 11px;
+    margin-bottom: 8px;
+    font-size: 10px;
+  }
+  .province-box {
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+    padding: 8px 11px;
+    margin-bottom: 8px;
+    font-size: 10px;
+    color: #334155;
   }
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10px;
+    font-size: 9.8px;
     margin-top: 4px;
   }
   th, td {
     border-bottom: 1px solid #e2e8f0;
-    padding: 5px 7px;
+    padding: 4.5px 6px;
     text-align: left;
   }
   th { background: #f8fafc; font-weight: 600; color: #334155; }
@@ -721,31 +1073,36 @@ export function buildFinancialDossierHtml(params: {
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     background: #f8fafc;
-    padding: 9px 12px;
+    padding: 8px 11px;
     margin-top: 4px;
-    font-size: 10.5px;
+    font-size: 10px;
   }
   .two-col {
     display: grid;
-    grid-template-columns: 1.25fr 1fr;
-    gap: 12px;
-    margin-top: 6px;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 10px;
+    margin-top: 4px;
   }
-  ul { margin: 4px 0 0 16px; padding: 0; font-size: 10px; color: #334155; }
-  li { margin-bottom: 3px; }
-  .sign-row {
-    margin-top: 18px;
-    display: flex;
-    justify-content: flex-end;
-    font-size: 10px;
+  .notes-box {
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    padding: 8px 11px;
+    margin-top: 8px;
+    font-size: 9.8px;
     color: #334155;
-    text-align: center;
   }
+  .note-line {
+    border-bottom: 1px dotted #cbd5e1;
+    height: 16px;
+    margin-top: 3px;
+  }
+  ul { margin: 4px 0 0 16px; padding: 0; font-size: 9.8px; color: #334155; }
+  li { margin-bottom: 2.5px; }
   .footer {
-    margin-top: 12px;
+    margin-top: 10px;
     padding-top: 6px;
     border-top: 1px solid #e2e8f0;
-    font-size: 8.8px;
+    font-size: 8.6px;
     color: #64748b;
   }
 </style>
@@ -753,8 +1110,8 @@ export function buildFinancialDossierHtml(params: {
 <body>
   <div class="header">
     <div>
-      <div class="brand">${lang === "th" ? "เอกสารประกอบคำขอปรับปรุงโครงสร้างหนี้และพิจารณาสินเชื่อ" : "Debt Restructuring & Credit Assessment Summary"}</div>
-      <h1>${lang === "th" ? "เอกสารสรุปข้อมูลทางการเงินและแผนการชำระหนี้" : "Financial Summary & Proposed Repayment Schedule"}</h1>
+      <div class="brand">${lang === "th" ? "บันทึกช่วยจำส่วนตัวสำหรับเตรียมตัวพูดคุยกับเจ้าหนี้ (ไม่ใช่ใบคำร้องทางการของธนาคาร)" : "Personal Preparation Notes for Lender Discussion (Not an Official Bank Form)"}</div>
+      <h1>${lang === "th" ? "สรุปข้อมูลการเงินและแนวทางเจรจาเบื้องต้น" : "Financial Summary & Debt Negotiation Notes"}</h1>
     </div>
     <div class="meta-right">
       <div><strong>${lang === "th" ? "วันที่จัดทำ:" : "Date:"}</strong> ${today}</div>
@@ -763,45 +1120,54 @@ export function buildFinancialDossierHtml(params: {
   </div>
 
   <div class="context-bar">
-    <div><strong>${lang === "th" ? "ประเภทผู้ยื่นคำขอ:" : "Applicant Profile:"}</strong> ${businessLabel}</div>
-    <div><strong>${lang === "th" ? "สถานะการชำระหนี้ปัจจุบัน:" : "Current Status:"}</strong> ${statusLabel}</div>
+    <div><strong>${lang === "th" ? "กลุ่มผู้ใช้:" : "Profile:"}</strong> ${businessLabel}</div>
+    <div><strong>${lang === "th" ? "สถานะการผ่อนชำระปัจจุบัน:" : "Current Status:"}</strong> ${statusLabel}</div>
   </div>
 
   <div class="kpi-grid">
     <div class="kpi">
       <div class="kpi-label">${lang === "th" ? "รายได้ต่อเดือน" : "Monthly Income"}</div>
       <div class="kpi-val">${fmt(diag.monthlyRevenue)}</div>
-      <div class="kpi-sub">${diag.isSme ? `${lang === "th" ? "กำไรก่อนหนี้" : "Operating CF"} ${fmt(diag.operatingCashflow)}` : `${lang === "th" ? "ค่าใช้จ่ายจำเป็น" : "Living Cost"} ${fmt(diag.monthlyOpex)}`}</div>
+      <div class="kpi-sub">${diag.isSme ? `${lang === "th" ? "เงินเหลือหลังหักรายจ่ายกิจการ" : "Operating CF"} ${fmt(diag.operatingCashflow)}` : `${lang === "th" ? "ค่าใช้จ่ายจำเป็น" : "Living Cost"} ${fmt(diag.monthlyOpex)}`}</div>
     </div>
     <div class="kpi">
       <div class="kpi-label">${lang === "th" ? "ค่างวดหนี้เดิม/เดือน" : "Current Debt Service"}</div>
       <div class="kpi-val">${fmt(diag.monthlyDebt)}</div>
-      <div class="kpi-sub">${diag.dsrPct != null ? (lang === "th" ? `สัดส่วนค่างวดต่อรายได้รวม (Gross DSR) ${diag.dsrPct.toFixed(1)}%` : `Gross-Income DSR ${diag.dsrPct.toFixed(1)}%`) : (lang === "th" ? "สัดส่วนค่างวดต่อรายได้รวม คำนวณไม่ได้ (รายได้เป็น 0 · วิกฤต)" : "Gross-Income DSR Undefined (Zero Income · Critical)")}</div>
+      <div class="kpi-sub">${diag.dsrPct != null ? (lang === "th" ? `ค่างวดคิดเป็น ${diag.dsrPct.toFixed(1)}% ของรายได้รวม` : `Gross-Income DSR ${diag.dsrPct.toFixed(1)}%`) : (lang === "th" ? "ไม่มีรายได้รองรับค่างวด (ต้องเร่งเจรจา)" : "Undefined (Zero Income · Critical)")}</div>
     </div>
     <div class="kpi">
       <div class="kpi-label">${lang === "th" ? "สถานะเงินเหลือหลังหักค่างวด" : "Net Monthly Cash Status"}</div>
-      <div class="kpi-val" style="color:${diag.netMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"}">${diag.netMonthlyCashflow >= 0 ? (lang === "th" ? `เงินเหลือพอจ่าย (+${Math.round(diag.netMonthlyCashflow).toLocaleString()} บาท/เดือน)` : `Surplus (+${fmt(diag.netMonthlyCashflow)}/mo)`) : (lang === "th" ? `เงินเหลือไม่พอจ่าย (ขาดอีก ${Math.abs(Math.round(diag.netMonthlyCashflow)).toLocaleString()} บาท/เดือน)` : `Shortfall (-${fmt(Math.abs(diag.netMonthlyCashflow))}/mo)`)}</div>
-      <div class="kpi-sub">${diag.runwayTotalMonths != null ? (lang === "th" ? `หากไม่มีรายรับเข้ามาเลย (0 บาท) เงินเก็บช่วยจ่ายได้ ${diag.runwayTotalMonths.toFixed(1)} เดือน` : `Zero income runway ${diag.runwayTotalMonths.toFixed(1)} mos`) : ""}</div>
+      <div class="kpi-val" style="color:${diag.netMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"}">${diag.netMonthlyCashflow >= 0 ? (lang === "th" ? `พอจ่าย (+${Math.round(diag.netMonthlyCashflow).toLocaleString()} บาท)` : `Surplus (+${fmt(diag.netMonthlyCashflow)})`) : (lang === "th" ? `ขาดอีก ${Math.abs(Math.round(diag.netMonthlyCashflow)).toLocaleString()} บาท` : `Shortfall (-${fmt(Math.abs(diag.netMonthlyCashflow))})`)}</div>
+      <div class="kpi-sub">${diag.runwayTotalMonths != null ? (lang === "th" ? `หากไม่มีรายรับ เงินเก็บอยู่ได้ ${diag.runwayTotalMonths.toFixed(1)} เดือน` : `Zero income runway ${diag.runwayTotalMonths.toFixed(1)} mos`) : ""}</div>
     </div>
     <div class="kpi">
-      <div class="kpi-label">${lang === "th" ? "ค่างวดใหม่ที่เสนอ (ปีที่ 1)" : "Proposed Year 1 Payment"}</div>
-      <div class="kpi-val" style="color:#0f766e">${comparison ? fmt(comparison.policyYear1Payment) : fmt(diag.monthlyDebt)}</div>
-      <div class="kpi-sub">${comparison && comparison.monthlyLiquiditySaved > 0 ? (lang === "th" ? `ลดภาระลง ${fmt(comparison.monthlyLiquiditySaved)}/เดือน` : `Reduced by ${fmt(comparison.monthlyLiquiditySaved)}/mo`) : (lang === "th" ? "อิงตามแผนการชำระหนี้" : "Per proposed schedule")}</div>
+      <div class="kpi-label">${lang === "th" ? "ค่างวดใหม่ที่ตั้งเป้าไว้ (ปีที่ 1)" : "Target Year 1 Payment"}</div>
+      <div class="kpi-val" style="color:#0f766e">${comparison ? fmt(comparison.mode === "disaster_defer" ? (comparison.policyGracePayment ?? comparison.policyYear1Payment) : comparison.policyYear1Payment) : fmt(diag.monthlyDebt)}</div>
+      <div class="kpi-sub">${comparison && comparison.monthlyLiquiditySaved > 0 ? (lang === "th" ? `ลดภาระลงราว ${fmt(comparison.monthlyLiquiditySaved)}/เดือน` : `Reduced by ~${fmt(comparison.monthlyLiquiditySaved)}/mo`) : (lang === "th" ? "อิงตามแผนจำลอง" : "Per proposed schedule")}</div>
     </div>
   </div>
 
-  <h2>${lang === "th" ? `1. การวิเคราะห์ความสามารถในการชำระหนี้กรณีรายได้ลดลง (-${diag.stressDropPct || 30}%)` : `1. Sensitivity Analysis (-${diag.stressDropPct || 30}% Income Scenario)`}</h2>
+  ${
+    provincialNote
+      ? `
+  <div class="province-box">
+    <strong>${lang === "th" ? `บริบทความเสี่ยงจังหวัด${provinceName}:` : `${provinceName} Local Risk Context:`}</strong> ${provincialNote}${safeSeasonalCap != null && safeSeasonalCap > 0 ? (lang === "th" ? ` · <strong>เพดานค่างวดที่ปลอดภัยช่วงรายได้ชะลอตัว: ไม่เกินประมาณ ${fmt(safeSeasonalCap)}/เดือน</strong>` : ` · <strong>Suggested low-season payment cap: <= ${fmt(safeSeasonalCap)}/mo</strong>`) : ""}
+  </div>`
+      : ""
+  }
+
+  <h2>${lang === "th" ? `1. การทดสอบความสามารถจ่ายหนี้เมื่อรายได้ลดลง (-${diag.stressDropPct || 30}%)` : `1. Sensitivity Analysis (-${diag.stressDropPct || 30}% Income Scenario)`}</h2>
   <div class="stress-box">
-    <div><strong>${lang === "th" ? "รายได้ภายใต้สถานการณ์รายได้ลด:" : "Stressed Income:"}</strong><br/>${fmt(diag.stressedRevenue)} / ${lang === "th" ? "เดือน" : "mo"}</div>
-    <div><strong>${lang === "th" ? "สถานะการชำระหนี้เมื่อรายได้ลด:" : "Stressed Payment Status:"}</strong><br/><span style="color:${diag.stressedNetMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"};font-weight:700">${diag.stressedNetMonthlyCashflow >= 0 ? (lang === "th" ? `เงินเหลือพอจ่าย (+${Math.round(diag.stressedNetMonthlyCashflow).toLocaleString()} บาท/เดือน)` : `Surplus (+${fmt(diag.stressedNetMonthlyCashflow)}/mo)`) : (lang === "th" ? `เงินเหลือไม่พอจ่าย (ขาดอีก ${Math.abs(Math.round(diag.stressedNetMonthlyCashflow)).toLocaleString()} บาท/เดือน)` : `Shortfall (-${fmt(Math.abs(diag.stressedNetMonthlyCashflow))}/mo)`)}</span></div>
-    <div><strong>${lang === "th" ? "เงินเก็บสำรองช่วยโปะส่วนที่ขาดได้:" : "Reserve Buffer:"}</strong><br/><span style="color:${diag.stressedNetMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"};font-weight:700">${diag.stressedNetMonthlyCashflow < 0 && diag.stressedRunwayMonths != null ? (lang === "th" ? `รองรับได้ ${diag.stressedRunwayMonths} เดือน` : `${diag.stressedRunwayMonths} mos`) : (lang === "th" ? "ไม่ต้องดึงเงินเก็บมาใช้" : "No reserve draw needed")}</span></div>
+    <div><strong>${lang === "th" ? "รายได้เมื่อหดตัว:" : "Stressed Income:"}</strong><br/>${fmt(diag.stressedRevenue)} / ${lang === "th" ? "เดือน" : "mo"}</div>
+    <div><strong>${lang === "th" ? "สถานะการจ่ายหนี้เมื่อรายได้ลด:" : "Stressed Payment Status:"}</strong><br/><span style="color:${diag.stressedNetMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"};font-weight:700">${diag.stressedNetMonthlyCashflow >= 0 ? (lang === "th" ? `ยังพอจ่าย (+${Math.round(diag.stressedNetMonthlyCashflow).toLocaleString()} บาท/เดือน)` : `Surplus (+${fmt(diag.stressedNetMonthlyCashflow)}/mo)`) : (lang === "th" ? `ขาดอีก ${Math.abs(Math.round(diag.stressedNetMonthlyCashflow)).toLocaleString()} บาท/เดือน` : `Shortfall (-${fmt(Math.abs(diag.stressedNetMonthlyCashflow))}/mo)`)}</span></div>
+    <div><strong>${lang === "th" ? "เงินเก็บสำรองช่วยชดเชยได้:" : "Reserve Buffer:"}</strong><br/><span style="color:${diag.stressedNetMonthlyCashflow < 0 ? "#b91c1c" : "#0f766e"};font-weight:700">${diag.stressedNetMonthlyCashflow < 0 && diag.stressedRunwayMonths != null ? (lang === "th" ? `รองรับส่วนที่ขาดได้ ${diag.stressedRunwayMonths} เดือน` : `${diag.stressedRunwayMonths} mos`) : (lang === "th" ? "ไม่ต้องดึงเงินเก็บมาใช้" : "No reserve draw needed")}</span></div>
   </div>
 
   ${
     comparison
       ? `
   <h2>${lang === "th" ? `2. ตารางเปรียบเทียบค่างวดและยอดหนี้คงเหลือ (${comparison.policyTitleTh})` : `2. Proposed Repayment Schedule (${comparison.policyTitleEn})`}</h2>
-  <div style="font-size:9.5px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (ประมาณการ)" : ""} · ประมาณการส่วนต่างดอกเบี้ย ${fmt(comparison.totalInterestSaved)}${comparison.usesAssumedRate ? ` (สมมติฐานดอกเบี้ยเดิม ${comparison.originalRatePct.toFixed(1)}%/ปี)` : ` (ดอกเบี้ยที่กรอก ${comparison.originalRatePct.toFixed(1)}%/ปี)`}${comparison.grossWaivedInterest ? ` · มูลค่าดอกเบี้ยยกเว้นตามตัวอย่าง ${fmt(comparison.grossWaivedInterest)}` : ""}${comparison.payoffMonthPol ? ` · คาดปิดจบใน ${Math.ceil(comparison.payoffMonthPol / 12)} ปี` : ""}` : `Principal ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (est.)" : ""} · Est. Interest Difference ${fmt(comparison.totalInterestSaved)} (${comparison.usesAssumedRate ? "assumed" : "entered"} ${comparison.originalRatePct.toFixed(1)}% p.a.)`})</div>
+  <div style="font-size:9.2px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (ประมาณการ)" : ""} · ประมาณการส่วนต่างดอกเบี้ย ${fmt(comparison.totalInterestSaved)}${comparison.usesAssumedRate ? ` (สมมติฐานดอกเบี้ยเดิม ${comparison.originalRatePct.toFixed(1)}%/ปี)` : ` (ดอกเบี้ยที่กรอก ${comparison.originalRatePct.toFixed(1)}%/ปี)`}` : `Principal ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (est.)" : ""} · Est. Interest Difference ${fmt(comparison.totalInterestSaved)} (${comparison.usesAssumedRate ? "assumed" : "entered"} ${comparison.originalRatePct.toFixed(1)}% p.a.)`})</div>
   <table>
     <thead>
       <tr>
@@ -809,7 +1175,7 @@ export function buildFinancialDossierHtml(params: {
         <th style="text-align:right">${lang === "th" ? "ยอดหนี้เดิมคงเหลือ (บาท)" : "Original Balance"}</th>
         <th style="text-align:right">${lang === "th" ? "ยอดหนี้ตามแผนใหม่ (บาท)" : "Proposed Balance"}</th>
         <th style="text-align:right">${lang === "th" ? "ค่างวดเดิม/เดือน" : "Original/mo"}</th>
-        <th style="text-align:right">${lang === "th" ? "ค่างวดใหม่ที่เสนอ/เดือน" : "Proposed/mo"}</th>
+        <th style="text-align:right">${lang === "th" ? "ค่างวดใหม่ที่ตั้งเป้า/เดือน" : "Target/mo"}</th>
       </tr>
     </thead>
     <tbody>${rowsHtml}</tbody>
@@ -819,29 +1185,37 @@ export function buildFinancialDossierHtml(params: {
 
   <div class="two-col">
     <div>
-      <h2>${lang === "th" ? "3. ข้อเสนอขอปรับปรุงโครงสร้างหนี้" : "3. Restructuring Request"}</h2>
+      <h2>${lang === "th" ? "3. แนวทางหลักที่ควรสอบถามก่อนและตัวอย่างคำพูด" : "3. Priority Option & Opening Talking Points"}</h2>
       <div class="proposal-card">
-        <strong>${primaryProgram ? primaryProgram.title : (lang === "th" ? "ขอปรับปรุงเงื่อนไขการผ่อนชำระให้สอดคล้องกับรายได้จริง" : "Payment Restructuring Request")}</strong>
-        <div style="margin-top:4px;color:#334155">
-          ${primaryProgram ? primaryProgram.benefit : (lang === "th" ? "ขอความอนุเคราะห์ปรับลดค่างวดหรือขยายระยะเวลาผ่อนชำระเพื่อให้สามารถชำระหนี้ได้อย่างต่อเนื่อง" : "Request installment alignment with actual net cashflow.")}
-        </div>
+        <strong>${primaryProgram ? primaryProgram.title : (lang === "th" ? "ขอปรับเงื่อนไขการผ่อนชำระให้สอดคล้องกับรายรับจริง" : "Payment Restructuring Request")}</strong>
+        ${
+          negotiationGuide
+            ? `<div style="margin-top:5px;color:#334155;font-style:italic">"${lang === "th" ? negotiationGuide.openingTh : negotiationGuide.openingEn}"</div>`
+            : `<div style="margin-top:4px;color:#334155">${primaryProgram ? primaryProgram.benefit : ""}</div>`
+        }
       </div>
     </div>
     <div>
-      <h2>${lang === "th" ? "4. เอกสารประกอบการยื่นคำขอ (แนบมาพร้อมนี้)" : "4. Attached Supporting Documents"}</h2>
+      <h2>${lang === "th" ? "4. เอกสารที่ควรเตรียมไว้แสดงต่อเจ้าหน้าที่" : "4. Supporting Documents to Prepare"}</h2>
       <ul>${checklist.map((item) => `<li>${item}</li>`).join("")}</ul>
     </div>
   </div>
 
-  <div class="sign-row">
-    <div>
-      <div>${lang === "th" ? "ลงชื่อ .................................................................... ผู้ยื่นคำขอ" : "Signed .................................................................... Applicant"}</div>
-      <div style="margin-top:6px">${lang === "th" ? "วันที่ ............ / ............................ / ...................." : "Date ............ / ............................ / ...................."}</div>
-    </div>
-  </div>
+  ${
+    questions.length > 0
+      ? `
+  <h2>${lang === "th" ? "5. คำถามสำคัญที่ควรถามเจ้าหน้าที่และช่องจดข้อเสนอ" : "5. Key Questions to Ask & Officer Offer Notes"}</h2>
+  <div class="notes-box">
+    <ul>${questions.map((q) => `<li>${q}</li>`).join("")}</ul>
+    <div style="margin-top:6px;font-weight:600;color:#0f172a">${lang === "th" ? "จดบันทึกข้อเสนอและชื่อเจ้าหน้าที่ที่ติดต่อ:" : "Notes on bank offer & officer contacted:"}</div>
+    <div class="note-line"></div>
+    <div class="note-line"></div>
+  </div>`
+      : ""
+  }
 
   <div class="footer">
-    ${lang === "th" ? "หมายเหตุ: เอกสารฉบับนี้จัดทำขึ้นเพื่อสรุปข้อมูลทางการเงินเบื้องต้นประกอบการพิจารณาของสถาบันการเงิน เงื่อนไขการอนุมัติเป็นไปตามหลักเกณฑ์ของธนาคาร" : "Note: Preliminary financial summary prepared for lender review. Final terms are subject to bank credit policy."}
+    ${lang === "th" ? "หมายเหตุ: เอกสารนี้จัดทำขึ้นเพื่อช่วยเตรียมข้อมูลและวางแผนก่อนพูดคุยกับเจ้าหนี้เท่านั้น ไม่ใช่เอกสารทางการของธนาคารหรือธนาคารแห่งประเทศไทย เงื่อนไขการอนุมัติจริงเป็นไปตามหลักเกณฑ์ของแต่ละสถาบันการเงิน" : "Note: Prepared solely as personal planning notes before contacting your lender. Not an official bank or Bank of Thailand form; final approval depends on lender credit policy."}
   </div>
 </body>
 </html>`

@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useInView } from "motion/react"
-import { Activity, ArrowUpRight } from "lucide-react"
+import { Activity } from "lucide-react"
 import Link from "next/link"
 import { useRef } from "react"
 import { StaffLoginButton } from "@/components/staff-login-dialog"
@@ -15,12 +15,14 @@ export function Footer() {
   const footerLinks =
     lang === "th"
       ? [
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
           { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
+          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
+          { label: "เอกสารและสายด่วน", href: "#official-resources" },
         ]
       : [
-          { label: "Provincial Outlook", href: "#risk-outlook" },
           { label: "Check Debt & Relief", href: "#relief-assistant" },
+          { label: "Provincial Outlook", href: "#risk-outlook" },
+          { label: "Documents & Hotlines", href: "#official-resources" },
         ]
 
   return (
@@ -56,17 +58,13 @@ export function Footer() {
               {link.label}
             </Link>
           ))}
-          <Link href="#relief-assistant" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-            {lang === "th" ? "คำนวณค่างวด" : "Calculate Payment"}
-            <ArrowUpRight aria-hidden="true" className="size-3.5" />
-          </Link>
         </nav>
       </div>
       <div className="border-t border-border px-5 pb-24 pt-4 text-center sm:px-8">
         <p className="text-sm leading-6 text-[#4B5563]">
           {lang === "th"
-            ? "เพื่อการสนับสนุนข้อมูลและการวางแผนทางการเงินเบื้องต้น เงื่อนไขจริงเป็นไปตามประกาศของหน่วยงานและสถาบันการเงิน"
-            : "Decision support from open official datasets. Final program eligibility rests with responsible institutions."}
+            ? "เครื่องมืออิสระสำหรับจำลองแผนและรวบรวมข้อมูลเปิดภาครัฐเพื่อการวางแผนทางการเงินเบื้องต้น ไม่ใช่บริการทางการของธนาคารหรือธนาคารแห่งประเทศไทย เงื่อนไขจริงเป็นไปตามประกาศของแต่ละสถาบันการเงิน"
+            : "Independent decision support tool built from open official datasets. Not an official bank or Bank of Thailand service; final eligibility rests with financial institutions."}
         </p>
         <StaffLoginButton
           label={lang === "th" ? "เข้าสู่ระบบเจ้าหน้าที่" : "Staff sign in"}

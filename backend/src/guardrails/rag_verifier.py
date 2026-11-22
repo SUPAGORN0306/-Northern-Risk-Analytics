@@ -44,6 +44,13 @@ def verify_rag_grounding(
     allow_empty_citations: bool = False,
 ) -> VerificationResult:
     """Enforce retrieval threshold refusal and O(1) verification of every claimed citation."""
+    if allow_empty_citations and not claimed_citations:
+        return VerificationResult(
+            is_valid=True,
+            should_refuse=False,
+            reason="Answered from deterministic or app context without policy citations",
+            verified_citations=(),
+        )
     if not retrieved_chunks:
         return VerificationResult(
             is_valid=False,

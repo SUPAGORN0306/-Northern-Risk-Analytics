@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-DsrBand = Literal["stable", "watch", "tight", "critical"]
+DsrBand = Literal["stable", "watch", "tight", "critical", "not_assessable"]
 
 
 @dataclass(frozen=True)
@@ -33,10 +33,10 @@ def calculate_dsr(monthly_revenue_thb: float, monthly_debt_thb: float) -> DsrAss
             return DsrAssessment(
                 monthly_revenue_thb=0.0,
                 monthly_debt_thb=0.0,
-                dsr_pct=0.0,
-                band="stable",
-                summary_en="No active monthly debt obligation reported (Gross income DSR 0%)",
-                summary_th="ไม่พบภาระผ่อนชำระหนี้รายเดือนในขณะนี้ (สัดส่วนหนี้ต่อรายได้รวม 0%)",
+                dsr_pct=None,
+                band="not_assessable",
+                summary_en="Monthly debt payments were reported as zero, but the debt to income ratio cannot be calculated because monthly revenue is zero. This does not confirm that there is no debt.",
+                summary_th="แจ้งค่างวดหนี้รายเดือนเป็น 0 บาท แต่คำนวณสัดส่วนค่างวดต่อรายรับไม่ได้เพราะรายรับเป็น 0 บาท ข้อมูลนี้ยังยืนยันไม่ได้ว่าไม่มีหนี้ทั้งหมด",
             )
         return DsrAssessment(
             monthly_revenue_thb=0.0,
@@ -44,7 +44,7 @@ def calculate_dsr(monthly_revenue_thb: float, monthly_debt_thb: float) -> DsrAss
             dsr_pct=None,
             band="critical",
             summary_en="Active debt obligation with zero reported gross monthly revenue (Gross income DSR undefined)",
-            summary_th="มีภาระผ่อนชำระหนี้แต่ไม่มีรายได้รวมรายเดือน (คำนวณสัดส่วนหนี้ต่อรายได้รวมไม่ได้) ควรเจรจาปรับโครงสร้างหนี้โดยเร่งด่วน",
+            summary_th="มีภาระผ่อนชำระหนี้แต่ไม่มีรายได้รวมรายเดือน (คำนวณสัดส่วนหนี้ต่อรายได้รวมไม่ได้) ควรติดต่อเจ้าหนี้เพื่อหารือทางเลือกในการชำระหนี้",
         )
 
     dsr_pct = round((monthly_debt_thb / monthly_revenue_thb) * 100.0, 2)
@@ -64,7 +64,7 @@ def calculate_dsr(monthly_revenue_thb: float, monthly_debt_thb: float) -> DsrAss
     else:
         band = "critical"
         summary_en = "Critical gross income debt stress (contact creditors immediately for restructuring)"
-        summary_th = "สัดส่วนค่างวดต่อรายได้รวมอยู่ในระดับวิกฤต ควรติดต่อเจ้าหนี้เพื่อขอปรับโครงสร้างหนี้โดยเร่งด่วน"
+        summary_th = "สัดส่วนค่างวดต่อรายได้รวมอยู่ในระดับวิกฤต ควรติดต่อเจ้าหนี้เพื่อหารือทางเลือกในการชำระหนี้โดยเร็ว"
 
     return DsrAssessment(
         monthly_revenue_thb=round(monthly_revenue_thb, 2),

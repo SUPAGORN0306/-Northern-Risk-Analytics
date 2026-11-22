@@ -61,7 +61,7 @@ export function RiskOutlook({
 }) {
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: "-60px" })
-  const { lang, selectedProvinceCode, setSelectedProvinceCode } = useAppState()
+  const { lang, selectedProvinceCode, setSelectedProvinceCode, setProvinceDetail } = useAppState()
 
   const [metricMode, setMetricMode] = useState<MapMetricMode>("cluster")
   const [chartTab, setChartTab] = useState<ChartTab>("trend")
@@ -101,6 +101,7 @@ export function RiskOutlook({
       outlook.default_province_detail.province?.province_code === "CM"
     ) {
       setDetail(outlook.default_province_detail)
+      setProvinceDetail(outlook.default_province_detail)
       setDetailError(null)
       setDetailLoading(false)
       return () => {
@@ -114,12 +115,14 @@ export function RiskOutlook({
       .then((res) => {
         if (active) {
           setDetail(res)
+          setProvinceDetail(res)
           setDetailError(null)
         }
       })
       .catch((err) => {
         if (active) {
           setDetail(null)
+          setProvinceDetail(null)
           setDetailError(formatFetchError(err, lang))
         }
       })
@@ -129,7 +132,7 @@ export function RiskOutlook({
     return () => {
       active = false
     }
-  }, [selectedProvinceCode, detailRetryNonce, lang, outlook?.default_province_detail])
+  }, [selectedProvinceCode, detailRetryNonce, lang, outlook?.default_province_detail, setProvinceDetail])
 
   // Recover automatically if outlook finishes loading after an early cold start detail error
   useEffect(() => {
@@ -274,12 +277,6 @@ export function RiskOutlook({
       rain: m.avg_rainfall_mm != null ? Math.round(m.avg_rainfall_mm) : null,
     }))
   }, [activeSeasonRows, lang])
-
-  const monthlyTrendPeriod = useMemo(() => {
-    const series = (detail?.monthly_series ?? []).slice(-18)
-    if (!series.length) return ""
-    return `${formatThaiMonth(series[0].month_date, lang)}–${formatThaiMonth(series[series.length - 1].month_date, lang)}`
-  }, [detail, lang])
 
   const seasonalPlan = useMemo(() => {
     const cal = activeSeasonRows
@@ -572,23 +569,99 @@ export function RiskOutlook({
         >
           <div className="max-w-2xl">
             <p className="mb-2 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              {lang === "th" ? "สถานการณ์รายจังหวัด" : "Provincial Outlook"}
+              {lang === "th" ? "สถานการณ์ใกล้ตัวใน 17 จังหวัดภาคเหนือ" : "Provincial Outlook"}
             </p>
             <h2
               id="risk-outlook-heading"
               className="font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl"
             >
               {lang === "th"
-                ? "แผนที่เศรษฐกิจและฐานะการเงิน 17 จังหวัดภาคเหนือ"
+                ? "ดูสถานการณ์การค้า ฝุ่น และฝนในจังหวัดของคุณ"
                 : "17 Province Northern Economic & Financial Map"}
             </h2>
             <p className="mt-2.5 text-sm leading-6 text-muted-foreground">
               {lang === "th"
-                ? "เลือกจังหวัดเพื่อดูอัตราเข้าพัก ภาระหนี้ และรายได้ที่เหลือหลังหักค่าใช้จ่าย เทียบกับค่าเฉลี่ยภาคเหนือตลอดทั้งปี"
-                : "Hover or click any province to compare occupancy, SME debt, and post-expense cash surplus against the regional average with a 12-month planner."}
+                ? "กดเลือกจังหวัดบนแผนที่ เพื่อดูว่าช่วงเดือนไหนลูกค้าเงียบ หรือมีฝุ่นและฝนหนัก จะได้วางแผนกันเงินสำรองและตั้งค่างวดไม่ให้ตึงมือเกินไป"
+                : "Select any province to see slow months, haze or rainfall peaks, and household debt benchmarks so you can plan cash reserves safely."}
             </p>
           </div>
         </motion.div>
+
+        {/* Regional Summary Strip moved from Hero so citizens see macro numbers in context */}
+        {summary && (
+          <div className="mb-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-background px-4 py-3">
+              <p className="text-[11px] text-muted-foreground">
+                {lang === "th" ? "อัตราเข้าพักเฉลี่ยภาคเหนือ" : "Regional Avg Occupancy"}
+              </p>
+              <p className="mt-0.5 font-display text-lg font-semibold tabular-nums text-foreground sm:text-xl">
+                {summary.avg_occupancy_pct.toFixed(1)}%
+              </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                {lang === "th"
+                  ? `ข้อมูลล่าสุด ${outlook?.latest_month ? formatThaiMonth(outlook.latest_month, lang) : ""}`
+                  : `Latest ${outlook?.latest_month ? formatThaiMonth(outlook.latest_month, lang) : ""}`}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background px-4 py-3">
+              <p className="text-[11px] text-muted-foreground">
+                {lang === "th" ? "รายได้ท่องเที่ยวทั้งภาค" : "Monthly Tourism Revenue"}
+              </p>
+              <p className="mt-0.5 font-display text-lg font-semibold tabular-nums text-foreground sm:text-xl">
+                {lang === "th"
+                  ? `${(summary.total_monthly_revenue_mthb / 1000).toFixed(2)} พันล้านบาท`
+                  : `${(summary.total_monthly_revenue_mthb / 1000).toFixed(2)}B THB`}
+              </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                {lang === "th" ? "เม็ดเงินหมุนเวียนใน 17 จังหวัดต่อเดือน" : "Monthly flow across 17 provinces"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background px-4 py-3">
+              <p className="text-[11px] text-muted-foreground">
+                {lang === "th" ? "ค่าครองชีพและราคาน้ำมัน" : "Living Cost & Fuel"}
+              </p>
+              <p className="mt-0.5 font-display text-lg font-semibold tabular-nums text-foreground sm:text-xl">
+                {summary.th_cpi_yoy_pct != null
+                  ? `${summary.th_cpi_yoy_pct >= 0 ? "+" : ""}${summary.th_cpi_yoy_pct.toFixed(2)}%${
+                      summary.oil_brent_yoy_pct != null
+                        ? ` / ${summary.oil_brent_yoy_pct > 0 ? "+" : ""}${summary.oil_brent_yoy_pct.toFixed(0)}%`
+                        : ""
+                    }`
+                  : "—"}
+              </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                {lang === "th"
+                  ? `เทียบปีก่อน (${formatThaiMonth(summary.th_cpi_month, lang)})`
+                  : `YoY (${formatThaiMonth(summary.th_cpi_month, lang)})`}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background px-4 py-3">
+              <p className="text-[11px] text-muted-foreground">
+                {lang === "th" ? "เฝ้าระวังภัยพิบัติและมลพิษ" : "Hazard & Pollution Watch"}
+              </p>
+              <p
+                className={`mt-0.5 font-display text-lg font-semibold sm:text-xl ${
+                  summary.has_active_external_shock ? "text-amber-800" : "text-emerald-800"
+                }`}
+              >
+                {summary.has_active_external_shock
+                  ? lang === "th"
+                    ? `เฝ้าระวัง ${summary.active_external_shock_provinces.length}/17 จังหวัด`
+                    : `${summary.active_external_shock_provinces.length}/17 Alert`
+                  : lang === "th"
+                    ? "ภาวะปกติ (0/17)"
+                    : "Normal (0/17)"}
+              </p>
+              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                {summary.has_active_external_shock
+                  ? shockProvinceNames.join(", ")
+                  : lang === "th"
+                    ? "ไม่พบจังหวัดที่ฝุ่น ฝน หรือมลพิษเกินเกณฑ์"
+                    : "No province above alert threshold"}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* 1 Click Spotlight Quick Jump Bar */}
         {regionalBenchmarks.spotlights.length > 0 && (
@@ -653,9 +726,9 @@ export function RiskOutlook({
         )}
 
         {/* Balanced 2 Column Map Stage + Animated Provincial Inspector */}
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(320px,44fr)_minmax(0,56fr)]">
+        <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,44fr)_minmax(0,56fr)]">
           {/* Left Map Stage with Regional Tier Breakdown */}
-          <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
+          <div className="flex min-w-0 flex-col gap-4 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-2 text-sm font-medium text-[#4B5563]">
                 <MapPin aria-hidden="true" className="size-3.5 text-foreground" />
@@ -665,7 +738,7 @@ export function RiskOutlook({
                     : "Tap a province, or pick one from the list below"}
                 </span>
                 <span className="hidden md:inline">
-                  {lang === "th" ? "ชี้เพื่อดูเร็ว · คลิกเพื่อเจาะลึก" : "Hover to preview · Click to inspect"}
+                  {lang === "th" ? "ชี้เพื่อดูคร่าวๆ · กดเลือกจังหวัดเพื่อดูรายละเอียด" : "Hover to preview · Click to inspect"}
                 </span>
               </span>
               {outlook?.latest_month && (
@@ -910,11 +983,26 @@ export function RiskOutlook({
                             ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgOcc.toFixed(1)}%`
                             : `North avg ${regionalBenchmarks.avgOcc.toFixed(1)}%`
                         }
+                        meaningText={
+                          selectedItem.occupancy_rate == null
+                            ? undefined
+                            : selectedItem.occupancy_rate >= regionalBenchmarks.avgOcc + 3
+                              ? lang === "th"
+                                ? "หมายถึง: ภาคบริการคึกคักกว่าค่าเฉลี่ยภาค"
+                                : "Means: Demand stronger than regional average"
+                              : selectedItem.occupancy_rate <= regionalBenchmarks.avgOcc - 3
+                                ? lang === "th"
+                                  ? "หมายถึง: ลูกค้าชะลอตัวกว่าค่าเฉลี่ยภาค"
+                                  : "Means: Slower demand than regional average"
+                                : lang === "th"
+                                  ? "หมายถึง: อยู่ในระดับใกล้เคียงค่าเฉลี่ยภาค"
+                                  : "Means: Near regional average demand"
+                        }
                         pct={selectedItem.occupancy_rate != null ? Math.min(100, selectedItem.occupancy_rate) : null}
                         avgPct={Math.min(100, regionalBenchmarks.avgOcc)}
                       />
                       <CompareBarTile
-                        label={lang === "th" ? "สัดส่วนหนี้ต่อรายได้ทั้งปี" : "Debt / Annual Income"}
+                        label={lang === "th" ? "ภาระหนี้เฉลี่ยเทียบรายได้ทั้งปี" : "Avg Debt / Annual Income"}
                         valueText={
                           selectedItem.debt_to_annual_income_sme != null
                             ? `${Math.round(selectedItem.debt_to_annual_income_sme * 100)}%`
@@ -925,18 +1013,40 @@ export function RiskOutlook({
                             ? `เฉลี่ยภาคเหนือ ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
                             : `North avg ${Math.round(regionalBenchmarks.avgSmeDebt * 100)}%`
                         }
+                        meaningText={
+                          selectedItem.debt_to_annual_income_sme == null
+                            ? undefined
+                            : lang === "th"
+                              ? `หมายถึง: หนี้เฉลี่ยราว ${(selectedItem.debt_to_annual_income_sme * 12).toFixed(1)} เดือนของรายได้ (${selectedItem.debt_to_annual_income_sme >= 0.6 ? "สูงกว่าเกณฑ์เริ่มตึงตัว 60%" : "ต่ำกว่าเกณฑ์เริ่มตึงตัว 60%"})`
+                              : `Means: ~${(selectedItem.debt_to_annual_income_sme * 12).toFixed(1)} mos of income (${selectedItem.debt_to_annual_income_sme >= 0.6 ? "above 60% watch line" : "below 60% watch line"})`
+                        }
                         pct={selectedItem.debt_to_annual_income_sme != null
                           ? Math.min(100, (selectedItem.debt_to_annual_income_sme / 1.6) * 100)
                           : null}
                         avgPct={Math.min(100, (regionalBenchmarks.avgSmeDebt / 1.6) * 100)}
                       />
                       <CompareBarTile
-                        label={lang === "th" ? "เงินเหลือใช้ต่อเดือน" : "Monthly cash left"}
+                        label={lang === "th" ? "เงินเหลือใช้หลังหักรายจ่าย" : "Monthly Cash Cushion"}
                         valueText={selectedCushion != null ? `${selectedCushion.toFixed(0)}%` : "—"}
                         subText={
                           lang === "th"
                             ? `เฉลี่ยภาคเหนือ ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
                             : `North avg ${regionalBenchmarks.avgSmeCushion.toFixed(0)}%`
+                        }
+                        meaningText={
+                          selectedCushion == null
+                            ? undefined
+                            : selectedCushion < 16
+                              ? lang === "th"
+                                ? "หมายถึง: เงินกันชนค่อนข้างน้อย เริ่มตึงมือหากรายได้สะดุด"
+                                : "Means: Thin cash cushion if income dips"
+                              : selectedCushion < 24
+                                ? lang === "th"
+                                  ? "หมายถึง: มีเงินกันชนปานกลาง ควรสำรองเผื่อช่วงเงียบ"
+                                  : "Means: Moderate cushion; save for slow months"
+                                : lang === "th"
+                                  ? "หมายถึง: มีเงินกันชนค่อนข้างดี รับมือความผันผวนได้"
+                                  : "Means: Healthy cushion for seasonal swings"
                         }
                         pct={selectedCushion != null ? Math.min(100, (selectedCushion / 50) * 100) : null}
                         avgPct={Math.min(100, (regionalBenchmarks.avgSmeCushion / 50) * 100)}
@@ -969,10 +1079,29 @@ export function RiskOutlook({
                         </span>
                       </div>
 
-                      <p className="mt-1.5 text-xs leading-5 text-[#4B5563]">
+                      <p className="mt-2 rounded-xl border border-border/70 bg-background px-3 py-2 text-xs leading-5 text-foreground">
+                        <strong>{lang === "th" ? "ความหมายต่อการวางแผนของคุณ: " : "What this means for you: "}</strong>
+                        {selectedItem.vulnerability_tier === 1
+                          ? lang === "th"
+                            ? "พื้นที่นี้มีทั้งภาระหนี้และรายจ่ายสูงหรือมีแรงกดดันจากภัยพื้นที่ ควรรีบกันเงินสำรองและเจรจาปรับค่างวดล่วงหน้าก่อนเริ่มค้างชำระ"
+                            : "High financial strain and local pressure. Build reserve cash and negotiate payment relief early before missing installments."
+                          : selectedItem.vulnerability_tier === 2
+                            ? lang === "th"
+                              ? "รายได้ในพื้นที่แกว่งแรงตามฤดูกาล ฝุ่น หรือฝนตกหนัก ควรคุมค่างวดให้อยู่ในระดับที่จ่ายไหวแม้ในช่วงลูกค้าเงียบ"
+                              : "Income swings strongly with seasons, haze, or rainfall. Keep monthly debt payments manageable during slow months."
+                            : selectedItem.vulnerability_tier === 3
+                              ? lang === "th"
+                                ? "ภาพรวมยังพอไปได้แต่รายจ่ายเริ่มตึงมือ แนะนำติดตามต้นทุนและทบทวนหนี้ดอกเบี้ยสูงไม่ให้สะสมเพิ่ม"
+                                : "Manageable overall, though costs are tightening. Watch expenses and avoid adding high-interest debt."
+                              : lang === "th"
+                                ? "ภาพรวมจังหวัดยังมีสภาพคล่องค่อนข้างดี เหมาะแก่การทยอยออมเงินสำรองและโปะหนี้ดอกเบี้ยสูงให้หมดไวขึ้น"
+                                : "Provincial liquidity is relatively resilient. Good window to build savings and pay down high-interest loans."}
+                      </p>
+
+                      <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
                         {lang === "th"
-                          ? "หมายเหตุ: การจัดระดับและแนวทางด้านล่างเป็นสัญญาณเฝ้าระวังระดับจังหวัดจากค่าเฉลี่ยสถิติทางการ ไม่ใช่การประเมินเครดิตหรือความสามารถชำระหนี้ของธุรกิจรายบุคคล (การคำนวณข้อมูลกิจการของท่านแยกอยู่ในเครื่องมือตรวจสุขภาพการเงินด้านบน)"
-                          : "Note: This tier and sector playbook reflect provincial macro surveillance averages, not an individual firm credit assessment (use the firm calculator above for your own business numbers)."}
+                          ? "หมายเหตุ: คะแนนและระดับข้างต้นคำนวณจากค่าเฉลี่ยสถิติทางการระดับจังหวัดเพื่อเฝ้าระวังภาพรวม ไม่ใช่การประเมินเครดิตของบุคคลหรือกิจการใดเป็นการเฉพาะ"
+                          : "Note: This tier reflects provincial statistical averages for macro surveillance, not an individual credit assessment."}
                       </p>
 
                       {/* Drivers explaining why this province falls in this tier */}
@@ -1190,14 +1319,6 @@ export function RiskOutlook({
                         )}
                       </div>
                     </div>
-
-                    {chartTab === "trend" && !detailLoading && !detailError && (
-                      <p className="mb-1 text-[10px] text-muted-foreground">
-                        {lang === "th"
-                          ? `ข้อมูลรายเดือน${monthlyTrendPeriod ? ` ${monthlyTrendPeriod}` : ""} ช่องว่างคือไม่มีข้อมูล`
-                          : `Monthly data${monthlyTrendPeriod ? ` ${monthlyTrendPeriod}` : ""} Gaps mean no data`}
-                      </p>
-                    )}
 
                     {chartTab === "seasonality" && !detailLoading && !detailError && (
                       <div className="mb-2.5 space-y-2 text-[10px]">
@@ -1678,9 +1799,40 @@ export function RiskOutlook({
           </motion.div>
         </div>
 
+        {/* Data Provenance & Freshness Transparency Strip */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/80 bg-background/80 px-4 py-3 text-[11px] leading-5 text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>
+              <strong className="font-medium text-foreground">
+                {lang === "th" ? "อัตราเข้าพักและรายได้ท่องเที่ยว:" : "Occupancy & Revenue:"}
+              </strong>{" "}
+              {lang === "th"
+                ? `กองเศรษฐกิจการท่องเที่ยวและกีฬา (ล่าสุด ${outlook?.latest_month ? formatThaiMonth(outlook.latest_month, lang) : "รายเดือน"})`
+                : `MOTS Tourism Economics (Latest ${outlook?.latest_month ? formatThaiMonth(outlook.latest_month, lang) : "Monthly"})`}
+            </span>
+            <span>
+              <strong className="font-medium text-foreground">
+                {lang === "th" ? "หนี้และรายจ่ายจังหวัด:" : "Debt & Expense:"}
+              </strong>{" "}
+              {lang === "th" ? "สำนักงานสถิติแห่งชาติ (รอบสำรวจปี 2568)" : "National Statistical Office (2025 Survey)"}
+            </span>
+            <span>
+              <strong className="font-medium text-foreground">
+                {lang === "th" ? "ฝุ่นและปริมาณฝน:" : "Haze & Rain:"}
+              </strong>{" "}
+              {lang === "th" ? "กรมควบคุมมลพิษและข้อมูลอากาศ (ปรับปรุงรายวัน)" : "PCD Air4Thai & Weather Data (Daily)"}
+            </span>
+          </div>
+          <span className="text-[10px] text-muted-foreground">
+            {lang === "th"
+              ? "คะแนนความเสี่ยงเป็นดัชนีสรุปจากข้อมูลเปิดภาครัฐเพื่อประกอบการวางแผน"
+              : "Risk scores synthesize open official datasets for planning support"}
+          </span>
+        </div>
+
         {/* Provincial News Strip Synced with Selected Province on Map */}
         {displayedNews.length > 0 && (
-          <div className="mt-5 rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
+          <div className="mt-5 min-w-0 overflow-hidden rounded-[1.75rem] border border-border bg-background p-5 sm:p-6">
             <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
                 <Newspaper aria-hidden="true" className="size-4 shrink-0 text-foreground" />
@@ -1809,12 +1961,14 @@ function CompareBarTile({
   label,
   valueText,
   subText,
+  meaningText,
   pct,
   avgPct,
 }: {
   label: string
   valueText: string
   subText: string
+  meaningText?: string
   pct: number | null
   avgPct: number
 }) {
@@ -1841,7 +1995,8 @@ function CompareBarTile({
             aria-hidden="true"
           />
         </div>
-        <p className="mt-1.5 text-sm leading-5 text-[#4B5563]">{subText}</p>
+        <p className="mt-1.5 text-xs leading-5 text-[#4B5563]">{subText}</p>
+        {meaningText && <p className="mt-1 text-[11px] leading-4 text-foreground/85">{meaningText}</p>}
       </div>
     </div>
   )

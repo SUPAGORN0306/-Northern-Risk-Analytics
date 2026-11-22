@@ -268,7 +268,8 @@ def fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, 
     for attempt in range(2):
         conn = _acquire_pooled_connection()
         try:
-            conn.autocommit = True
+            # Keep transaction open until BIND and EXECUTE complete so PgBouncer never rotates backend mid statement
+            conn.autocommit = False
         except Exception:
             pass
         cur = conn.cursor()
@@ -277,11 +278,19 @@ def fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, 
             columns = [desc[0] for desc in (cur.description or [])]
             rows = [dict(zip(columns, row)) for row in cur.fetchall()]
             cur.close()
+            try:
+                conn.commit()
+            except Exception:
+                pass
             _release_pooled_connection(conn, True)
             return rows
         except Exception:
             try:
                 cur.close()
+            except Exception:
+                pass
+            try:
+                conn.rollback()
             except Exception:
                 pass
             _release_pooled_connection(conn, False)

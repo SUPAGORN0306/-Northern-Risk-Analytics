@@ -175,11 +175,17 @@ CREATE TABLE IF NOT EXISTS gold.relief_query_logs (
     province_code       CHAR(2) REFERENCES silver.dim_provinces(province_code),
     business_type       TEXT NOT NULL,
     impact_tags         TEXT[] NOT NULL DEFAULT '{}',
-    dsr_band            TEXT NOT NULL CHECK (dsr_band IN ('stable', 'watch', 'tight', 'critical')),
+    dsr_band            TEXT NOT NULL CHECK (dsr_band IN ('stable', 'watch', 'tight', 'critical', 'not_assessable')),
     matched_program     TEXT,
     was_refused         BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Keep existing deployments compatible when the not-assessable DSR band is introduced.
+ALTER TABLE gold.relief_query_logs
+    DROP CONSTRAINT IF EXISTS relief_query_logs_dsr_band_check;
+ALTER TABLE gold.relief_query_logs
+    ADD CONSTRAINT relief_query_logs_dsr_band_check
+    CHECK (dsr_band IN ('stable', 'watch', 'tight', 'critical', 'not_assessable'));
 CREATE INDEX IF NOT EXISTS idx_gold_relief_prov_time
     ON gold.relief_query_logs (province_code, created_at DESC);
 

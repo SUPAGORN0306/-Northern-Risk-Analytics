@@ -20,8 +20,9 @@ DOCS_RAW_DIR = BACKEND_DIR / "data" / "raw" / "docs"
 SOURCES_PATH = BACKEND_DIR / "config" / "sources.yaml"
 
 # Precompiled Thai PDF normalization patterns fixing split Sara Am and font map artifacts
-_TONE_SPLIT_SARA_AM_RE = re.compile(r"([\u0e01-\u0e2e])(?:([\u0e48-\u0e4b])\s+|\s+([\u0e48-\u0e4b]))\u0e32")
-_SPACED_SARA_AM_RE = re.compile(r"([\u0e01-\u0e2e][\u0e48-\u0e4b]?)\s+([\u0e48-\u0e4b]?)\u0e33")
+_TONE_SPLIT_SARA_AM_RE = re.compile(r"([\u0e01-\u0e2e])(?:([\u0e48-\u0e4b])[ \t]+|[ \t]+([\u0e48-\u0e4b]))\u0e32")
+_SPACED_SARA_AM_RE = re.compile(r"([\u0e01-\u0e2e][\u0e48-\u0e4b]?)[ \t]+([\u0e48-\u0e4b]?)\u0e33")
+_PLAIN_SPLIT_SARA_AM_RE = re.compile(r"([\u0e01-\u0e2e])[ \t]+\u0e32")
 _NIKHAHIT_SARA_AA_RE = re.compile(r"\u0e4d\u0e32")
 _MULTI_SPACE_RE = re.compile(r"[ \t]+")
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
@@ -94,6 +95,7 @@ def normalize_thai_pdf_text(text: str) -> str:
     cleaned = _NIKHAHIT_SARA_AA_RE.sub("\u0e33", cleaned)
     cleaned = _SPACED_SARA_AM_RE.sub("\\1\\2\u0e33", cleaned)
     cleaned = _TONE_SPLIT_SARA_AM_RE.sub(lambda m: f"{m.group(1)}{m.group(2) or m.group(3)}\u0e33", cleaned)
+    cleaned = _PLAIN_SPLIT_SARA_AM_RE.sub("\\1\u0e33", cleaned)
     for bad_seq, good_seq in _THAI_FONT_FIXES:
         if bad_seq in cleaned:
             cleaned = cleaned.replace(bad_seq, good_seq)
