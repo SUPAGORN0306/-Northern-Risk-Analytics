@@ -72,7 +72,7 @@ export function Header() {
         >
           <Activity aria-hidden="true" className="size-5 shrink-0 text-foreground" />
           <span className="truncate font-display text-sm font-semibold tracking-tight text-foreground sm:text-base">
-            {lang === "th" ? "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ" : "Northern Debt & Economic Planner"}
+            {lang === "th" ? "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ" : "NorthRisk Analytics"}
           </span>
         </Link>
 
@@ -130,7 +130,7 @@ export function Header() {
 
           {/* Primary CTA button shown only on desktop */}
           <a
-            href="#relief-assistant"
+            href={`${homePath}#relief-assistant`}
             className="hidden whitespace-nowrap rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-85 md:inline-flex"
           >
             {lang === "th" ? "คำนวณค่างวด" : "Calculate Payment"}

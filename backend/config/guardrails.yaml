@@ -7,6 +7,7 @@ llm:
 rag:
   top_k: 5
   min_similarity_threshold: 0.50
+  extractive_fallback_min_similarity: 0.68
   # Vector weight for hybrid search
   hybrid_alpha: 0.68
   refusal_message_th: "ขอโทษครับ ตอนนี้ผมยังไม่มีเอกสารอ้างอิงที่ใช้ตอบเรื่องนี้ได้ เลยไม่อยากเดาคำตอบครับ ถ้าเป็นเรื่องเศรษฐกิจภาคเหนือ การจัดการหนี้ หรือมาตรการช่วยเหลือ ลองถามต่อได้เลยครับ หากต้องการยืนยันสิทธิ์เฉพาะราย แนะนำติดต่อเจ้าหนี้หรือ ธปท. 1213"

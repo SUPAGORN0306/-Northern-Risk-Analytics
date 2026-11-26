@@ -20,8 +20,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
           },
           {
             icon: ShieldCheck,
-            title: "คัดโครงการและคำพูดให้พร้อม",
-            desc: "จับคู่มาตรการภาครัฐที่ตรงเงื่อนไข พร้อมตัวอย่างคำพูดไว้ติดต่อธนาคาร",
+            title: "ดูแนวทางและเตรียมคุยกับเจ้าหนี้",
+            desc: "แสดงแนวทางที่อาจเกี่ยวข้องและตัวอย่างคำถาม โดยควรตรวจเงื่อนไขกับเจ้าหนี้หรือหน่วยงานผู้ดูแล",
           },
           {
             icon: MessageCircle,
@@ -37,8 +37,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
           },
           {
             icon: ShieldCheck,
-            title: "Matched Programs & Script",
-            desc: "Get eligible official options and ready-to-use talking points for your bank.",
+            title: "Explore Options & Prepare to Talk",
+            desc: "See potentially relevant guidance and sample questions; verify terms with lenders or program owners.",
           },
           {
             icon: MessageCircle,
@@ -88,8 +88,8 @@ export function Hero({ outlook }: { outlook: RiskOutlookResponse | null }) {
             <HeartHandshake aria-hidden="true" className="size-3.5 shrink-0 text-white/90" />
             <span className="text-[11px] font-medium tracking-wide text-white/95 sm:text-xs">
               {lang === "th"
-                ? `${provincesCount} จังหวัดภาคเหนือ · ใช้งานฟรี ไม่เก็บข้อมูลส่วนตัว`
-                : `${provincesCount} Northern Provinces · Free & Private`}
+                ? `${provincesCount} จังหวัดภาคเหนือ · ต้นแบบสำหรับทดลองด้วยข้อมูลสมมติ`
+                : `${provincesCount} Northern Provinces · Prototype · Use sample data`}
             </span>
           </motion.div>
 

@@ -18,6 +18,8 @@ REQUIRED_POLICY_KEYS = (
     "multiple_testing_correction",
     "alpha_threshold",
     "max_vif",
+    "max_pairwise_spearman",
+    "max_missing_pct",
     "time_split_train_ratio",
 )
 REQUIRED_FEATURE_KEYS = (
@@ -98,15 +100,151 @@ def get_validation_policy() -> dict[str, Any]:
         "multiple_testing_correction": str(policy["multiple_testing_correction"]),
         "alpha_threshold": float(policy["alpha_threshold"]),
         "max_vif": float(policy["max_vif"]),
+        "ols_max_vif": float(policy.get("ols_max_vif", 6.0)),
+        "max_pairwise_spearman": float(policy["max_pairwise_spearman"]),
+        "max_missing_pct": float(policy["max_missing_pct"]),
         "time_split_train_ratio": float(policy["time_split_train_ratio"]),
         "scope_classification": str(policy.get("scope_classification", "exploratory_within_province_screening")),
     }
+
+
+def get_data_quality_policy() -> dict[str, Any]:
+    """Return configured pre-publish freshness and coverage limits."""
+    raw = load_feature_specs().get("data_quality_policy")
+    if not isinstance(raw, dict):
+        raise ValueError("feature_specs.yaml must define data_quality_policy")
+    expected_provinces = int(raw.get("expected_northern_provinces", 0))
+    air_min_coverage = int(raw.get("air_daily_min_coverage_provinces", 0))
+    air_age_hours = float(raw.get("air_daily_max_age_hours", 0))
+    max_age_days = raw.get("provincial_max_age_days")
+    macro_age_days = float(raw.get("macro_controls_max_age_days", 0))
+    if expected_provinces <= 0 or not (1 <= air_min_coverage <= expected_provinces) or air_age_hours <= 0 or macro_age_days <= 0:
+        raise ValueError("data_quality_policy must define positive coverage and freshness limits")
+    if not isinstance(max_age_days, dict) or not max_age_days:
+        raise ValueError("data_quality_policy.provincial_max_age_days must be a non-empty mapping")
+    if any(float(days) <= 0 for days in max_age_days.values()):
+        raise ValueError("All provincial source freshness limits must be positive")
+    return {
+        "expected_northern_provinces": expected_provinces,
+        "air_daily_min_coverage_provinces": air_min_coverage,
+        "air_daily_max_age_hours": air_age_hours,
+        "provincial_max_age_days": {str(key): float(value) for key, value in max_age_days.items()},
+        "macro_controls_max_age_days": macro_age_days,
+    }
+
+
+def get_eda_inference_policy() -> dict[str, Any]:
+    """Return inference resampling settings from the canonical feature spec."""
+    raw = load_feature_specs().get("eda_inference_policy")
+    if not isinstance(raw, dict):
+        raise ValueError("feature_specs.yaml must define eda_inference_policy")
+    policy = {
+        "block_permutation_replicates": int(raw.get("block_permutation_replicates", 0)),
+        "block_length_months": int(raw.get("block_length_months", 0)),
+        "wild_cluster_bootstrap_replicates": int(raw.get("wild_cluster_bootstrap_replicates", 0)),
+        "minimum_observations": int(raw.get("minimum_observations", 0)),
+        "minimum_province_clusters_for_confirmatory_inference": int(
+            raw.get("minimum_province_clusters_for_confirmatory_inference", 0)
+        ),
+    }
+    if any(value <= 0 for value in policy.values()):
+        raise ValueError("eda_inference_policy values must all be positive")
+    return policy
+
+
+def get_scoring_policy() -> dict[str, Any]:
+    """Return descriptive screening index weights and tier cutoffs from feature_specs.yaml."""
+    raw = load_feature_specs()
+    scoring = dict(raw.get("scoring_policy") or {})
+    for group_name in ("composite_weights", "cashflow_subweights", "demand_subweights", "hazard_subweights"):
+        group = scoring.get(group_name)
+        if not isinstance(group, dict) or not group:
+            raise ValueError(f"scoring_policy.{group_name} must be a non-empty weight mapping")
+        values = [float(value) for value in group.values()]
+        if any(value < 0 for value in values) or abs(sum(values) - 1.0) > 1e-6:
+            raise ValueError(f"scoring_policy.{group_name} weights must be non-negative and sum to 1")
+    tiers = scoring.get("tier_thresholds") or {}
+    tier_values = [float(tiers[key]) for key in ("tier1_min_score", "tier2_min_score", "tier3_min_score")]
+    if not (100.0 >= tier_values[0] >= tier_values[1] >= tier_values[2] >= 0.0):
+        raise ValueError("scoring_policy.tier_thresholds must descend within the 0–100 score range")
+    scales = scoring.get("score_scales") or {}
+    if any(float(value) <= 0 for value in scales.values()):
+        raise ValueError("scoring_policy.score_scales must be positive")
+    scenarios = scoring.get("sensitivity_scenarios")
+    baseline = scenarios.get("baseline_55_25_20") if isinstance(scenarios, dict) else None
+    composite = scoring["composite_weights"]
+    expected_baseline = [
+        float(composite["cashflow_debt"]),
+        float(composite["tourism_exposure"]),
+        float(composite["hazard_news"]),
+    ]
+    if not isinstance(baseline, list) or len(baseline) != 3 or any(
+        abs(float(actual) - expected) > 1e-6 for actual, expected in zip(baseline, expected_baseline)
+    ):
+        raise ValueError("The baseline sensitivity scenario must match scoring_policy.composite_weights")
+    return scoring
+
+
+def get_shock_index_policy() -> dict[str, Any]:
+    """Return composite shock index calibration parameters from feature_specs.yaml."""
+    raw = load_feature_specs()
+    policy = dict(raw.get("shock_index_policy") or {})
+    for group_name in ("flood_component_weights", "macro_component_weights"):
+        group = policy.get(group_name)
+        values = [float(value) for value in group.values()] if isinstance(group, dict) else []
+        if not values or any(value < 0 for value in values) or abs(sum(values) - 1.0) > 1e-6:
+            raise ValueError(f"shock_index_policy.{group_name} weights must be non-negative and sum to 1")
+    haze_weights = policy.get("haze_component_weights")
+    haze_values = [float(value) for value in haze_weights.values()] if isinstance(haze_weights, dict) else []
+    if not haze_values or any(value < 0 for value in haze_values) or sum(haze_values) > 1.0:
+        raise ValueError("shock_index_policy.haze_component_weights must be non-negative and sum to <= 1")
+    quantile = float(policy.get("flood_tail_quantile", 0))
+    if not (0.0 < quantile < 1.0):
+        raise ValueError("shock_index_policy.flood_tail_quantile must be between 0 and 1")
+    report_quantile = float(policy.get("flood_tail_report_quantile", 0))
+    if not (quantile <= report_quantile < 1.0):
+        raise ValueError("shock_index_policy.flood_tail_report_quantile must be >= flood_tail_quantile and < 1")
+    bounds = policy.get("macro_weight_bounds") or []
+    if len(bounds) != 2 or not (0 <= float(bounds[0]) <= float(bounds[1]) <= 1):
+        raise ValueError("shock_index_policy.macro_weight_bounds must be an ordered pair within [0, 1]")
+    return policy
 
 
 def get_feature_spec_map() -> dict[str, dict[str, Any]]:
     """Return mapping of feature_id to its specification metadata."""
     specs = load_feature_specs()["features"]
     return {str(item["feature_id"]): dict(item) for item in specs}
+
+
+def get_clustering_core_features() -> tuple[str, ...]:
+    """Return validated canonical clustering feature tuple shared across EDA, batch clustering, and web lab."""
+    raw = load_feature_specs()
+    core = raw.get("clustering_core_features")
+    if not isinstance(core, list) or len(core) < 3:
+        raise ValueError("feature_specs.yaml must define clustering_core_features with at least 3 features")
+    spec_map = get_feature_spec_map()
+    missing = [str(fid) for fid in core if str(fid) not in spec_map]
+    if missing:
+        raise ValueError(f"clustering_core_features references unregistered feature_ids {missing}")
+    return tuple(str(fid) for fid in core)
+
+
+def get_clustering_policy() -> dict[str, Any]:
+    """Return clustering score weights and model-selection guardrails from the canonical feature spec."""
+    policy = load_feature_specs().get("clustering_policy")
+    if not isinstance(policy, dict):
+        raise ValueError("feature_specs.yaml must define clustering_policy")
+    cluster_counts = policy.get("actionable_cluster_counts")
+    if not isinstance(cluster_counts, list) or not cluster_counts or any(int(k) < 2 for k in cluster_counts):
+        raise ValueError("clustering_policy.actionable_cluster_counts must contain values >= 2")
+    for group_name in ("shock_intensity_weights", "exposure_weights", "benchmark_rank_weights"):
+        group = policy.get(group_name)
+        if not isinstance(group, dict) or not group:
+            raise ValueError(f"clustering_policy.{group_name} must be a non-empty weight mapping")
+        values = [float(value) for value in group.values()]
+        if any(value < 0 for value in values) or abs(sum(values) - 1.0) > 1e-6:
+            raise ValueError(f"clustering_policy.{group_name} weights must be non-negative and sum to 1")
+    return dict(policy)
 
 
 def validate_dataframe_against_specs(df: pd.DataFrame) -> dict[str, Any]:
@@ -117,7 +255,9 @@ def validate_dataframe_against_specs(df: pd.DataFrame) -> dict[str, Any]:
 
     alias_map = {
         "pm25_days_over_75": "pm25_days_over_75_0",
+        "pm25_days_over_75_0": "pm25_days_over_75",
         "heavy_rain_days_35mm": "heavy_rain_days",
+        "heavy_rain_days": "heavy_rain_days_35mm",
     }
 
     for fid, spec in spec_map.items():
@@ -151,12 +291,46 @@ def validate_dataframe_against_specs(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _read_git_head_sha(repo_root: Path) -> str | None:
+    """Read short commit SHA directly from .git metadata without requiring a git binary on PATH."""
+    git_dir = repo_root / ".git"
+    if git_dir.is_file():
+        pointer = git_dir.read_text(encoding="utf-8", errors="ignore").strip()
+        if pointer.startswith("gitdir:"):
+            git_dir = (repo_root / pointer.split(":", 1)[1].strip()).resolve()
+    head_file = git_dir / "HEAD"
+    if not head_file.is_file():
+        return None
+    head_val = head_file.read_text(encoding="utf-8", errors="ignore").strip()
+    if not head_val:
+        return None
+    if not head_val.startswith("ref:"):
+        return head_val[:12]
+    ref_rel = head_val.split(":", 1)[1].strip()
+    ref_file = git_dir / ref_rel
+    if ref_file.is_file():
+        sha = ref_file.read_text(encoding="utf-8", errors="ignore").strip()
+        if sha:
+            return sha[:12]
+    packed = git_dir / "packed-refs"
+    if packed.is_file():
+        for line in packed.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line and not line.startswith("#") and not line.startswith("^"):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == ref_rel:
+                    return parts[0][:12]
+    return None
+
+
 def get_git_commit_short() -> str:
-    """Resolve current short git commit SHA from environment or local git repository."""
+    """Resolve current short git commit SHA from environment, .git files, or git CLI."""
     for env_key in ("GITHUB_SHA", "RENDER_GIT_COMMIT", "VERCEL_GIT_COMMIT_SHA", "GIT_COMMIT"):
         val = os.getenv(env_key, "").strip()
         if val:
             return val[:12]
+    direct_sha = _read_git_head_sha(BACKEND_DIR.parent)
+    if direct_sha:
+        return direct_sha
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short=12", "HEAD"],

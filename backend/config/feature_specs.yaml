@@ -1,20 +1,202 @@
-spec_version: "1.0.0"
-updated_at: "2026-11-22"
+spec_version: "2.3.0"
+updated_at: "2026-11-25"
 grain_default: "province_month"
 validation_policy:
   multiple_testing_correction: "benjamini_hochberg_fdr"
   alpha_threshold: 0.05
   max_vif: 5.0
+  ols_max_vif: 6.0
+  max_pairwise_spearman: 0.85
+  max_missing_pct: 30.0
   time_split_train_ratio: 0.75
   scope_classification: "exploratory_within_province_screening"
 
+eda_inference_policy:
+  block_permutation_replicates: 299
+  block_length_months: 3
+  wild_cluster_bootstrap_replicates: 499
+  minimum_observations: 30
+  minimum_province_clusters_for_confirmatory_inference: 30
+
+data_quality_policy:
+  expected_northern_provinces: 17
+  air_daily_min_coverage_provinces: 14
+  air_daily_max_age_hours: 48
+  provincial_max_age_days:
+    mots_tourism: 548
+    open_meteo_pm25: 75
+    open_meteo_rainfall: 75
+    nso_household_finance: 1825
+  macro_controls_max_age_days: 120
+
+scoring_policy:
+  index_classification: "rule_based_descriptive_screening_index"
+  composite_weights:
+    cashflow_debt: 0.55
+    tourism_exposure: 0.25
+    hazard_news: 0.20
+  cashflow_subweights:
+    sme_margin: 0.50
+    sme_debt: 0.35
+    hh_debt: 0.15
+  demand_subweights:
+    occupancy: 0.55
+    exposure_score: 0.45
+  hazard_subweights:
+    hist_shock: 0.50
+    latest_shock: 0.25
+    news_boost: 0.25
+  sensitivity_scenarios:
+    baseline_55_25_20: [0.55, 0.25, 0.20]
+    cashflow_65_20_15: [0.65, 0.20, 0.15]
+    balanced_45_30_25: [0.45, 0.30, 0.25]
+    hazard_50_25_25: [0.50, 0.25, 0.25]
+    exposure_50_35_15: [0.50, 0.35, 0.15]
+    cashflow_60_30_10: [0.60, 0.30, 0.10]
+  tier_thresholds:
+    tier1_min_score: 60.0
+    tier2_min_score: 47.0
+    tier3_min_score: 34.0
+  score_scales:
+    sme_margin_full_score_pct: 45.0
+    debt_ratio_full_score: 1.4
+    occupancy_vulnerability_ceiling_pct: 80.0
+    news_boost_max: 35.0
+    news_boost_per_event: 6.0
+    water_alert_min_severity: 3
+    water_alert_bonus: 18.0
+    news_severity_base: 2
+    news_severity_step_bonus: 5.0
+  tier_signal_thresholds:
+    tier1_sme_margin_pct: 14.0
+    tier1_sme_debt_ratio: 0.85
+    tier1_sme_margin_critical_pct: 8.0
+    tier2_latest_shock: 50.0
+    tier2_live_pm25: 75.0
+    tier2_historical_shock: 58.0
+    tier3_sme_margin_pct: 24.0
+    tier3_sme_debt_ratio: 0.60
+    tier4_sme_margin_pct: 24.0
+    tier4_sme_debt_ratio: 0.60
+    tier4_max_score: 45.0
+  driver_thresholds:
+    high_sme_debt_ratio: 0.90
+    watch_sme_debt_ratio: 0.60
+    historical_shock_watch: 55.0
+    high_hotel_occupancy_pct: 50.0
+    high_food_margin_pct: 15.0
+    high_tourism_historical_shock: 58.0
+    high_tourism_exposure: 65.0
+
+shock_index_policy:
+  winsor_cap_quantile: 0.98
+  flood_tail_rain_mm: 250.0
+  flood_tail_boost: 18.0
+  flood_tail_quantile: 0.90
+  flood_tail_report_quantile: 0.95
+  rain_current_month_weight: 0.70
+  rain_previous_month_weight: 0.30
+  flood_component_weights:
+    rain_excess: 0.35
+    two_month_rain: 0.30
+    heavy_rain_days: 0.20
+    maximum_daily_rain: 0.15
+  pm25_orange_days_full_score: 30.0
+  pm25_red_days_full_boost: 6.0
+  pm25_red_max_boost: 28.0
+  pm_z_current_month_weight: 0.70
+  pm_z_previous_month_weight: 0.30
+  haze_component_weights:
+    orange_days: 0.42
+    pm25_excess: 0.23
+    provincial_pm_z: 0.20
+  secondary_hazard_weight: 0.20
+  cpi_pressure_full_score_pct: 6.0
+  brent_pressure_full_score_pct: 50.0
+  macro_component_weights:
+    cpi: 0.50
+    brent: 0.50
+  macro_weight_bounds: [0.15, 0.22]
+  empirical_weight_floor:
+    physical: 0.05
+    macro: 0.02
+  minimum_train_observations: 30
+  minimum_test_provinces: 17
+  driver_thresholds:
+    normal_max: 30.0
+    compound_hazard_min: 45.0
+  alert_bands:
+    low_max: 30.0
+    watch_min: 30.0
+    elevated_min: 50.0
+    severe_min: 70.0
+
+clustering_core_features:
+  - "avg_occupancy_rate"
+  - "occupancy_volatility"
+  - "log_foreign_visitor_share"
+  - "annual_pm25_days_over_37_5"
+  - "max_monthly_rainfall_mm"
+  - "debt_to_annual_income_all"
+
+clustering_policy:
+  shock_intensity_weights:
+    pm25_days_over_37_5: 0.35
+    pm25_days_over_75_0: 0.25
+    maximum_monthly_rainfall: 0.20
+    p90_shock: 0.20
+  exposure_weights:
+    occupancy: 0.25
+    occupancy_volatility: 0.25
+    foreign_visitor_share: 0.20
+    household_debt: 0.20
+    expense_to_income: 0.10
+  benchmark_rank_weights:
+    silhouette: 0.35
+    davies_bouldin: 0.25
+    calinski_harabasz: 0.15
+    stability_ari: 0.25
+  actionable_cluster_counts: [3, 4]
+  minimum_cluster_size: 2
+  debt_haze_label_thresholds:
+    debt_to_annual_income: 0.70
+    annual_pm25_days_over_37_5: 30.0
+  cluster_label_thresholds:
+    international_tourism_foreign_share_pct: 10.0
+    international_tourism_occupancy_pct: 58.0
+    seasonal_occupancy_volatility_pp: 7.5
+    elevated_household_debt_ratio: 0.58
+  province_alert_thresholds:
+    urgent_sme_debt_ratio: 1.0
+    # Expense-to-income ratios: a higher value means a thinner remaining cash buffer.
+    # Heuristic alert cutoffs; not calibrated against individual default outcomes.
+    thin_sme_expense_to_income_pct: 88.0
+    thin_household_expense_to_income_pct: 84.0
+    thin_buffer_cushion_pct: 15.0
+  cluster_order_weights:
+    shock_intensity: 0.50
+    exposure_score: 0.50
+
 features:
+  - feature_id: "occupancy_rate"
+    version: 1
+    source: "mots_tourism"
+    owner_agency: "Ministry of Tourism and Sports (MOTS)"
+    grain: "province_month"
+    unit: "percent"
+    usage_roles: ["target_metric", "public_seasonal_planner"]
+    definition: "Monthly hotel and accommodation occupancy rate per province"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [0.0, 100.0]
+    candidate_lags_months: [0]
+
   - feature_id: "pm25_mean"
     version: 1
     source: "open_meteo_air_quality_and_air4thai"
     owner_agency: "PCD Air4Thai / Open Meteo"
     grain: "province_month"
     unit: "ug_per_m3"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index"]
     definition: "Monthly arithmetic mean of daily provincial PM2.5 concentration"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [0.0, 500.0]
@@ -26,17 +208,19 @@ features:
     owner_agency: "PCD Air4Thai / Open Meteo"
     grain: "province_month"
     unit: "days"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index"]
     definition: "Count of calendar days in month where provincial daily mean PM2.5 exceeds 37.5 ug/m3"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [0, 31]
     candidate_lags_months: [0, 1, 2]
 
-  - feature_id: "pm25_days_over_75"
+  - feature_id: "pm25_days_over_75_0"
     version: 1
     source: "open_meteo_air_quality_and_air4thai"
     owner_agency: "PCD Air4Thai / Open Meteo"
     grain: "province_month"
     unit: "days"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index"]
     definition: "Count of calendar days in month where provincial daily mean PM2.5 exceeds 75.0 ug/m3"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [0, 31]
@@ -48,17 +232,19 @@ features:
     owner_agency: "ECMWF ERA5 / Open Meteo"
     grain: "province_month"
     unit: "mm"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index"]
     definition: "Total monthly cumulative precipitation in millimeters"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [0.0, 2500.0]
     candidate_lags_months: [0, 1, 2]
 
-  - feature_id: "heavy_rain_days_35mm"
+  - feature_id: "heavy_rain_days"
     version: 1
     source: "open_meteo_era5_archive"
     owner_agency: "ECMWF ERA5 / Open Meteo"
     grain: "province_month"
     unit: "days"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index"]
     definition: "Count of days in month with daily precipitation >= 35 mm"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [0, 31]
@@ -70,6 +256,7 @@ features:
     owner_agency: "Ministry of Commerce / BIS"
     grain: "macro_month"
     unit: "percent"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index", "macro_control"]
     definition: "Year over year percentage change in Thailand headline Consumer Price Index"
     missing_policy: "lagged_latest_published"
     allowed_range: [-10.0, 25.0]
@@ -81,10 +268,95 @@ features:
     owner_agency: "EIA / FRED"
     grain: "macro_month"
     unit: "percent"
+    usage_roles: ["eda_dynamic_screening", "domain_shock_index", "macro_control"]
     definition: "Year over year percentage change in monthly Brent crude oil benchmark price"
     missing_policy: "exclude_without_zero_imputation"
     allowed_range: [-80.0, 200.0]
     candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "usdthb_yoy_pct"
+    version: 1
+    source: "fred_fx"
+    owner_agency: "FRED / Federal Reserve"
+    grain: "macro_month"
+    unit: "percent"
+    usage_roles: ["eda_dynamic_screening", "macro_control"]
+    definition: "Year over year percentage change in USD to THB exchange rate"
+    missing_policy: "exclude_without_zero_imputation"
+    allowed_range: [-40.0, 60.0]
+    candidate_lags_months: [0, 1, 2]
+
+  - feature_id: "avg_occupancy_rate"
+    version: 1
+    source: "mots_tourism"
+    owner_agency: "Ministry of Tourism and Sports (MOTS)"
+    grain: "province_structural"
+    unit: "percent"
+    usage_roles: ["structural_clustering"]
+    definition: "Multi year mean hotel occupancy rate across observed months per province"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 100.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "occupancy_volatility"
+    version: 1
+    source: "mots_tourism"
+    owner_agency: "Ministry of Tourism and Sports (MOTS)"
+    grain: "province_structural"
+    unit: "percentage_points"
+    usage_roles: ["structural_clustering"]
+    definition: "Standard deviation of monthly provincial occupancy rate measuring seasonal swing"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 50.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "log_foreign_visitor_share"
+    version: 1
+    source: "mots_tourism"
+    owner_agency: "Ministry of Tourism and Sports (MOTS)"
+    grain: "province_structural"
+    unit: "log1p_percent"
+    usage_roles: ["structural_clustering"]
+    definition: "Log1p transformed mean foreign visitor share reducing cross province skewness from 1.59 to 0.49"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 5.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "annual_pm25_days_over_37_5"
+    version: 1
+    source: "open_meteo_air_quality_and_air4thai"
+    owner_agency: "PCD Air4Thai / Open Meteo"
+    grain: "province_structural"
+    unit: "days_per_year"
+    usage_roles: ["structural_clustering"]
+    definition: "Observed month annualized count of days per year with PM2.5 above 37.5 ug/m3"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 366.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "max_monthly_rainfall_mm"
+    version: 1
+    source: "open_meteo_era5_archive"
+    owner_agency: "ECMWF ERA5 / Open Meteo"
+    grain: "province_structural"
+    unit: "mm"
+    usage_roles: ["structural_clustering"]
+    definition: "Peak monthly cumulative rainfall across observed window measuring acute flood exposure"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 2500.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "debt_to_annual_income_all"
+    version: 1
+    source: "nso_household_socio_economic_survey"
+    owner_agency: "National Statistical Office (NSO)"
+    grain: "province_year"
+    unit: "ratio"
+    usage_roles: ["structural_clustering", "vulnerability_tiering"]
+    definition: "Average all household debt divided by annualized household income"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 10.0]
+    candidate_lags_months: [0]
 
   - feature_id: "debt_to_annual_income_sme"
     version: 1
@@ -92,9 +364,22 @@ features:
     owner_agency: "National Statistical Office (NSO)"
     grain: "province_year"
     unit: "ratio"
+    usage_roles: ["vulnerability_tiering", "optional_lab_feature"]
     definition: "Average enterprise household debt divided by annualized enterprise household income"
     missing_policy: "flag_insufficient_data"
     allowed_range: [0.0, 10.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "expense_to_income_pct_all"
+    version: 1
+    source: "nso_household_socio_economic_survey"
+    owner_agency: "National Statistical Office (NSO)"
+    grain: "province_year"
+    unit: "percent"
+    usage_roles: ["exposure_axis", "optional_lab_feature"]
+    definition: "Average monthly household expense as percentage of monthly income across all households"
+    missing_policy: "flag_insufficient_data"
+    allowed_range: [0.0, 200.0]
     candidate_lags_months: [0]
 
   - feature_id: "expense_to_income_pct_sme"
@@ -103,7 +388,20 @@ features:
     owner_agency: "National Statistical Office (NSO)"
     grain: "province_year"
     unit: "percent"
+    usage_roles: ["vulnerability_tiering", "monte_carlo_cashflow", "optional_lab_feature"]
     definition: "Average monthly operating and household expense as percentage of monthly income for SME households"
     missing_policy: "flag_insufficient_data"
     allowed_range: [0.0, 200.0]
+    candidate_lags_months: [0]
+
+  - feature_id: "recent_news_shock_score"
+    version: 1
+    source: "silver_news_events"
+    owner_agency: "Google News RSS / Verbatim Verified Silver Events"
+    grain: "province_rolling_120d"
+    unit: "score_0_100"
+    usage_roles: ["qualitative_alert_only", "experimental_lab_toggle"]
+    definition: "Rolling 120 day verified news severity index excluded from primary quantitative clustering due to media concentration bias"
+    missing_policy: "qualitative_only_no_quantitative_imputation"
+    allowed_range: [0.0, 100.0]
     candidate_lags_months: [0]

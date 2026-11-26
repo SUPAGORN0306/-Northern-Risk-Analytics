@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 
 from src.config.feature_registry import (
     get_git_commit_short,
+    get_shock_index_policy,
     get_spec_version,
     get_validation_policy,
 )
@@ -69,7 +70,19 @@ def _weighted_observed_blend(
 def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Compute empirically weighted 0 to 100 composite shock index with leak free train preprocessing."""
     policy = get_validation_policy()
+    shock_cfg = get_shock_index_policy()
     train_ratio = float(policy["time_split_train_ratio"])
+    cap_q = float(shock_cfg.get("winsor_cap_quantile", 0.98))
+    flood_tail_rain = float(shock_cfg.get("flood_tail_rain_mm", 250.0))
+    flood_tail_boost_val = float(shock_cfg.get("flood_tail_boost", 18.0))
+    flood_tail_quantile = float(shock_cfg.get("flood_tail_quantile", 0.90))
+    flood_w = shock_cfg.get("flood_component_weights", {})
+    haze_w = shock_cfg.get("haze_component_weights", {})
+    macro_component_w = shock_cfg.get("macro_component_weights", {})
+    macro_bounds = shock_cfg.get("macro_weight_bounds", [0.15, 0.22])
+    driver_thresholds = shock_cfg.get("driver_thresholds", {})
+    alert_bands = shock_cfg.get("alert_bands", {})
+    macro_w_lo, macro_w_hi = float(macro_bounds[0]), float(macro_bounds[1])
 
     if panel is None:
         panel = build_monthly_analysis_panel(prevent_lookahead=True)
@@ -83,41 +96,50 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
     cutoff_date = unique_months[min(split_idx, len(unique_months) - 1)]
     train_mask = df["period_date"] <= cutoff_date
     test_mask = df["period_date"] > cutoff_date
-    has_valid_oos = int(train_mask.sum()) >= 30 and int(test_mask.sum()) >= 17
+    has_valid_oos = (
+        int(train_mask.sum()) >= int(shock_cfg.get("minimum_train_observations", 30))
+        and int(test_mask.sum()) >= int(shock_cfg.get("minimum_test_provinces", 17))
+    )
     fit_mask = train_mask if has_valid_oos else pd.Series(True, index=df.index)
 
     # Pillar 1 hydrological flood subindex using observed component reweighting without silent zero imputation
-    rain_excess_pos = _winsorized_positive_score(df["rainfall_excess_mm"], cap_quantile=0.98, fit_mask=fit_mask)
+    rain_excess_pos = _winsorized_positive_score(df["rainfall_excess_mm"], cap_quantile=cap_q, fit_mask=fit_mask)
     rain_curr = pd.to_numeric(df["rainfall_sum_mm"], errors="coerce")
     rain_lag1 = grp["rainfall_sum_mm"].shift(1)
     rain_2m_sat = pd.Series(
         np.where(
             rain_curr.notna() & rain_lag1.notna(),
-            0.70 * rain_curr + 0.30 * rain_lag1,
+            float(shock_cfg.get("rain_current_month_weight", 0.70)) * rain_curr
+            + float(shock_cfg.get("rain_previous_month_weight", 0.30)) * rain_lag1,
             rain_curr,
         ),
         index=df.index,
     )
-    rain_sat_score = _winsorized_positive_score(rain_2m_sat, cap_quantile=0.98, fit_mask=fit_mask)
-    heavy_rain_score = _winsorized_positive_score(df["heavy_rain_days"], cap_quantile=0.98, fit_mask=fit_mask)
+    rain_sat_score = _winsorized_positive_score(rain_2m_sat, cap_quantile=cap_q, fit_mask=fit_mask)
+    heavy_rain_score = _winsorized_positive_score(df["heavy_rain_days"], cap_quantile=cap_q, fit_mask=fit_mask)
     rain_max_day_score = (
-        _winsorized_positive_score(df["rainfall_max_day_mm"], cap_quantile=0.98, fit_mask=fit_mask)
+        _winsorized_positive_score(df["rainfall_max_day_mm"], cap_quantile=cap_q, fit_mask=fit_mask)
         if "rainfall_max_day_mm" in df.columns
         else pd.Series(np.nan, index=df.index)
     )
 
     train_rain_excess = df.loc[fit_mask, "rainfall_excess_mm"].dropna()
+    report_rain_excess = train_rain_excess
     p90_rain_excess = (
-        float(np.nanpercentile(train_rain_excess, 90))
-        if not train_rain_excess.empty
-        else float(np.nanpercentile(df["rainfall_excess_mm"].dropna(), 90))
+        float(np.nanpercentile(report_rain_excess, flood_tail_quantile * 100.0))
+        if not report_rain_excess.empty else float("nan")
+    )
+    report_quantile = float(shock_cfg.get("flood_tail_report_quantile", 0.95))
+    p95_rain_excess = (
+        float(np.nanpercentile(report_rain_excess, report_quantile * 100.0))
+        if not report_rain_excess.empty else None
     )
     flood_base, flood_cov = _weighted_observed_blend(
         [
-            (rain_excess_pos, 0.35),
-            (rain_sat_score, 0.30),
-            (heavy_rain_score, 0.20),
-            (rain_max_day_score, 0.15),
+            (rain_excess_pos, float(flood_w.get("rain_excess", 0.35))),
+            (rain_sat_score, float(flood_w.get("two_month_rain", 0.30))),
+            (heavy_rain_score, float(flood_w.get("heavy_rain_days", 0.20))),
+            (rain_max_day_score, float(flood_w.get("maximum_daily_rain", 0.15))),
         ],
         df.index,
     )
@@ -126,8 +148,8 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
             df["rainfall_excess_mm"].notna()
             & df["rainfall_sum_mm"].notna()
             & (df["rainfall_excess_mm"] >= p90_rain_excess)
-            & (df["rainfall_sum_mm"] >= 250.0),
-            18.0,
+            & (df["rainfall_sum_mm"] >= flood_tail_rain),
+            flood_tail_boost_val,
             0.0,
         ),
         index=df.index,
@@ -136,22 +158,30 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
 
     # Pillar 2 PM2.5 haze subindex preserving missing sensor readings instead of zero filling
     pm_orange_raw = pd.to_numeric(df["pm25_days_over_37_5"], errors="coerce")
-    pm_orange_score = (pm_orange_raw / 30.0).clip(0.0, 1.0) * 100.0
-    pm_excess_score = _winsorized_positive_score(df["pm25_excess"], cap_quantile=0.98, fit_mask=fit_mask)
+    pm_orange_score = (pm_orange_raw / float(shock_cfg.get("pm25_orange_days_full_score", 30.0))).clip(0.0, 1.0) * 100.0
+    pm_excess_score = _winsorized_positive_score(df["pm25_excess"], cap_quantile=cap_q, fit_mask=fit_mask)
     pm_red_raw = pd.to_numeric(df["pm25_days_over_75_0"], errors="coerce")
-    pm_red_boost = ((pm_red_raw / 6.0).clip(0.0, 1.0) * 28.0).fillna(0.0)
+    pm_red_boost = (
+        (pm_red_raw / float(shock_cfg.get("pm25_red_days_full_boost", 6.0))).clip(0.0, 1.0)
+        * float(shock_cfg.get("pm25_red_max_boost", 28.0))
+    ).fillna(0.0)
     pm_z_curr = pd.to_numeric(df["pm25_z_prov"], errors="coerce")
     pm_z_lag1 = grp["pm25_z_prov"].shift(1)
     pm_z_blend = pd.Series(
-        np.where(pm_z_curr.notna() & pm_z_lag1.notna(), 0.70 * pm_z_curr + 0.30 * pm_z_lag1, pm_z_curr),
+        np.where(
+            pm_z_curr.notna() & pm_z_lag1.notna(),
+            float(shock_cfg.get("pm_z_current_month_weight", 0.70)) * pm_z_curr
+            + float(shock_cfg.get("pm_z_previous_month_weight", 0.30)) * pm_z_lag1,
+            pm_z_curr,
+        ),
         index=df.index,
     )
-    pm_z_score = _winsorized_positive_score(pm_z_blend, cap_quantile=0.98, fit_mask=fit_mask)
+    pm_z_score = _winsorized_positive_score(pm_z_blend, cap_quantile=cap_q, fit_mask=fit_mask)
     haze_base, haze_cov = _weighted_observed_blend(
         [
-            (pm_orange_score, 0.42),
-            (pm_excess_score, 0.23),
-            (pm_z_score, 0.20),
+            (pm_orange_score, float(haze_w.get("orange_days", 0.42))),
+            (pm_excess_score, float(haze_w.get("pm25_excess", 0.23))),
+            (pm_z_score, float(haze_w.get("provincial_pm_z", 0.20))),
         ],
         df.index,
     )
@@ -164,7 +194,7 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
     df["physical_hazard_subidx"] = pd.Series(
         np.where(
             both_obs,
-            dom_hazard + 0.20 * sec_hazard,
+            dom_hazard + float(shock_cfg.get("secondary_hazard_weight", 0.20)) * sec_hazard,
             df["flood_shock_subidx"].combine_first(df["haze_shock_subidx"]),
         ),
         index=df.index,
@@ -174,16 +204,21 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
     # CPI YoY uses BOT monetary policy reference (0 pct gives 0, 3 pct upper target gives 50, 6 pct gives 100)
     # Brent Oil YoY uses energy shock reference (0 pct gives 0, 25 pct gives 50, 50 pct gives 100)
     cpi_num = pd.to_numeric(df["th_cpi_yoy_pct"], errors="coerce")
-    cpi_pressure = ((cpi_num.clip(lower=0.0) / 6.0).clip(0.0, 1.0) * 100.0).where(cpi_num.notna(), np.nan)
+    cpi_pressure = (
+        (cpi_num.clip(lower=0.0) / float(shock_cfg.get("cpi_pressure_full_score_pct", 6.0))).clip(0.0, 1.0) * 100.0
+    ).where(cpi_num.notna(), np.nan)
 
     oil_lag1 = pd.to_numeric(
         grp["oil_brent_yoy_pct"].shift(1).combine_first(df["oil_brent_yoy_pct"]),
         errors="coerce",
     )
-    oil_pressure = ((oil_lag1.clip(lower=0.0) / 50.0).clip(0.0, 1.0) * 100.0).where(oil_lag1.notna(), np.nan)
+    oil_pressure = (
+        (oil_lag1.clip(lower=0.0) / float(shock_cfg.get("brent_pressure_full_score_pct", 50.0))).clip(0.0, 1.0) * 100.0
+    ).where(oil_lag1.notna(), np.nan)
 
     macro_blend, macro_cov = _weighted_observed_blend(
-        [(cpi_pressure, 0.50), (oil_pressure, 0.50)],
+        [(cpi_pressure, float(macro_component_w.get("cpi", 0.50))),
+         (oil_pressure, float(macro_component_w.get("brent", 0.50)))],
         df.index,
     )
     df["macro_pressure_subidx"] = macro_blend.clip(0.0, 100.0)
@@ -211,10 +246,11 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
         0.0,
     )
 
-    phys_strength = max(phys_r_des + phys_r_yoy, 0.05)
-    macro_strength = max(macro_r_des + macro_r_yoy, 0.02)
+    weight_floor = shock_cfg.get("empirical_weight_floor", {})
+    phys_strength = max(phys_r_des + phys_r_yoy, float(weight_floor.get("physical", 0.05)))
+    macro_strength = max(macro_r_des + macro_r_yoy, float(weight_floor.get("macro", 0.02)))
     raw_macro_w = macro_strength / (phys_strength + macro_strength)
-    w_macro = round(float(np.clip(raw_macro_w, 0.15, 0.22)), 3)
+    w_macro = round(float(np.clip(raw_macro_w, macro_w_lo, macro_w_hi)), 3)
     w_phys = round(1.0 - w_macro, 3)
 
     # Combine physical hazard and macro pressure using observed component reweighting
@@ -223,8 +259,6 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
         df.index,
     )
     df["composite_shock_idx"] = comp_blend.clip(0.0, 100.0).round(2)
-
-    p95_rain_excess = p90_rain_excess
 
     # Baseline naive 50 50 linear average for empirical backtest comparison
     naive_blend, _ = _weighted_observed_blend(
@@ -243,9 +277,9 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
     ):
         if pd.isna(c_v):
             drivers.append("insufficient_data")
-        elif c_v < 30.0:
+        elif c_v < float(driver_thresholds.get("normal_max", 30.0)):
             drivers.append("normal")
-        elif pd.notna(f_v) and pd.notna(h_v) and f_v >= 45.0 and h_v >= 45.0:
+        elif pd.notna(f_v) and pd.notna(h_v) and f_v >= float(driver_thresholds.get("compound_hazard_min", 45.0)) and h_v >= float(driver_thresholds.get("compound_hazard_min", 45.0)):
             drivers.append("compound")
         elif (f_v if pd.notna(f_v) else -1.0) >= (h_v if pd.notna(h_v) else -1.0) and (f_v if pd.notna(f_v) else -1.0) >= (m_v if pd.notna(m_v) else -1.0):
             drivers.append("flood")
@@ -260,12 +294,16 @@ def compute_composite_shock_panel(panel: pd.DataFrame | None = None) -> tuple[pd
         df["composite_shock_idx"].isna(),
         "Insufficient Data",
         np.where(
-            df["composite_shock_idx"] >= 70.0,
+            df["composite_shock_idx"] >= float(alert_bands.get("severe_min", 70.0)),
             "Severe (>=70)",
             np.where(
-                df["composite_shock_idx"] >= 50.0,
+                df["composite_shock_idx"] >= float(alert_bands.get("elevated_min", 50.0)),
                 "Elevated (50 to 69)",
-                np.where(df["composite_shock_idx"] >= 30.0, "Watch (30 to 49)", "Low (<30)"),
+                np.where(
+                    df["composite_shock_idx"] >= float(alert_bands.get("watch_min", 30.0)),
+                    "Watch (30 to 49)",
+                    "Low (<30)",
+                ),
             ),
         ),
     )
@@ -291,7 +329,7 @@ def _evaluate_shock_backtest(
     cutoff_date: Any,
     w_phys: float,
     w_macro: float,
-    p95_rain_excess: float,
+    p95_rain_excess: float | None,
 ) -> dict[str, Any]:
     """Run quantitative evaluation strictly separating train, out of sample test, and descriptive full sample."""
     def _corr_pair(frame: pd.DataFrame, x_col: str, y_col: str) -> dict[str, Any]:
@@ -373,6 +411,7 @@ def _evaluate_shock_backtest(
             {
                 "band": band,
                 "n_obs": int(len(sub)),
+                "n_yoy_obs": int(sub["occupancy_yoy_diff"].notna().sum()),
                 "occ_deseason_mean": round(float(sub["occupancy_deseason"].mean()), 2) if len(sub) else None,
                 "rev_deseason_mean": round(float(sub["revenue_deseason_pct"].mean()), 2) if len(sub) else None,
                 "occ_yoy_mean": round(float(sub["occupancy_yoy_diff"].mean()), 2)
@@ -419,7 +458,7 @@ def _evaluate_shock_backtest(
 
     return {
         "weights": {"w_physical_hazard": w_phys, "w_macro_pressure": w_macro},
-        "rain_p95_excess_mm": round(p95_rain_excess, 2),
+        "rain_p95_excess_mm": round(p95_rain_excess, 2) if p95_rain_excess is not None else None,
         "avg_hazard_data_coverage_pct": round(float(df["hazard_data_coverage_pct"].mean()), 1),
         "out_of_time_validation": out_of_time_validation,
         "train_validation": train_validation,
@@ -451,8 +490,27 @@ def _clean_json_val(val: Any) -> Any:
     return str(val)
 
 
-def save_monthly_panel_to_neon(df: pd.DataFrame, backtest: dict[str, Any]) -> int:
-    """Upsert 578 province month rows into gold.province_monthly_panel and log backtest summary."""
+def _clean_float_or_none(val: Any) -> float | None:
+    """Convert scalar to float or None while rejecting NaN and Inf."""
+    if val is None or pd.isna(val):
+        return None
+    fval = float(val)
+    if not np.isfinite(fval):
+        return None
+    return round(fval, 4)
+
+
+def save_monthly_panel_to_neon(
+    df: pd.DataFrame,
+    backtest: dict[str, Any],
+    run_id: str | None = None,
+    connection: Any | None = None,
+) -> int:
+    """Upsert province month rows with typed SQL columns and lineage into gold.province_monthly_panel."""
+    resolved_run_id = run_id or f"shock_{uuid.uuid4().hex[:12]}"
+    spec_version = get_spec_version()
+    data_cutoff = df["period_date"].max().date() if not df.empty else None
+
     target_keys = [
         "occupancy_rate",
         "occupancy_deseason",
@@ -482,39 +540,97 @@ def save_monthly_panel_to_neon(df: pd.DataFrame, backtest: dict[str, Any]) -> in
         "hazard_data_coverage_pct",
         "shock_driver",
         "shock_band",
+        "data_status",
+    ]
+    typed_numeric_keys = [
+        "visitors_total",
+        "visitors_yoy_pct",
+        "revenue_deseason_pct",
+        "revenue_yoy_pct",
+        "foreign_visitor_share",
+        "rainfall_excess_mm",
+        "heavy_rain_days",
+        "pm25_days_over_37_5",
+        "pm25_days_over_75_0",
+        "pm25_z_prov",
+        "th_cpi_yoy_pct",
+        "oil_brent_yoy_pct",
+        "usdthb_yoy_pct",
+        "flood_shock_subidx",
+        "haze_shock_subidx",
+        "physical_hazard_subidx",
+        "macro_pressure_subidx",
+        "hazard_data_coverage_pct",
     ]
 
     rows: list[dict[str, Any]] = []
     for rec in df.to_dict(orient="records"):
         t_json = {k: _clean_json_val(rec[k]) for k in target_keys if k in rec}
         f_json = {k: _clean_json_val(rec[k]) for k in feature_keys if k in rec}
+        occ_val = _clean_float_or_none(rec.get("occupancy_rate"))
+        raw_status = str(rec.get("data_status") or "").strip()
+        if raw_status not in ("observed", "no_data", "true_zero", "not_applicable"):
+            raw_status = "observed" if occ_val is not None else "no_data"
+        metric_status = rec.get("metric_status") or {}
         rows.append(
             {
                 "province_code": str(rec["province_code"]),
                 "month_date": rec["period_date"].date(),
                 "target_metrics": json.dumps(t_json, ensure_ascii=False),
                 "selected_features": json.dumps(f_json, ensure_ascii=False),
-                "composite_shock_idx": None if pd.isna(rec["composite_shock_idx"]) else float(rec["composite_shock_idx"]),
+                "composite_shock_idx": _clean_float_or_none(rec.get("composite_shock_idx")),
+                "run_id": resolved_run_id,
+                "feature_spec_version": spec_version,
+                "data_cutoff": data_cutoff,
+                "occupancy_rate": occ_val,
+                "occupancy_deseason": _clean_float_or_none(rec.get("occupancy_deseason")),
+                "occupancy_yoy_diff": _clean_float_or_none(rec.get("occupancy_yoy_diff")),
+                "revenue_total_mthb": _clean_float_or_none(rec.get("revenue_total_mthb")),
+                "pm25_mean": _clean_float_or_none(rec.get("pm25_mean")),
+                "rainfall_sum_mm": _clean_float_or_none(rec.get("rainfall_sum_mm")),
+                **{key: _clean_float_or_none(rec.get(key)) for key in typed_numeric_keys},
+                "shock_driver": str(rec["shock_driver"]) if rec.get("shock_driver") is not None else None,
+                "shock_band": str(rec["shock_band"]) if rec.get("shock_band") is not None else None,
+                "data_status": raw_status,
+                "metric_status": json.dumps(metric_status, ensure_ascii=False, allow_nan=False),
             }
         )
 
     insert_sql = """
         INSERT INTO gold.province_monthly_panel (
-            province_code, month_date, target_metrics, selected_features, composite_shock_idx
+            province_code, month_date, target_metrics, selected_features, composite_shock_idx,
+            run_id, feature_spec_version, data_cutoff,
+            occupancy_rate, occupancy_deseason, occupancy_yoy_diff,
+            revenue_total_mthb, pm25_mean, rainfall_sum_mm,
+            visitors_total, visitors_yoy_pct, revenue_deseason_pct, revenue_yoy_pct, foreign_visitor_share,
+            rainfall_excess_mm, heavy_rain_days, pm25_days_over_37_5, pm25_days_over_75_0, pm25_z_prov,
+            th_cpi_yoy_pct, oil_brent_yoy_pct, usdthb_yoy_pct,
+            flood_shock_subidx, haze_shock_subidx, physical_hazard_subidx, macro_pressure_subidx,
+            hazard_data_coverage_pct, shock_driver, shock_band, data_status, metric_status
         ) VALUES (
             :province_code, :month_date,
             CAST(:target_metrics AS JSONB),
             CAST(:selected_features AS JSONB),
-            :composite_shock_idx
+            :composite_shock_idx,
+            :run_id, :feature_spec_version, :data_cutoff,
+            :occupancy_rate, :occupancy_deseason, :occupancy_yoy_diff,
+            :revenue_total_mthb, :pm25_mean, :rainfall_sum_mm,
+            :visitors_total, :visitors_yoy_pct, :revenue_deseason_pct, :revenue_yoy_pct, :foreign_visitor_share,
+            :rainfall_excess_mm, :heavy_rain_days, :pm25_days_over_37_5, :pm25_days_over_75_0, :pm25_z_prov,
+            :th_cpi_yoy_pct, :oil_brent_yoy_pct, :usdthb_yoy_pct,
+            :flood_shock_subidx, :haze_shock_subidx, :physical_hazard_subidx, :macro_pressure_subidx,
+            :hazard_data_coverage_pct, :shock_driver, :shock_band, :data_status, CAST(:metric_status AS JSONB)
         )
     """
-    saved = atomic_replace_table("DELETE FROM gold.province_monthly_panel", insert_sql, rows)
+    saved = atomic_replace_table(
+        "DELETE FROM gold.province_monthly_panel", insert_sql, rows, connection=connection
+    )
 
     lineage_backtest = {
-        "run_id": f"shock_{uuid.uuid4().hex[:12]}",
+        "run_id": resolved_run_id,
         "git_commit": get_git_commit_short(),
-        "feature_spec_version": get_spec_version(),
-        "dataset_cutoff": str(df["period_date"].max().date()) if not df.empty else None,
+        "feature_spec_version": spec_version,
+        "dataset_cutoff": str(data_cutoff) if data_cutoff else None,
         "leakage_free_preprocessing": True,
         "analysis_scope": "exploratory_historical_alignment_with_chronological_holdout",
         **backtest,
@@ -530,6 +646,7 @@ def save_monthly_panel_to_neon(df: pd.DataFrame, backtest: dict[str, Any]) -> in
                 "metrics_json": json.dumps(lineage_backtest, ensure_ascii=False),
             }
         ],
+        connection=connection,
     )
     return saved
 
@@ -586,6 +703,18 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
         )
         ax.axhline(50.0, color=crimson, linestyle="--", linewidth=1.0, alpha=0.7)
         ax2.axhline(0.0, color=teal, linestyle="-.", linewidth=0.9, alpha=0.6)
+        cutoff_str = (backtest.get("out_of_time_validation") or {}).get("train_cutoff_month")
+        l_cut = []
+        if cutoff_str:
+            l_cut = [
+                ax.axvline(
+                    pd.Timestamp(cutoff_str),
+                    color="#475569",
+                    linestyle="--",
+                    linewidth=1.3,
+                    label=f"Train/OOS Split ({cutoff_str[:7]})",
+                )
+            ]
         ax.axvspan(pd.Timestamp("2024-08-20"), pd.Timestamp("2024-10-05"), color=crimson, alpha=0.10)
         ax.axvspan(pd.Timestamp("2026-03-01"), pd.Timestamp("2026-04-30"), color=amber, alpha=0.12)
         ax.set_ylim(0, 105)
@@ -598,12 +727,14 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
             fontweight="bold",
             color=navy,
         )
-        lines = l2 + l3 + l4
+        lines = l2 + l3 + l4 + l_cut
         labels = [ln.get_label() for ln in lines]
-        ax.legend(lines, labels, loc="upper left", fontsize=7.8, frameon=True, framealpha=0.92)
+        ax.legend(lines, labels, loc="upper left", fontsize=7.5, frameon=True, framealpha=0.92)
 
-    # Panel C alert tier separation across all 578 province months
+    # Panel C alert tier descriptive comparison without iid Kruskal Wallis p values on autocorrelated panel
     band_df = pd.DataFrame(backtest["band_separation"])
+    total_des_n = int(band_df["n_obs"].sum())
+    total_yoy_n = int(band_df["n_yoy_obs"].sum()) if "n_yoy_obs" in band_df.columns else 0
     x_pos = np.arange(len(band_df))
     w = 0.36
     b1 = axes[1, 0].bar(
@@ -611,7 +742,7 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
         band_df["occ_deseason_mean"].fillna(0.0),
         width=w,
         color=navy,
-        label=f"Deseasonalized Occ pp (KW p={backtest['kruskal_occ_deseason_p']:.4f})",
+        label=f"Deseasonalized Occ pp (n={total_des_n}, Full Panel)",
     )
     b2 = axes[1, 0].bar(
         x_pos + w / 2,
@@ -619,7 +750,7 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
         width=w,
         color=crimson,
         alpha=0.85,
-        label=f"YoY Occupancy Diff pp (KW p={backtest['kruskal_occ_yoy_p']:.4f})",
+        label=f"YoY Occupancy Diff pp (n={total_yoy_n}, 2025 to 2026)",
     )
     axes[1, 0].axhline(0.0, color="#334155", linewidth=1.0)
     for bars in (b1, b2):
@@ -637,20 +768,44 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
                 fontweight="bold",
                 color=navy,
             )
-    x_labels = [f"{r['band']}\n(n={r['n_obs']})" for _, r in band_df.iterrows()]
+    if "n_yoy_obs" in band_df.columns:
+        x_labels = [f"{r['band']}\nDes n={int(r['n_obs'])} | YoY n={int(r['n_yoy_obs'])}" for _, r in band_df.iterrows()]
+    else:
+        x_labels = [f"{r['band']}\n(n={int(r['n_obs'])})" for _, r in band_df.iterrows()]
     axes[1, 0].set_xticks(x_pos)
-    axes[1, 0].set_xticklabels(x_labels, fontsize=8.8)
+    axes[1, 0].set_xticklabels(x_labels, fontsize=8.0)
     axes[1, 0].set_ylabel("Mean Occupancy Impact (pp)")
     min_y = min(band_df["occ_deseason_mean"].min(), band_df["occ_yoy_mean"].min())
     max_y = max(band_df["occ_deseason_mean"].max(), band_df["occ_yoy_mean"].max())
-    axes[1, 0].set_ylim(min_y - 1.4, max_y + 1.4)
+    axes[1, 0].set_ylim(min_y - 1.5, max_y + 1.5)
+    oos = backtest.get("out_of_time_validation") or {}
+    if oos.get("status") == "evaluated":
+        oos_des_r = (oos.get("composite_vs_occ_deseason") or {}).get("spearman_r")
+        oos_yoy_r = (oos.get("composite_vs_occ_yoy") or {}).get("spearman_r")
+        oos_note = (
+            f"OOS Holdout (> {oos.get('train_cutoff_month')}, n={oos.get('n_test_rows')})\n"
+            f"Spearman r: Des={oos_des_r:+.3f} | YoY={oos_yoy_r:+.3f}"
+            if oos_des_r is not None and oos_yoy_r is not None
+            else f"OOS Holdout (> {oos.get('train_cutoff_month')}, n={oos.get('n_test_rows')})"
+        )
+        axes[1, 0].text(
+            0.98,
+            0.96,
+            oos_note,
+            transform=axes[1, 0].transAxes,
+            ha="right",
+            va="top",
+            fontsize=7.8,
+            color=navy,
+            bbox={"boxstyle": "round,pad=0.35", "facecolor": "#F8FAFC", "edgecolor": "#CBD5E1"},
+        )
     axes[1, 0].set_title(
-        "Operational Alert Band Validation Across All 578 Province Months\n(Monotonic Deterioration as Shock Band Escalates)",
-        fontsize=10.5,
+        "Operational Alert Band Descriptive Comparison\n(Severe >=70 Marks Clear Contraction · Separate Deseason vs YoY Counts)",
+        fontsize=10.0,
         fontweight="bold",
         color=navy,
     )
-    axes[1, 0].legend(loc="lower left", fontsize=8.0, frameon=True)
+    axes[1, 0].legend(loc="lower left", fontsize=7.8, frameon=True)
 
     # Panel D regional shock index heatmap across 17 provinces and 34 months
     piv = (
@@ -693,13 +848,16 @@ def plot_shock_index_backtest(df: pd.DataFrame, backtest: dict[str, Any]) -> Pat
     return out_path
 
 
-def run_shock_index_pipeline() -> dict[str, Any]:
-    """Compute composite shock panel, save to gold.province_monthly_panel, and plot backtest."""
+def run_shock_index_pipeline(run_id: str | None = None, persist: bool = True) -> dict[str, Any]:
+    """Compute composite shock panel and optionally persist it as a standalone transaction."""
+    resolved_run_id = run_id or f"shock_{uuid.uuid4().hex[:12]}"
     df, backtest = compute_composite_shock_panel()
-    saved = save_monthly_panel_to_neon(df, backtest)
+    saved = save_monthly_panel_to_neon(df, backtest, run_id=resolved_run_id) if persist else 0
     fig_path = plot_shock_index_backtest(df, backtest)
     return {
+        "run_id": resolved_run_id,
         "rows_saved_gold_panel": saved,
         "backtest": backtest,
         "figure": str(fig_path),
+        "_publish_panel": df,
     }

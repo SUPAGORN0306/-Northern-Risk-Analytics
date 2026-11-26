@@ -8,17 +8,31 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.11
+        value: 3.12.10
       - key: DATABASE_URL
         sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-3.1-flash-lite
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_EXTRACTION_MODEL
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_VISION_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_VISION_TIMEOUT_MS
+        value: "180000"
+      - key: GEMINI_VISION_PAGE_RETRIES
+        value: "2"
+      - key: GEMINI_VISION_RETRY_BASE_SECONDS
+        value: "30"
+      - key: GEMINI_VISION_MAX_RETRY_WAIT_SECONDS
+        value: "300"
+      - key: GEMINI_VISION_TRANSIENT_COOLDOWN_SECONDS
+        value: "900"
       - key: GEMINI_EMBEDDING_MODEL
         value: gemini-embedding-001
       - key: ALLOWED_ORIGINS
-        value: https://northrisk.vercel.app,http://localhost:3000
+        value: https://northrisk.vercel.app,https://northrisk-analytics.vercel.app,http://localhost:3000
       - key: ALLOWED_ORIGIN_REGEX
         value: https://(northrisk|northern-risk-analytics)[a-z0-9-]*\.vercel\.app
       - key: ALLOW_DEMO_STAFF_ACCESS
@@ -28,4 +42,12 @@ services:
       - key: STAFF_DEMO_USERNAME
         sync: false
       - key: STAFF_DEMO_PASSWORD
+        sync: false
+      - key: STAFF_STEWARD_USERNAME
+        sync: false
+      - key: STAFF_STEWARD_PASSWORD
+        sync: false
+      - key: STAFF_ADMIN_USERNAME
+        sync: false
+      - key: STAFF_ADMIN_PASSWORD
         sync: false

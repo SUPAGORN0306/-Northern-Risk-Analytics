@@ -186,6 +186,8 @@ export function translateFeatureName(feature: string, lang: Lang): string {
   const th: Record<string, string> = {
     avg_occupancy_rate: "อัตราเข้าพักเฉลี่ย (%)",
     occupancy_volatility: "ความผันผวนของอัตราเข้าพักตามฤดูกาล",
+    log_foreign_visitor_share: "สัดส่วนนักท่องเที่ยวต่างชาติ (log1p)",
+    foreign_visitor_share: "สัดส่วนนักท่องเที่ยวต่างชาติ (%)",
     avg_monthly_revenue_mthb: "รายได้ท่องเที่ยวเฉลี่ยต่อเดือน (ล้านบาท)",
     debt_to_annual_income_all: "สัดส่วนหนี้ต่อรายได้ต่อปีของครัวเรือน (เท่า)",
     debt_to_annual_income_sme: "สัดส่วนหนี้ต่อรายได้ต่อปีของผู้ประกอบการ (เท่า)",
@@ -211,6 +213,8 @@ export function translateFeatureName(feature: string, lang: Lang): string {
   const en: Record<string, string> = {
     avg_occupancy_rate: "Average Occupancy (%)",
     occupancy_volatility: "Seasonal Occupancy Volatility",
+    log_foreign_visitor_share: "Foreign Visitor Share (log1p)",
+    foreign_visitor_share: "Foreign Visitor Share (%)",
     avg_monthly_revenue_mthb: "Average Monthly Tourism Revenue (M THB)",
     debt_to_annual_income_all: "Household Debt to Annual Income (x)",
     debt_to_annual_income_sme: "SME Debt to Annual Income (x)",

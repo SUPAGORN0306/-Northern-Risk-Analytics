@@ -15,7 +15,7 @@ from src.analytics.clustering import (
     _silhouette_exact,
 )
 from src.analytics.dsr_calculator import calculate_dsr
-from src.analytics.vulnerability_tiering import evaluate_province_vulnerability
+from src.analytics.vulnerability_tiering import compute_weight_sensitivity, evaluate_province_vulnerability
 from src.extract.bot_pdf_loader import assess_pdf_text_quality, normalize_thai_pdf_text
 from src.guardrails.pii_redactor import redact_pii
 from src.guardrails.prompt_defense import detect_prompt_injection, wrap_untrusted_text
@@ -190,6 +190,22 @@ def test_rag_verifier_enforces_threshold_and_exact_citations() -> None:
     refused = verify_rag_grounding(low_sim, [CitedSource(doc_title="Doc", page_num=1)], min_similarity=0.64)
     assert refused.is_valid is False and refused.should_refuse is True
 
+    grounded_pct = verify_rag_grounding(
+        [RetrievedChunk(doc_title="Debt Clinic Guide", page_num=14, chunk_text="อัตราดอกเบี้ย 3 ถึง 5% ต่อปี", score=0.82)],
+        [CitedSource(doc_title="Debt Clinic Guide", page_num=14)],
+        answer_text="คลินิกแก้หนี้คิดอัตราดอกเบี้ย 3% ถึง 5% ต่อปี",
+    )
+    assert grounded_pct.is_valid is True
+    assert grounded_pct.numeric_claims_lexically_grounded is True
+    assert grounded_pct.claim_factual_entailment_verified is False
+
+    hallucinated_pct = verify_rag_grounding(
+        [RetrievedChunk(doc_title="Debt Clinic Guide", page_num=14, chunk_text="อัตราดอกเบี้ย 3 ถึง 5% ต่อปี", score=0.82)],
+        [CitedSource(doc_title="Debt Clinic Guide", page_num=14)],
+        answer_text="คลินิกแก้หนี้คิดอัตราดอกเบี้ย 1.25% ต่อปี",
+    )
+    assert hallucinated_pct.is_valid is False and hallucinated_pct.should_refuse is True
+
 
 def test_thai_pdf_normalizer_and_garble_quality_gate() -> None:
     """Verify broken Thai PDF glyphs are repaired and legacy garbled fonts are rejected."""
@@ -278,9 +294,14 @@ def test_structural_annualization_uses_each_provinces_observed_months(monkeypatc
 
 def test_feature_registry_loads_and_validates_specs() -> None:
     """Verify feature_specs.yaml loads cleanly and exposes validated policy thresholds."""
-    from src.config.feature_registry import get_feature_spec_map, get_spec_version, get_validation_policy
+    from src.config.feature_registry import (
+        get_clustering_core_features,
+        get_feature_spec_map,
+        get_spec_version,
+        get_validation_policy,
+    )
 
-    assert get_spec_version() == "1.0.0"
+    assert get_spec_version() == "2.3.0"
     policy = get_validation_policy()
     assert policy["multiple_testing_correction"] == "benjamini_hochberg_fdr"
     assert 0.0 < policy["alpha_threshold"] < 0.5
@@ -288,6 +309,11 @@ def test_feature_registry_loads_and_validates_specs() -> None:
     spec_map = get_feature_spec_map()
     assert "pm25_mean" in spec_map
     assert "debt_to_annual_income_sme" in spec_map
+    assert "log_foreign_visitor_share" in spec_map
+    core = get_clustering_core_features()
+    assert len(core) == 6
+    assert "log_foreign_visitor_share" in core
+    assert "recent_news_shock_score" not in core
 
 
 def test_dsr_calculator_labels_gross_income_formula() -> None:
@@ -422,3 +448,282 @@ def test_within_province_fe_ols_absorbs_province_fixed_effects() -> None:
     assert res["n_clusters"] == 10
     assert res["r2_within"] > 0.95
     assert res["terms"]["hazard_x"]["std_beta"] > 2.5
+
+
+def test_policy_catalog_copies_stay_synced_and_fallback_works(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Verify policy catalog copies remain identical across services and backend fallback loads cleanly."""
+    import json
+    from pathlib import Path
+    from src.rag import policy_assistant
+
+    repo_root = Path(__file__).resolve().parents[2]
+    shared_path = repo_root / "shared" / "policy_catalog.json"
+    backend_copy = repo_root / "backend" / "config" / "policy_catalog.json"
+    frontend_copy = repo_root / "frontend" / "lib" / "policy-catalog.json"
+
+    assert backend_copy.is_file()
+    backend_data = json.loads(backend_copy.read_text(encoding="utf-8"))
+    if shared_path.is_file():
+        assert json.loads(shared_path.read_text(encoding="utf-8")) == backend_data
+    if frontend_copy.is_file():
+        assert json.loads(frontend_copy.read_text(encoding="utf-8")) == backend_data
+
+    policy_assistant._load_policy_catalog.cache_clear()
+    try:
+        monkeypatch.setattr(policy_assistant, "POLICY_CATALOG_PATH", tmp_path / "missing_catalog.json")
+        loaded = policy_assistant._load_policy_catalog()
+        assert loaded == backend_data
+    finally:
+        policy_assistant._load_policy_catalog.cache_clear()
+
+
+def test_staff_rbac_login_and_permission_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify two role RBAC separates policy analyst and data steward permissions with 403 enforcement."""
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from src.api import main as api_main
+
+    monkeypatch.setenv("STAFF_AUTH_SECRET", "unit_test_secret_key")
+    monkeypatch.setenv("STAFF_DEMO_USERNAME", "analyst_u")
+    monkeypatch.setenv("STAFF_DEMO_PASSWORD", "analyst_pw_123")
+    monkeypatch.setenv("STAFF_STEWARD_USERNAME", "steward_u")
+    monkeypatch.setenv("STAFF_STEWARD_PASSWORD", "steward_pw_123")
+    monkeypatch.setenv("STAFF_ADMIN_USERNAME", "admin_u")
+    monkeypatch.setenv("STAFF_ADMIN_PASSWORD", "admin_pw_123")
+    monkeypatch.delenv("STAFF_ANALYST_USERNAME", raising=False)
+    monkeypatch.delenv("STAFF_ANALYST_PASSWORD", raising=False)
+
+    dummy_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/staff-login",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+    analyst_auth = api_main.staff_login(
+        dummy_request,
+        api_main.StaffLoginRequest(username="analyst_u", password="analyst_pw_123"),
+    )
+    steward_auth = api_main.staff_login(
+        dummy_request,
+        api_main.StaffLoginRequest(username="steward_u", password="steward_pw_123"),
+    )
+    admin_auth = api_main.staff_login(
+        dummy_request,
+        api_main.StaffLoginRequest(username="admin_u", password="admin_pw_123"),
+    )
+
+    assert analyst_auth["role"] == "policy_analyst"
+    assert steward_auth["role"] == "data_steward"
+    assert admin_auth["role"] == "admin"
+
+    analyst_claims = api_main._verify_staff_token(analyst_auth["access_token"])
+    steward_claims = api_main._verify_staff_token(steward_auth["access_token"])
+    admin_claims = api_main._verify_staff_token(admin_auth["access_token"])
+
+    # Policy analyst can monitor, export brief, and run sandbox modeling but cannot inspect data health or sync
+    assert api_main.require_staff_permission("view_overview")(analyst_claims)["role"] == "policy_analyst"
+    assert api_main.require_staff_permission("export_brief")(analyst_claims)["role"] == "policy_analyst"
+    assert api_main.require_staff_permission("run_modeling")(analyst_claims)["role"] == "policy_analyst"
+    for blocked in ("view_health", "trigger_refresh", "publish_clusters"):
+        with pytest.raises(HTTPException) as exc_info:
+            api_main.require_staff_permission(blocked)(analyst_claims)
+        assert exc_info.value.status_code == 403
+
+    # Policy analyst cannot publish primary clusters via persist true
+    with pytest.raises(HTTPException) as persist_exc:
+        api_main.staff_recluster(
+            api_main.StaffReclusterRequest(k=4, persist=True),
+            staff=analyst_claims,
+        )
+    assert persist_exc.value.status_code == 403
+
+    # Data steward can access data health, trigger refresh, and publish clusters but cannot export policy briefs
+    for allowed in ("view_health", "trigger_refresh", "publish_clusters", "view_overview", "run_modeling"):
+        assert api_main.require_staff_permission(allowed)(steward_claims)["role"] == "data_steward"
+    with pytest.raises(HTTPException) as steward_exc:
+        api_main.require_staff_permission("export_brief")(steward_claims)
+    assert steward_exc.value.status_code == 403
+
+    # Admin retains all permissions across both domains
+    for perm in ("view_overview", "export_brief", "run_modeling", "publish_clusters", "view_health", "trigger_refresh"):
+        assert api_main.require_staff_permission(perm)(admin_claims)["role"] == "admin"
+
+
+def test_eda_clustering_and_web_lab_share_canonical_features() -> None:
+    """Verify EDA structural candidates, batch clustering, and interactive web lab stay aligned with feature_specs."""
+    from src.analytics import clustering, eda_feature_selection, vulnerability_lab
+    from src.config.feature_registry import get_clustering_core_features
+
+    canonical = get_clustering_core_features()
+    assert clustering.CORE_6_FEATURES == canonical
+    assert vulnerability_lab.DEFAULT_CLUSTER_FEATURES == canonical
+    assert "recent_news_shock_score" not in vulnerability_lab.DEFAULT_CLUSTER_FEATURES
+    assert vulnerability_lab.CLUSTER_FEATURE_CATALOG["recent_news_shock_score"]["group"] == "experimental"
+
+    structural_names = {name for name, _ in eda_feature_selection.STRUCTURAL_CANDIDATES}
+    for feat in canonical:
+        assert feat in structural_names
+        assert feat in vulnerability_lab.CLUSTER_FEATURE_CATALOG
+
+
+def test_no_pg8000_cursor_context_manager_and_eval_ids_exist() -> None:
+    """Prevent pg8000 cursor context manager regressions and stale evaluation question IDs."""
+    import json
+    import re
+    from pathlib import Path
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    for py_path in (backend_dir / "src").rglob("*.py"):
+        text = py_path.read_text(encoding="utf-8")
+        assert not re.search(r"\bwith\s+\w+\.cursor\(\)", text), f"pg8000 cursor context manager found in {py_path}"
+
+    eval_items = json.loads((backend_dir / "data" / "eval" / "rag_qa_eval.json").read_text(encoding="utf-8"))
+    eval_ids = {str(item["id"]) for item in eval_items}
+    run_eval_src = (backend_dir / "tests" / "run_eval.py").read_text(encoding="utf-8")
+    quoted_q_ids = set(re.findall(r'"(q\d+_[a-z0-9_]+)"', run_eval_src))
+    assert quoted_q_ids
+    assert quoted_q_ids.issubset(eval_ids)
+
+
+def test_auth_secret_fails_closed_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify staff token signing fails closed instead of using a hardcoded constant secret."""
+    from fastapi import HTTPException
+    from src.api import main as api_main
+
+    monkeypatch.delenv("STAFF_AUTH_SECRET", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(HTTPException) as exc_info:
+        api_main._get_auth_secret()
+    assert exc_info.value.status_code == 503
+
+
+def test_pre_gold_gate_blocks_gold_rebuild_on_bronze_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify Pre Gold readiness gate stops Gold overwrite when upstream Bronze ingestion fails."""
+    import run_pipeline
+
+    def _fake_fetch_all(sql: str, *_args, **_kwargs):
+        if "SELECT DISTINCT province_raw" in sql:
+            return [{"province_raw": code} for code in (
+                "CM", "CR", "LP", "LN", "MH", "NN", "PY", "PR", "UT", "TK", "ST", "PL", "PC", "PB", "KP", "NS", "UN"
+            )]
+        return [{
+            "dim_provinces": 17,
+            "mots_fresh_provinces": 17,
+            "mots_latest_period": "2026-09-01",
+            "nso_latest_period": "2025-01-01",
+            "pm25_fresh_provinces": 17,
+            "pm25_latest_period": "2026-09-01",
+            "rainfall_fresh_provinces": 17,
+            "rainfall_latest_period": "2026-09-01",
+            "fresh_macro_metrics": 2,
+            "macro_latest_period": "2026-09-01",
+            "resolved_conflict_keys": 0,
+            "resolved_schema_columns": 8,
+        }]
+
+    monkeypatch.setattr(run_pipeline, "fetch_all", _fake_fetch_all)
+    failed_bronze = [{"stage": "bronze_mots_tourism", "status": "error"}]
+    with pytest.raises(RuntimeError, match="Pre Gold quality gate blocked Gold rebuild"):
+        run_pipeline._check_pre_gold_readiness(failed_bronze)
+
+    ok_bronze = [{"stage": "bronze_mots_tourism", "status": "ok"}]
+    gate_res = run_pipeline._check_pre_gold_readiness(ok_bronze)
+    assert gate_res["gate_passed"] is True
+    assert gate_res["resolved_coverage"]["mots_fresh"] == 17
+
+
+def test_feature_specs_controls_missing_and_corr_thresholds() -> None:
+    """Verify screening missing rate and pairwise Spearman cutoffs come from feature_specs.yaml."""
+    from src.config.feature_registry import get_validation_policy
+
+    policy = get_validation_policy()
+    assert float(policy["max_missing_pct"]) == 30.0
+    assert float(policy["max_pairwise_spearman"]) == 0.85
+
+
+def test_weight_sensitivity_reports_rank_ranges_for_six_scenarios() -> None:
+    """Rank sensitivity is deterministic, explicit, and bounded to observed provinces."""
+    provinces = [
+        {"province_code": "01", "insufficient_data": False, "sensitivity_components": {"cashflow_debt": 80, "tourism_exposure": 10, "hazard_news": 15}},
+        {"province_code": "02", "insufficient_data": False, "sensitivity_components": {"cashflow_debt": 20, "tourism_exposure": 75, "hazard_news": 25}},
+        {"province_code": "03", "insufficient_data": False, "sensitivity_components": {"cashflow_debt": 35, "tourism_exposure": 30, "hazard_news": 85}},
+        {"province_code": "04", "insufficient_data": True, "sensitivity_components": {"cashflow_debt": 100, "tourism_exposure": 100, "hazard_news": 100}},
+    ]
+    result = compute_weight_sensitivity(provinces)
+    assert result["scenario_count"] == 6
+    assert result["province_count"] == 3
+    assert len(result["province_rank_ranges"]) == 3
+    assert all(1 <= row["min_rank"] <= row["max_rank"] <= 3 for row in result["province_rank_ranges"])
+    assert result["min_spearman_rho"] is not None
+
+
+def test_eda_scope_guardrails_and_citizen_debt_usability_journey() -> None:
+    """Verify EDA explicitly scopes targets to tourism indicators and frontend chat/dossier support older-adult error recovery."""
+    from pathlib import Path
+    import pandas as pd
+    from src.analytics.eda_feature_selection import screen_monthly_panel_features
+
+    repo_root = Path(__file__).resolve().parents[2]
+    rng = np.random.default_rng(42)
+    rows = []
+    for prov in ("CM", "CR", "LP"):
+        for m in range(24):
+            rows.append(
+                {
+                    "province_code": prov,
+                    "period_date": pd.Timestamp("2024-01-01") + pd.DateOffset(months=m),
+                    "occupancy_deseason": float(rng.normal(0.0, 4.0)),
+                    "pm25_mean": float(rng.uniform(15.0, 90.0)),
+                    "rainfall_sum_mm": float(rng.uniform(5.0, 300.0)),
+                    "th_cpi_yoy_pct": float(rng.normal(1.2, 0.4)),
+                }
+            )
+    panel_df = pd.DataFrame(rows)
+    _, _, ols_summary = screen_monthly_panel_features(panel_df, target_col="occupancy_deseason")
+    assert "Tourism demand" in ols_summary["target_domain_scope"]
+    assert "not use this monthly EDA to claim proof of debt relief" in ols_summary["debt_interpretation_guardrail"]
+
+    dossier_src = (repo_root / "frontend" / "lib" / "financial-dossier.ts").read_text(encoding="utf-8")
+    cta_src = (repo_root / "frontend" / "components" / "sections" / "cta.tsx").read_text(encoding="utf-8")
+    protocol_src = (repo_root / "docs" / "USABILITY_TEST_PROTOCOL.md").read_text(encoding="utf-8")
+
+    # Verify low rate (<1%) confirmation prompt, non-increasing RL rate floor, and cashflow calculation when reserve is skipped
+    assert "rate_low_confirm" in cta_src
+    assert "แก้ดอกเบี้ย" in cta_src and "แก้ค่าใช้จ่าย/เงินสำรอง" in cta_src
+    assert "origRate > 3.0 ? Math.max(3.0, Number((origRate - 2.0).toFixed(2))) : origRate" in dossier_src
+    assert "fonts.googleapis.com" not in dossier_src
+    assert "Scenario Card A" in protocol_src and "1443" in protocol_src and "1213" in protocol_src
+
+
+def test_circular_block_permutation_is_reproducible_and_bounded() -> None:
+    """Within-province block permutation produces a bounded reproducible Monte Carlo p-value."""
+    import pandas as pd
+    from scipy import stats
+    from src.analytics.eda_feature_selection import _within_province_block_permutation_p
+
+    pair = pd.DataFrame([
+        {"province_code": province, "x": float(t), "y": float(t * 0.5 + (t % 3))}
+        for province in ("01", "02", "03") for t in range(12)
+    ])
+    group = pair.groupby("province_code", sort=False)
+    xw = pair["x"] - group["x"].transform("mean")
+    yw = pair["y"] - group["y"].transform("mean")
+    observed = float(stats.spearmanr(xw, yw).statistic)
+    p1 = _within_province_block_permutation_p(pair, observed, n_permutations=49, seed=17)
+    p2 = _within_province_block_permutation_p(pair, observed, n_permutations=49, seed=17)
+    assert p1 == p2
+    assert 0.0 < p1 <= 1.0
+
+
+def test_circular_block_permutation_uses_each_observation_once() -> None:
+    """The null permutation must preserve all observed values, unlike sampling blocks with replacement."""
+    import numpy as np
+    from src.analytics.eda_feature_selection import _circular_block_permutation
+
+    values = np.arange(11, dtype=float)
+    permuted = _circular_block_permutation(values, 3, np.random.default_rng(42))
+    assert sorted(permuted.tolist()) == values.tolist()

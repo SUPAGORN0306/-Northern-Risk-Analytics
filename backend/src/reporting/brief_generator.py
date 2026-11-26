@@ -436,12 +436,12 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             {
                 "horizon": "Immediate (0–30 days)",
                 "target_area": ", ".join(p["label"] for p in immediate_targets),
-                "action": "For SMEs, deploy proactive pre-NPL restructuring under Responsible Lending 2568; for individual unsecured borrowers, route eligible accounts to Debt Clinic by SAM (>120d NPL at 3–5%, up to 10y), Fast-Close Move-Forward via SAM Social AMC (<=100,000 THB NPL at 0%, up to 3y), or Persistent Debt exit (up to 7y). Note Khun Soo Rao Chuay closed new registration on 30 Sep 2025.",
+                "action": "Encourage borrowers who may be struggling to contact their lender early and ask about restructuring options under applicable Responsible Lending guidance. Direct people to official program channels to check current status and eligibility; this brief does not determine eligibility or guarantee terms. Khun Soo Rao Chuay is closed to new applications.",
             },
             {
                 "horizon": "Seasonal Readiness (Pre Mar–Apr)",
                 "target_area": ", ".join(p["label"] for p in seasonal_targets),
-                "action": f"Pre-approve seasonal working capital lines and standby disaster principal deferral ahead of peak haze and monsoon windows to protect {seasonal_rev_share}% of regional tourism revenue.",
+                "action": f"Before seasonal haze or monsoon periods, review cash-flow scenarios and reserve needs for areas associated with {seasonal_rev_share}% of regional tourism revenue. Ask lenders about currently available options if needed; assess costs, repayment capacity, and eligibility directly with them.",
             },
             {
                 "horizon": "Preventive Monitoring (Ongoing)",
@@ -488,12 +488,12 @@ def build_executive_brief_data(language: str = "th") -> dict[str, Any]:
             {
                 "horizon": "เร่งด่วน (0–30 วัน)",
                 "target_area": ", ".join(p["label"] for p in immediate_targets),
-                "action": "สำหรับ SME เร่งปรับโครงสร้างหนี้เชิงป้องกันตามเกณฑ์ Responsible Lending 2568; สำหรับลูกหนี้บุคคลธรรมดาที่มีหนี้ไม่มีหลักประกัน ให้คัดกรองคลินิกแก้หนี้ by SAM (ค้างเกิน 120 วัน ดอกเบี้ย 3–5% ผ่อนสูงสุด 10 ปี), ปิดหนี้ไว ไปต่อได้ (SAM Social AMC หนี้เสียไม่เกิน 100,000 บาท ดอกเบี้ย 0% สูงสุด 3 ปี) หรือเกณฑ์ปิดจบหนี้เรื้อรัง (ผ่อนสูงสุด 7 ปี) โดยโครงการคุณสู้ เราช่วย ปิดลงทะเบียนแล้วเมื่อ 30 ก.ย. 2568",
+                "action": "หากเริ่มมีสัญญาณว่าจ่ายหนี้ตึงมือ ให้รวบรวมรายรับ รายจ่าย และภาระหนี้ แล้วติดต่อเจ้าหนี้เพื่อสอบถามทางเลือกตามหลักเกณฑ์ที่เกี่ยวข้อง ผู้ที่สนใจโครงการช่วยเหลือควรตรวจสถานะ คุณสมบัติ และช่องทางสมัครจากหน่วยงานผู้รับผิดชอบโดยตรง รายงานนี้ไม่ได้ประเมินสิทธิรายบุคคล",
             },
             {
                 "horizon": "เตรียมพร้อมฤดูกาล (ก่อน มี.ค.–เม.ย.)",
                 "target_area": ", ".join(p["label"] for p in seasonal_targets),
-                "action": f"เตรียมวงเงินสินเชื่อหมุนเวียนและเงื่อนไขพักเงินต้นฉุกเฉินล่วงหน้าก่อนเข้าสู่ฤดูฝุ่น PM2.5 และช่วงน้ำหลาก เพื่อคุ้มครองฐานรายได้ท่องเที่ยว {seasonal_rev_share}% ของภาค",
+                "action": f"ก่อนช่วงฝุ่นหรือฝนตามฤดูกาล ให้ทบทวนสถานการณ์กระแสเงินสดและเงินสำรองในพื้นที่ซึ่งเกี่ยวข้องกับรายได้ท่องเที่ยว {seasonal_rev_share}% หากต้องการความช่วยเหลือ ให้สอบถามเจ้าหนี้ถึงทางเลือกที่เปิดอยู่และตรวจเงื่อนไขโดยตรง",
             },
             {
                 "horizon": "ติดตามเชิงป้องกัน (ต่อเนื่อง)",
@@ -619,7 +619,7 @@ def render_brief_markdown(brief: dict[str, Any], language: str = "th") -> str:
             lines.append(f"- **{a['horizon']} ({a['target_area']}):** {a['action']}")
 
     lines.append("")
-    lines.append("## 4. Latest Verified Field Signals" if is_en else "## 4. สัญญาณข่าวภาคสนามที่ตรวจสอบแล้วล่าสุด")
+    lines.append("## 4. Recently Screened News and Event Signals" if is_en else "## 4. ข่าวและเหตุการณ์ที่ระบบคัดกรองล่าสุด")
     for n in brief["verified_news"][:2]:
         p_name = n["name_en"] if is_en else n["name_th"]
         lines.append(f"- [{n['event_date']} · {p_name}] {n['evidence_quote']}")
@@ -765,11 +765,11 @@ def render_brief_html(brief: dict[str, Any], language: str = "th") -> str:
     <tbody>{action_rows}</tbody>
   </table>
 
-  <h2>{'4. Latest Verified Field Signals' if is_en else '4. สัญญาณข่าวภาคสนามที่ตรวจสอบแล้วล่าสุด'}</h2>
+  <h2>{'4. Recently Screened News and Event Signals' if is_en else '4. ข่าวและเหตุการณ์ที่ระบบคัดกรองล่าสุด'}</h2>
   <ul>{news_html}</ul>
 
   <footer>
-    {'Official Sources: MOTS, NSO 2025, BIS CPI, FRED, Open-Meteo, Air4Thai, and Bank of Thailand Official Publications.' if is_en else 'แหล่งข้อมูลทางการ: กระทรวงการท่องเที่ยวและกีฬา (MOTS), สำนักงานสถิติแห่งชาติ (สสช. 2568), BIS CPI, FRED, Open-Meteo, กรมควบคุมมลพิษ (Air4Thai) และเอกสารธนาคารแห่งประเทศไทย'}
+    {'Sources: MOTS, NSO (2025 survey), BIS, FRED, Open-Meteo, Air4Thai, and Bank of Thailand publications. Source type and period are shown with each indicator where available.' if is_en else 'แหล่งข้อมูล: กระทรวงการท่องเที่ยวและกีฬา, สำนักงานสถิติแห่งชาติ (สำรวจปี 2568), BIS, FRED, Open-Meteo, Air4Thai และเอกสาร ธปท. โดยแสดงประเภทและช่วงเวลาของข้อมูลประกอบเมื่อมีข้อมูล'}
   </footer>
 </div>
 </body>

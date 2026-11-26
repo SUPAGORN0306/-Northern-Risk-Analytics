@@ -52,6 +52,8 @@ import {
   fetchPolicyMonitor,
   fetchProvinceDetail,
   formatFetchError,
+  getStaffRoleLabel,
+  hasStaffPermission,
   isAbortError,
   isUnauthorizedError,
   runStaffMonteCarlo,
@@ -139,7 +141,16 @@ export function StaffWorkspace({
   onExit: () => void
 }) {
   const { lang, setLang, selectedProvinceCode, setSelectedProvinceCode } = useAppState()
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview")
+  const canViewHealth = hasStaffPermission(auth, "view_health")
+  const canTriggerRefresh = hasStaffPermission(auth, "trigger_refresh")
+  const canExportBrief = hasStaffPermission(auth, "export_brief")
+  const canPublishClusters = hasStaffPermission(auth, "publish_clusters")
+  const isDataStewardPrimary = canViewHealth && !canExportBrief
+  const roleLabel = getStaffRoleLabel(auth.role, lang)
+
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    isDataStewardPrimary ? "health" : "overview",
+  )
   const [months, setMonths] = useState(24)
 
   const [monitor, setMonitor] = useState<PolicyMonitorResponse | null>(null)
@@ -195,20 +206,34 @@ export function StaffWorkspace({
       setError(null)
       const t0 = typeof performance !== "undefined" ? performance.now() : Date.now()
       try {
-        const [m, h] = await Promise.all([
-          fetchPolicyMonitor(auth.access_token, forceFresh, signal),
-          fetchDataHealth(auth.access_token, forceFresh, signal),
-        ])
-        const elapsed = Math.round(
-          (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
-        )
-        if (forceFresh || h.cache_status === "MISS") {
-          setFreshDbFetchMs(elapsed)
+        if (canViewHealth) {
+          const [m, h] = await Promise.all([
+            fetchPolicyMonitor(auth.access_token, forceFresh, signal),
+            fetchDataHealth(auth.access_token, forceFresh, signal),
+          ])
+          const elapsed = Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+          )
+          if (forceFresh || h.cache_status === "MISS") {
+            setFreshDbFetchMs(elapsed)
+          } else {
+            setCachedFetchMs(elapsed)
+          }
+          setMonitor(m)
+          setHealth(h)
         } else {
-          setCachedFetchMs(elapsed)
+          const m = await fetchPolicyMonitor(auth.access_token, forceFresh, signal)
+          const elapsed = Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+          )
+          if (forceFresh || m.cache_status === "MISS") {
+            setFreshDbFetchMs(elapsed)
+          } else {
+            setCachedFetchMs(elapsed)
+          }
+          setMonitor(m)
+          setHealth(null)
         }
-        setMonitor(m)
-        setHealth(h)
       } catch (err) {
         if (isAbortError(err)) return
         if (isUnauthorizedError(err)) {
@@ -221,10 +246,11 @@ export function StaffWorkspace({
         setTestingSpeed(false)
       }
     },
-    [auth.access_token, handleUnauthorized, lang],
+    [auth.access_token, canViewHealth, handleUnauthorized, lang],
   )
 
   async function runSpeedBenchmark() {
+    if (!canViewHealth) return
     setTestingSpeed(true)
     setBenchmarkError(null)
     try {
@@ -296,7 +322,10 @@ export function StaffWorkspace({
     }
   }, [monitor, detail, detailError, selectedProvinceCode, loadProvinceDetailData])
 
-  const provinces = monitor?.quadrant_provinces ?? []
+  const provinces = useMemo(
+    () => monitor?.quadrant_provinces ?? [],
+    [monitor?.quadrant_provinces],
+  )
   const selected = useMemo(
     () => provinces.find((p) => p.province_code === selectedProvinceCode) ?? provinces[0] ?? null,
     [provinces, selectedProvinceCode],
@@ -336,6 +365,7 @@ export function StaffWorkspace({
   }, [briefOpen, loadBriefData])
 
   function openBriefDialog() {
+    if (!canExportBrief) return
     setStaffMobileMenuOpen(false)
     setBrief(null)
     setBriefError(null)
@@ -418,6 +448,7 @@ export function StaffWorkspace({
   }
 
   async function handleLiveRefresh() {
+    if (!canTriggerRefresh) return
     setRefreshing(true)
     setRefreshNotice(null)
     try {
@@ -438,15 +469,15 @@ export function StaffWorkspace({
           text:
             lang === "th"
               ? `อัปเดตข้อมูลแล้วบางส่วน (${syncedCount} จังหวัด · ข่าว ${fetched} รายการ, ผ่านเกณฑ์ ${added} ข่าว) แต่มีแหล่งข่าว ${failedFeeds} แหล่งดึงไม่สำเร็จ`
-              : `Partial sync completed (${syncedCount} provinces · ${fetched} scanned, ${added} verified), but ${failedFeeds} feed(s) failed.`,
+              : `Partial sync completed (${syncedCount} provinces · ${fetched} scanned, ${added} added to screening), but ${failedFeeds} feed(s) failed.`,
         })
       } else {
         setRefreshNotice({
           type: "success",
           text:
             lang === "th"
-              ? `อัปเดตข้อมูลสดเรียบร้อย (${syncedCount} จังหวัด) · ตรวจพบข่าว ${fetched} รายการ และคัดกรองเพิ่ม ${added} ข่าวที่ตรวจสอบแล้ว`
-              : `Synced live Air4Thai & RSS feeds (${syncedCount} provinces · ${fetched} scanned, ${added} new verified events).`,
+              ? `อัปเดตข้อมูลสดเรียบร้อย (${syncedCount} จังหวัด) · สแกนข่าว ${fetched} รายการ และเพิ่มเข้าระบบคัดกรอง ${added} รายการ`
+              : `Synced live Air4Thai & RSS feeds (${syncedCount} provinces · ${fetched} scanned, ${added} added to screening).`,
         })
       }
     } catch (err) {
@@ -463,6 +494,59 @@ export function StaffWorkspace({
     }
   }
 
+  const visibleTabs: { id: WorkspaceTab; th: string; en: string; mobileTh: string; mobileEn: string }[] =
+    isDataStewardPrimary
+      ? [
+          {
+            id: "health",
+            th: "คุณภาพและฐานข้อมูล",
+            en: "Data Health",
+            mobileTh: "คุณภาพและฐานข้อมูล",
+            mobileEn: "Data Health",
+          },
+          {
+            id: "overview",
+            th: "ภาพรวมอ้างอิง 17 จังหวัด",
+            en: "17-Province Reference",
+            mobileTh: "ภาพรวมอ้างอิง 17 จังหวัด",
+            mobileEn: "17-Province Reference",
+          },
+          {
+            id: "modeling",
+            th: "ตรวจสอบและเผยแพร่กลุ่มหลัก",
+            en: "Cluster Review & Publish",
+            mobileTh: "ตรวจสอบและเผยแพร่กลุ่มหลัก",
+            mobileEn: "Cluster Review & Publish",
+          },
+        ]
+      : [
+          {
+            id: "overview",
+            th: "ภาพรวมและติดตามนโยบาย",
+            en: "Policy Overview",
+            mobileTh: "ภาพรวมเศรษฐกิจและติดตามนโยบาย",
+            mobileEn: "Policy Overview & Watchlist",
+          },
+          {
+            id: "modeling",
+            th: "จำลองความเสี่ยงและจัดกลุ่มจังหวัด",
+            en: "Risk Simulation & Clustering Lab",
+            mobileTh: "จำลองความเสี่ยงและจัดกลุ่มจังหวัด",
+            mobileEn: "Risk Simulation & Clustering Lab",
+          },
+          ...(canViewHealth
+            ? [
+                {
+                  id: "health" as const,
+                  th: "คุณภาพและฐานข้อมูล",
+                  en: "Data Health",
+                  mobileTh: "คุณภาพและฐานข้อมูล",
+                  mobileEn: "Data Health",
+                },
+              ]
+            : []),
+        ]
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header
@@ -474,12 +558,17 @@ export function StaffWorkspace({
           <div className="flex min-w-0 items-center gap-2">
             <Activity aria-hidden="true" className="size-5 shrink-0" />
             <span className="truncate font-display text-sm font-semibold tracking-tight sm:text-base">
-              {lang === "th" ? "ระบบงานเจ้าหน้าที่วิเคราะห์นโยบาย" : "NorthRisk Staff Analytics"}
+              {isDataStewardPrimary
+                ? lang === "th"
+                  ? "ระบบดูแลคุณภาพข้อมูลและท่อข้อมูล"
+                  : "NorthRisk Data Governance"
+                : lang === "th"
+                  ? "ระบบงานเจ้าหน้าที่วิเคราะห์นโยบาย"
+                  : "NorthRisk Staff Analytics"}
             </span>
-            <span className="hidden rounded-full border border-border px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline-flex">
-              {auth.username === "demo_analyst" && lang === "th"
-                ? "เจ้าหน้าที่วิเคราะห์นโยบาย"
-                : auth.username}
+            <span className="hidden items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-2.5 py-0.5 text-[11px] font-medium text-foreground lg:inline-flex">
+              <ShieldCheck aria-hidden="true" className="size-3 shrink-0" />
+              <span>{roleLabel}</span>
             </span>
           </div>
 
@@ -494,42 +583,21 @@ export function StaffWorkspace({
             >
               {lang === "th" ? "กลับหน้าสาธารณะ" : "Public View"}
             </button>
-            <button
-              type="button"
-              aria-current={activeTab === "overview" ? "page" : undefined}
-              onClick={() => setActiveTab("overview")}
-              className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${
-                activeTab === "overview"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              {lang === "th" ? "ภาพรวมและติดตามนโยบาย" : "Policy Overview"}
-            </button>
-            <button
-              type="button"
-              aria-current={activeTab === "modeling" ? "page" : undefined}
-              onClick={() => setActiveTab("modeling")}
-              className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${
-                activeTab === "modeling"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              {lang === "th" ? "จำลองความเสี่ยงและจัดกลุ่มจังหวัด" : "Risk Simulation & Clustering Lab"}
-            </button>
-            <button
-              type="button"
-              aria-current={activeTab === "health" ? "page" : undefined}
-              onClick={() => setActiveTab("health")}
-              className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${
-                activeTab === "health"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              {lang === "th" ? "คุณภาพและฐานข้อมูล" : "Data Health"}
-            </button>
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                aria-current={activeTab === tab.id ? "page" : undefined}
+                onClick={() => setActiveTab(tab.id)}
+                className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                {lang === "th" ? tab.th : tab.en}
+              </button>
+            ))}
           </nav>
 
           <div className="flex items-center gap-2">
@@ -586,25 +654,14 @@ export function StaffWorkspace({
             aria-label={lang === "th" ? "เมนูนำทางเจ้าหน้าที่บนมือถือ" : "Staff mobile navigation"}
             className="flex flex-col gap-1 border-t border-border px-4 pb-4 pt-2.5 md:hidden"
           >
-            {(
-              [
-                {
-                  id: "overview",
-                  th: "ภาพรวมเศรษฐกิจและติดตามนโยบาย",
-                  en: "Policy Overview & Watchlist",
-                },
-                {
-                  id: "modeling",
-                  th: "จำลองความเสี่ยงและจัดกลุ่มจังหวัด",
-                  en: "Risk Simulation & Clustering Lab",
-                },
-                {
-                  id: "health",
-                  th: "คุณภาพและฐานข้อมูล",
-                  en: "Data Health",
-                },
-              ] as const
-            ).map((item) => (
+            <div className="mb-1.5 flex items-center justify-between rounded-xl border border-border bg-secondary/50 px-3 py-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                <ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />
+                {roleLabel}
+              </span>
+              <span className="text-[11px] text-muted-foreground">{auth.username}</span>
+            </div>
+            {visibleTabs.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -618,22 +675,24 @@ export function StaffWorkspace({
                     : "text-foreground hover:bg-secondary"
                 }`}
               >
-                <span>{lang === "th" ? item.th : item.en}</span>
+                <span>{lang === "th" ? item.mobileTh : item.mobileEn}</span>
                 {activeTab === item.id && <Check aria-hidden="true" className="size-4" />}
               </button>
             ))}
 
             <div className="mt-2 flex flex-col gap-1.5 border-t border-border/70 pt-2.5">
-              <button
-                type="button"
-                onClick={openBriefDialog}
-                className="flex items-center justify-between rounded-xl border border-border bg-secondary/45 px-3.5 py-2.5 text-left text-xs font-semibold text-foreground"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Download aria-hidden="true" className="size-3.5" />
-                  {lang === "th" ? "เปิดรายงานสรุปเชิงนโยบาย (1 หน้า)" : "Open 1-Page Policy Brief"}
-                </span>
-              </button>
+              {canExportBrief && (
+                <button
+                  type="button"
+                  onClick={openBriefDialog}
+                  className="flex items-center justify-between rounded-xl border border-border bg-secondary/45 px-3.5 py-2.5 text-left text-xs font-semibold text-foreground"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Download aria-hidden="true" className="size-3.5" />
+                    {lang === "th" ? "เปิดรายงานสรุปเชิงนโยบาย (1 หน้า)" : "Open 1-Page Policy Brief"}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -690,7 +749,7 @@ export function StaffWorkspace({
           </div>
         )}
 
-        {loading && !monitor ? (
+        {loading && !monitor && !health ? (
           <div className="flex h-64 items-center justify-center gap-2 text-xs text-muted-foreground">
             <Loader2 aria-hidden="true" className="size-4 animate-spin" />
             <span>{lang === "th" ? "กำลังดึงข้อมูลจากฐานข้อมูล…" : "Loading analytics data…"}</span>
@@ -705,6 +764,8 @@ export function StaffWorkspace({
             onRetryDetail={() => void loadProvinceDetailData(selectedProvinceCode)}
             months={months}
             refreshing={refreshing}
+            canTriggerRefresh={canTriggerRefresh}
+            canExportBrief={canExportBrief}
             onSelectCode={setSelectedProvinceCode}
             onMonthsChange={setMonths}
             onRefresh={() => void handleLiveRefresh()}
@@ -716,12 +777,13 @@ export function StaffWorkspace({
             token={auth.access_token}
             monitor={monitor}
             provincesCount={provinces.length}
+            canPublishClusters={canPublishClusters}
             onPublished={() => void loadWorkspaceData(true)}
             onUnauthorized={handleUnauthorized}
             onMonteCarloMeasured={setMcComputeMs}
             onClusterMeasured={setClusterComputeMs}
           />
-        ) : (
+        ) : canViewHealth ? (
           <DataHealthView
             health={health}
             cachedFetchMs={cachedFetchMs}
@@ -730,9 +792,12 @@ export function StaffWorkspace({
             clusterComputeMs={clusterComputeMs}
             testingSpeed={testingSpeed}
             benchmarkError={benchmarkError}
+            canTriggerRefresh={canTriggerRefresh}
+            refreshing={refreshing}
+            onRefresh={() => void handleLiveRefresh()}
             onRunBenchmark={() => void runSpeedBenchmark()}
           />
-        )}
+        ) : null}
       </main>
 
       {/* Printable 1-Page Policy Brief modal */}
@@ -935,8 +1000,8 @@ export function StaffWorkspace({
                 <div className="mt-4 border-t border-border pt-3.5">
                   <h3 className="text-xs font-semibold text-foreground">
                     {lang === "th"
-                      ? "4. สัญญาณข่าวภาคสนามที่ตรวจสอบแล้วล่าสุด"
-                      : "4. Latest Verified Field Signals"}
+                      ? "4. ข่าวและเหตุการณ์ที่ระบบคัดกรองล่าสุด"
+                      : "4. Recently Screened News and Event Signals"}
                   </h3>
                   <ul className="mt-2 space-y-1.5 text-xs text-muted-foreground">
                     {brief.verified_news.slice(0, 2).map((n, idx) => (
@@ -954,8 +1019,8 @@ export function StaffWorkspace({
 
               <p className="mt-4 border-t border-border pt-3 text-[11px] leading-5 text-muted-foreground">
                 {lang === "th"
-                  ? "แหล่งข้อมูลทางการ: กระทรวงการท่องเที่ยวและกีฬา (MOTS), สำนักงานสถิติแห่งชาติ (สสช. 2568), BIS CPI, FRED, Open-Meteo, กรมควบคุมมลพิษ (Air4Thai) และเอกสารธนาคารแห่งประเทศไทย"
-                  : "Official Sources: MOTS, NSO 2025, BIS CPI, FRED, Open-Meteo, Air4Thai, and Bank of Thailand Official Publications."}
+                  ? "แหล่งข้อมูล: กระทรวงการท่องเที่ยวและกีฬา, สำนักงานสถิติแห่งชาติ (สำรวจปี 2568), BIS, FRED, Open-Meteo, Air4Thai และเอกสาร ธปท. โดยแสดงประเภทและช่วงเวลาของข้อมูลประกอบเมื่อมีข้อมูล"
+                  : "Sources: MOTS, NSO (2025 survey), BIS, FRED, Open-Meteo, Air4Thai, and Bank of Thailand publications."
               </p>
             </>
           ) : null}
@@ -1003,6 +1068,8 @@ function PolicyOverviewPage({
   onRetryDetail,
   months,
   refreshing,
+  canTriggerRefresh,
+  canExportBrief,
   onSelectCode,
   onMonthsChange,
   onRefresh,
@@ -1017,6 +1084,8 @@ function PolicyOverviewPage({
   onRetryDetail: () => void
   months: number
   refreshing: boolean
+  canTriggerRefresh: boolean
+  canExportBrief: boolean
   onSelectCode: (code: string) => void
   onMonthsChange: (m: number) => void
   onRefresh: () => void
@@ -1024,7 +1093,10 @@ function PolicyOverviewPage({
   onOpenModeling: () => void
 }) {
   const { lang } = useAppState()
-  const provinces = monitor?.quadrant_provinces ?? []
+  const provinces = useMemo(
+    () => monitor?.quadrant_provinces ?? [],
+    [monitor?.quadrant_provinces],
+  )
   const demand = monitor?.public_demand_signals
   const provNameMap = new Map(
     provinces.map((p) => [p.province_code, lang === "th" ? p.name_th : p.name_en]),
@@ -1269,6 +1341,46 @@ function PolicyOverviewPage({
               ? "วิเคราะห์การกระจายตัวของสภาพคล่องและภาระหนี้รายจังหวัดทั่วภาคเหนือ จัดอันดับพื้นที่เฝ้าระวังสูงสุด พร้อมตัวกรองเจาะลึกรายจังหวัด"
               : "Regional distribution of liquidity and SME debt across Northern provinces, top priority watchlist, and direct provincial filter."}
           </p>
+          {monitor?.data_quality_summary && (
+            <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-full border border-border bg-secondary/45 px-3 py-1 text-[11px] text-muted-foreground">
+              <span
+                className={`size-2 rounded-full ${
+                  monitor.data_quality_summary.latest_dq_status === "passed"
+                    ? "bg-emerald-600"
+                    : "bg-amber-500"
+                }`}
+                aria-hidden="true"
+              />
+              <span className="font-medium text-foreground">
+                {monitor.data_quality_summary.latest_dq_status === "passed"
+                  ? lang === "th"
+                    ? "คุณภาพข้อมูลผ่านเกณฑ์"
+                    : "Data quality passed"
+                  : lang === "th"
+                    ? "กำลังติดตามคุณภาพข้อมูล"
+                    : "Data quality monitored"}
+              </span>
+              {monitor.data_quality_summary.air_latest_date && (
+                <span>
+                  {lang === "th"
+                    ? `· อากาศล่าสุด ${monitor.data_quality_summary.air_latest_date}`
+                    : `· Air ${monitor.data_quality_summary.air_latest_date}`}
+                </span>
+              )}
+              {monitor.data_quality_summary.news_latest_date && (
+                <span>
+                  {lang === "th"
+                    ? `· ข่าวล่าสุด ${monitor.data_quality_summary.news_latest_date}`
+                    : `· News ${monitor.data_quality_summary.news_latest_date}`}
+                </span>
+              )}
+              <span>
+                {lang === "th"
+                  ? `· กักกันตรวจสอบ ${monitor.data_quality_summary.quarantine_rows} รายการ`
+                  : `· ${monitor.data_quality_summary.quarantine_rows} quarantined`}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1311,15 +1423,17 @@ function PolicyOverviewPage({
             ))}
           </select>
 
-          <button
-            type="button"
-            disabled={refreshing}
-            onClick={onRefresh}
-            className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
-          >
-            <RefreshCw aria-hidden="true" className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            {lang === "th" ? "ดึงข้อมูลสด" : "Sync Live Data"}
-          </button>
+          {canTriggerRefresh && (
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={onRefresh}
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-background px-4 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+            >
+              <RefreshCw aria-hidden="true" className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {lang === "th" ? "ดึงข้อมูลสด" : "Sync Live Data"}
+            </button>
+          )}
 
           <button
             type="button"
@@ -1330,14 +1444,16 @@ function PolicyOverviewPage({
             {lang === "th" ? "ไปที่หน้าจำลองความเสี่ยงและจัดกลุ่ม" : "Simulation & Clustering"}
           </button>
 
-          <button
-            type="button"
-            onClick={onExport}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
-          >
-            <Download aria-hidden="true" className="size-3.5" />
-            {lang === "th" ? "รายงานสรุปเชิงนโยบาย" : "Policy Brief"}
-          </button>
+          {canExportBrief && (
+            <button
+              type="button"
+              onClick={onExport}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85"
+            >
+              <Download aria-hidden="true" className="size-3.5" />
+              {lang === "th" ? "รายงานสรุปเชิงนโยบาย" : "Policy Brief"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1416,25 +1532,25 @@ function PolicyOverviewPage({
                 <div>
                   <h2 className="text-sm font-semibold">
                     {lang === "th"
-                      ? showAllWatchlist || provinceSearch.trim()
-                        ? "จัดอันดับความเปราะบางรายจังหวัด"
+                        ? showAllWatchlist || provinceSearch.trim()
+                        ? "เรียงจังหวัดตามคะแนนคัดกรอง"
                         : "5 อันดับจังหวัดเฝ้าระวังสูงสุด"
                       : showAllWatchlist || provinceSearch.trim()
-                        ? `All ${provinces.length} Provinces by Vulnerability Rank`
+                        ? `All ${provinces.length} Provinces by Screening Score`
                         : "Top 5 Priority Watchlist"}
                     <InfoTooltip
                       align="left"
                       text={
                         lang === "th"
-                          ? "ใช้สูตรเดียวกับแผนที่หน้าสาธารณะและรายงานสรุป (Single Source of Truth): สภาพคล่องและภาระหนี้ 55% + อัตราเข้าพักและโครงสร้างท่องเที่ยว 25% + แรงกระแทกภัยพิบัติและข่าวภาคสนาม 20%"
-                          : "Unified with Public Map & Policy Brief (Single Source of Truth): 55% cashflow & debt tightness + 25% tourism demand exposure + 20% hazard & verified field news."
+                          ? "ดัชนีคัดกรองเชิงพรรณนาตามเกณฑ์ระบบ (สูตรเดียวกับหน้าสาธารณะและรายงานสรุป): สภาพคล่องและหนี้ สสช. 55% + โครงสร้างท่องเที่ยว กทก. 25% + แรงกระแทกภัยพิบัติและข่าวที่ผ่านการคัดกรอง 20% — ใช้จัดกลุ่มเพื่อเฝ้าระวังภาพรวม ไม่ใช่ความน่าจะเป็นที่สอบเทียบแล้วหรือการยืนยันสิทธิ์รายบุคคล"
+                          : "Rule-based descriptive screening index (synced with Public Map & Policy Brief): 55% NSO cashflow/debt + 25% MOTS tourism exposure + 20% hazard & screened news signals. For macro triage only—not a calibrated probability or individual credit decision."
                       }
                     />
                   </h2>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {lang === "th"
-                      ? "เรียงตามระดับความเปราะบางทางการเงินและภัยพิบัติ"
-                      : "Ranked by unified vulnerability tier & score (synced with Public Map)"}
+                      ? "ดัชนีคัดกรองเชิงพรรณนารายจังหวัด (ไม่ใช่ความน่าจะเป็นหรือการประเมินเครดิตรายบุคคล)"
+                      : "Descriptive provincial screening index (synced with Public Map; not a calibrated probability)"}
                   </p>
                 </div>
                 <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-semibold text-foreground">
@@ -2103,8 +2219,8 @@ function PolicyOverviewPage({
               <div>
                 <h2 className="font-display text-base font-semibold">
                   {lang === "th"
-                    ? "ข่าวเศรษฐกิจและเหตุการณ์ที่ตรวจสอบแล้ว"
-                    : "Verified Regional News"}
+                    ? "ข่าวเศรษฐกิจและเหตุการณ์ที่ผ่านการคัดกรอง"
+                    : "Screened Regional News and Events"}
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {selected ? (lang === "th" ? `จังหวัด${selected.name_th}` : selected.name_en) : ""}
@@ -2128,8 +2244,8 @@ function PolicyOverviewPage({
             ) : !detail ? (
               <p className="mt-4 text-xs text-muted-foreground">
                 {lang === "th"
-                  ? "กำลังดึงข่าวที่ตรวจสอบแล้วของจังหวัดนี้…"
-                  : "Loading verified provincial news…"}
+                  ? "กำลังโหลดข่าวที่ผ่านการคัดกรองของจังหวัดนี้…"
+                  : "Loading screened news for this province…"}
               </p>
             ) : detail.verified_news.length ? (
               <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
@@ -2166,8 +2282,8 @@ function PolicyOverviewPage({
             ) : (
               <p className="mt-4 text-xs text-muted-foreground">
                 {lang === "th"
-                  ? "ไม่พบข่าวเหตุการณ์ที่ตรวจสอบแล้วในจังหวัดนี้ในช่วงเวลาล่าสุด (สามารถกดดึงข้อมูลสดเพื่ออัปเดตได้)"
-                  : "No recent verified events for this province (click Sync Live Data to refresh)."}
+                  ? "ไม่พบข่าวหรือเหตุการณ์ที่ผ่านเกณฑ์คัดกรองของระบบในจังหวัดนี้ช่วงล่าสุด (กดดึงข้อมูลสดเพื่ออัปเดตได้)"
+                  : "No recent news or events passed the system's screening criteria for this province (sync live data to refresh)."}
               </p>
             )}
           </section>
@@ -2181,6 +2297,7 @@ function RiskModelingAndClusteringPage({
   token,
   monitor,
   provincesCount,
+  canPublishClusters,
   onPublished,
   onUnauthorized,
   onMonteCarloMeasured,
@@ -2189,6 +2306,7 @@ function RiskModelingAndClusteringPage({
   token: string
   monitor: PolicyMonitorResponse | null
   provincesCount: number
+  canPublishClusters: boolean
   onPublished: () => void
   onUnauthorized: () => void
   onMonteCarloMeasured: (ms: number) => void
@@ -2206,16 +2324,15 @@ function RiskModelingAndClusteringPage({
   const [mcError, setMcError] = useState<string | null>(null)
   const mcAbortRef = useRef<AbortController | null>(null)
 
-  // Interactive KMeans Clustering state
+  // Interactive KMeans Clustering state aligned with canonical EDA validated CORE_6_FEATURES
   const [kVal, setKVal] = useState(4)
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([
-    "expense_to_income_pct_sme",
-    "debt_to_annual_income_sme",
     "avg_occupancy_rate",
     "occupancy_volatility",
+    "log_foreign_visitor_share",
     "annual_pm25_days_over_37_5",
     "max_monthly_rainfall_mm",
-    "recent_news_shock_score",
+    "debt_to_annual_income_all",
   ])
   const [clusterData, setClusterData] = useState<StaffReclusterResponse | null>(null)
   const [clusterLoading, setClusterLoading] = useState(false)
@@ -2358,8 +2475,8 @@ function RiskModelingAndClusteringPage({
       <div>
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
           {lang === "th"
-            ? "แบบจำลองความเสี่ยงเชิงความน่าจะเป็นและการจัดกลุ่มจังหวัดแบบปรับเปลี่ยนได้"
-            : "Probabilistic Monte Carlo Risk & Dynamic Provincial Clustering Lab"}
+            ? "จำลองสถานการณ์ความเสี่ยงและจัดกลุ่มจังหวัด"
+            : "Monte Carlo Stress Simulation & Provincial Clustering"}
         </p>
         <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
           {lang === "th"
@@ -2369,7 +2486,7 @@ function RiskModelingAndClusteringPage({
         <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
           {lang === "th"
             ? `ใช้ประวัติความผันผวนจริงจากฐานข้อมูล${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} เดือน)` : ""} ร่วมกับข่าวเหตุการณ์รุนแรงล่าสุดเพื่อสุ่มจำลองความเสี่ยงแบบ Bootstrap ตามจำนวนรอบที่กำหนดเอง และปรับตัวแปรจัดกลุ่มจังหวัดได้ทันที`
-            : `Uses real provincial history${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} months)` : ""} paired with verified severe news events for configurable Empirical Bootstrap Monte Carlo stress testing and KMeans clustering.`}
+            : `Uses provincial history${actualHistoryMonths > 0 ? ` (${actualHistoryMonths} months)` : ""} paired with screened severe-news signals for configurable Empirical Bootstrap Monte Carlo stress testing and KMeans clustering.`}
         </p>
       </div>
 
@@ -2972,15 +3089,24 @@ function RiskModelingAndClusteringPage({
                 {lang === "th" ? "คำนวณการจัดกลุ่มใหม่" : "Run Clustering"}
               </button>
 
-              <button
-                type="button"
-                disabled={clusterLoading}
-                onClick={() => void executeRecluster(kVal, selectedFeatures, true)}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-xs font-medium text-background hover:opacity-85 disabled:opacity-60 md:h-9 md:rounded-full"
-              >
-                <Save aria-hidden="true" className="size-3.5" />
-                {lang === "th" ? "บันทึกไปใช้เป็นกลุ่มหลักของระบบ" : "Publish to Primary Map"}
-              </button>
+              {canPublishClusters ? (
+                <button
+                  type="button"
+                  disabled={clusterLoading}
+                  onClick={() => void executeRecluster(kVal, selectedFeatures, true)}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-xs font-medium text-background hover:opacity-85 disabled:opacity-60 md:h-9 md:rounded-full"
+                >
+                  <Save aria-hidden="true" className="size-3.5" />
+                  {lang === "th" ? "บันทึกไปใช้เป็นกลุ่มหลักของระบบ" : "Publish to Primary Map"}
+                </button>
+              ) : (
+                <span className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary/60 px-3.5 text-[11px] font-medium text-muted-foreground md:h-9 md:rounded-full">
+                  <ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />
+                  {lang === "th"
+                    ? "โหมดทดลอง (การเผยแพร่กลุ่มหลักต้องใช้สิทธิ์ผู้ดูแลคุณภาพข้อมูล)"
+                    : "Sandbox mode (Data Steward role required to publish)"}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -3063,7 +3189,9 @@ function RiskModelingAndClusteringPage({
                         ? lang === "th" ? "การเงิน" : "Finance"
                         : cat.group === "exposure"
                           ? lang === "th" ? "การท่องเที่ยว" : "Tourism"
-                          : lang === "th" ? "ภัยพิบัติ" : "Hazards"
+                          : cat.group === "experimental"
+                            ? lang === "th" ? "ทดลองเสริม (Media Bias)" : "Experimental (Media Bias)"
+                            : lang === "th" ? "ภัยพิบัติ" : "Hazards"
                     return (
                       <button
                         key={cat.feature_key}
@@ -3310,6 +3438,9 @@ function DataHealthView({
   clusterComputeMs,
   testingSpeed,
   benchmarkError,
+  canTriggerRefresh,
+  refreshing,
+  onRefresh,
   onRunBenchmark,
 }: {
   health: DataHealthResponse | null
@@ -3319,11 +3450,16 @@ function DataHealthView({
   clusterComputeMs: number | null
   testingSpeed: boolean
   benchmarkError: string | null
+  canTriggerRefresh: boolean
+  refreshing: boolean
+  onRefresh: () => void
   onRunBenchmark: () => void
 }) {
   const { lang } = useAppState()
   const c = health?.layer_counts
   const evalRun = health?.latest_eval_runs.find((r) => r.run_type === "full_7d_evaluation")
+  const driftRun = health?.latest_eval_runs.find((r) => r.run_type === "drift_monitoring")
+  const driftMetrics = driftRun?.metrics_json?.metrics as Record<string, { status?: string }> | undefined
   const eval7d = evalRun?.metrics_json
   const evalRanDate = evalRun?.ran_at ? String(evalRun.ran_at).slice(0, 16).replace("T", " ") : null
 
@@ -3361,7 +3497,7 @@ function DataHealthView({
       icon: Database,
     },
     {
-      label: lang === "th" ? "เอกสารและข่าวที่คัดกรองแล้ว (ชั้น Silver)" : "Verified Chunks & News (Silver · Cleaned)",
+      label: lang === "th" ? "เอกสารและข่าวที่ผ่านการคัดกรอง (ชั้น Silver)" : "Screened Documents & News (Silver · Cleaned)",
       value: c ? `${c.silver_policy_chunks} / ${c.silver_news_events}` : "—",
       icon: Check,
     },
@@ -3473,22 +3609,38 @@ function DataHealthView({
 
   return (
     <div className="space-y-8">
-      <div>
-        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          {lang === "th"
-            ? "ธรรมาภิบาลข้อมูลและผลการตรวจสอบคุณภาพระบบตามจริง"
-            : "Live Data Governance & Actual Evaluation Metrics"}
-        </p>
-        <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-          {lang === "th"
-            ? "คุณภาพข้อมูลและผลตรวจวัดความแม่นยำจริงของระบบ"
-            : "Data Health & Honest Benchmarks"}
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          {lang === "th"
-            ? `ทุกตัวเลขด้านล่างดึงสดจากฐานข้อมูลและบันทึกการทดสอบจริง ไม่ใช้ข้อมูลจำลอง${evalRanDate ? ` · รอบประเมิน 7 มิติล่าสุดเมื่อ ${evalRanDate} UTC` : ""}`
-            : `Every metric below is read directly from live PostgreSQL tables and actual evaluation logs without synthetic data${evalRanDate ? ` · Last 7D eval ${evalRanDate} UTC` : ""}.`}
-        </p>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            {lang === "th"
+              ? "ธรรมาภิบาลข้อมูลและผลการตรวจสอบคุณภาพระบบตามจริง"
+              : "Live Data Governance & Actual Evaluation Metrics"}
+          </p>
+          <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+            {lang === "th"
+              ? "คุณภาพข้อมูลและผลตรวจวัดความแม่นยำจริงของระบบ"
+              : "Data Health & Honest Benchmarks"}
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {lang === "th"
+              ? `ทุกตัวเลขด้านล่างดึงสดจากฐานข้อมูลและบันทึกการทดสอบจริง ไม่ใช้ข้อมูลจำลอง${evalRanDate ? ` · รอบประเมิน 7 มิติล่าสุดเมื่อ ${evalRanDate} UTC` : ""}`
+              : `Every metric below is read directly from live PostgreSQL tables and actual evaluation logs without synthetic data${evalRanDate ? ` · Last 7D eval ${evalRanDate} UTC` : ""}.`}
+          </p>
+        </div>
+
+        {canTriggerRefresh && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={onRefresh}
+              className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-4 text-xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-60"
+            >
+              <RefreshCw aria-hidden="true" className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {lang === "th" ? "ดึงข้อมูลสดและอัปเดตท่อข้อมูล" : "Sync Live Data & ELT"}
+            </button>
+          </div>
+        )}
       </div>
 
       <section>
@@ -3498,8 +3650,8 @@ function DataHealthView({
             align="left"
             text={
               lang === "th"
-                ? "สถาปัตยกรรม 3 ชั้น: Bronze = ข้อมูลดิบจากแหล่งต้นทาง, Silver = ข้อมูลที่คัดกรองและตรวจสอบแล้ว, Gold = ตารางรวมรายจังหวัดพร้อมนำไปวิเคราะห์"
-                : "Medallion architecture: Bronze = raw ingested data, Silver = cleaned & validated records, Gold = analytics-ready tables."
+                ? "สถาปัตยกรรม 3 ชั้น: Bronze = ข้อมูลดิบจากแหล่งต้นทาง, Silver = ข้อมูลที่ผ่านกฎคัดกรอง/ตรวจคุณภาพ (ไม่ได้ยืนยันข้อเท็จจริงทุกชิ้น), Gold = ตารางรวมเพื่อการวิเคราะห์"
+                : "Medallion architecture: Bronze = raw source data, Silver = screened and quality-checked records (not individually fact-verified), Gold = analytics tables."
             }
           />
         </h2>
@@ -3560,6 +3712,30 @@ function DataHealthView({
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2" aria-label={lang === "th" ? "ติดตามความเปลี่ยนแปลง" : "Change monitoring"}>
+        <article className="rounded-2xl border border-border bg-background p-5">
+          <h2 className="text-sm font-semibold">{lang === "th" ? "การเปลี่ยนกลุ่มจังหวัด" : "Province cluster changes"}</h2>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">
+            {health?.cluster_run_diff?.status === "compared" ? health.cluster_run_diff.changed_province_count : "—"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {health?.cluster_run_diff?.status === "compared"
+              ? lang === "th" ? `จังหวัดเปลี่ยนกลุ่ม ${health.cluster_run_diff.changed_province_count} จาก ${health.cluster_run_diff.province_count} จังหวัด · เทียบรอบ ${health.cluster_run_diff.previous_run_id} กับ ${health.cluster_run_diff.latest_run_id}` : `${health.cluster_run_diff.changed_province_count} of ${health.cluster_run_diff.province_count} provinces changed · ${health.cluster_run_diff.previous_run_id} → ${health.cluster_run_diff.latest_run_id}`
+              : lang === "th" ? "ยังมีประวัติไม่พอสำหรับเทียบสองรอบ" : "Two completed runs are needed for comparison"}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{lang === "th" ? "กลุ่มเป็นเครื่องมือจัดประเภทเชิงพรรณนา ไม่ใช่หลักฐานเหตุและผล" : "Clusters are descriptive groups, not causal evidence."}</p>
+        </article>
+        <article className="rounded-2xl border border-border bg-background p-5">
+          <h2 className="text-sm font-semibold">{lang === "th" ? "สัญญาณการเปลี่ยนแปลงของข้อมูล" : "Data drift signals"}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {driftMetrics
+              ? lang === "th" ? `Occupancy: ${driftMetrics.occupancy_rate?.status ?? "—"} · PM2.5: ${driftMetrics.pm25_mean?.status ?? "—"} · ฝน: ${driftMetrics.rainfall_sum_mm?.status ?? "—"}` : `Occupancy: ${driftMetrics.occupancy_rate?.status ?? "—"} · PM2.5: ${driftMetrics.pm25_mean?.status ?? "—"} · Rainfall: ${driftMetrics.rainfall_sum_mm?.status ?? "—"}`
+              : lang === "th" ? "ยังไม่มีผลตรวจ drift — จะเริ่มบันทึกเมื่อรัน pipeline รอบถัดไป" : "No drift run yet; it will be recorded after the next pipeline run."}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{lang === "th" ? "เปรียบเทียบค่าเฉลี่ยย้อนหลัง 6 เดือนกับ 6 เดือนก่อนหน้า เป็นสัญญาณให้ตรวจ ไม่ใช่การทดสอบนัยสำคัญ" : "Compares recent and prior six-month means; a review signal, not a significance test."}</p>
+        </article>
       </section>
 
       <section className="space-y-4">

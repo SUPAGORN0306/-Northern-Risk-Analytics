@@ -1,6 +1,7 @@
 "use client"
 
-import { FormEvent, useEffect, useRef, useState } from "react"
+import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useRouter } from "next/navigation"
 import { AnimatePresence, motion } from "motion/react"
 import {
   ArrowUp,
@@ -12,6 +13,8 @@ import {
   RotateCcw,
   ShieldCheck,
   StopCircle,
+  ThumbsDown,
+  ThumbsUp,
   Volume2,
   X,
 } from "lucide-react"
@@ -19,10 +22,12 @@ import {
   formatFetchError,
   sendPolicyChat,
   submitReliefCheck,
+  submitChatFeedback,
   type CitationItem,
 } from "@/lib/api"
 import { useAppState } from "@/lib/i18n"
-import { buildLoanComparison, computeFinancialDiagnostic, type DebtStatusKey } from "@/lib/financial-dossier"
+import { buildLoanComparison, computeFinancialDiagnostic, formatRatePct, type DebtStatusKey } from "@/lib/financial-dossier"
+import { matchOfficialPrograms } from "@/components/sections/pricing"
 
 type ChatMessage = {
   id: number
@@ -33,11 +38,12 @@ type ChatMessage = {
   dataSources?: Array<{ title: string; source_name: string; observed_at: string; source_url?: string }>
   piiRedacted?: number
   wasRefused?: boolean
+  feedback?: { modelUsed: string | null; topVectorSim: number; wasRefused: boolean; sent?: boolean }
   /** Only ordinary questions are eligible for short lived retrieval context. */
   contextText?: string
 }
 
-type AssessmentStep = "type" | "province" | "income" | "income_zero_confirm" | "debt" | "expenses" | "reserve" | "principal" | "rate" | "horizon" | "status" | "impact" | "confirm"
+type AssessmentStep = "type" | "province" | "income" | "income_zero_confirm" | "debt" | "expenses" | "reserve" | "principal" | "rate" | "rate_low_confirm" | "status" | "horizon" | "impact" | "confirm"
 type ChatAreaScope = { kind: "regional" } | { kind: "province"; code: string }
 type AreaClarification = { question: string; step: "scope" | "province" }
 type AssessmentDraft = {
@@ -53,7 +59,10 @@ type AssessmentDraft = {
   cashReserve: number | null
   reserveSkipped: boolean
   totalPrincipal: number | null
+  principalSkipped?: boolean
   annualRate: number | null
+  rateSkipped?: boolean
+  pendingLowRate?: number | null
   horizonYears: number | null
   debtStatus: DebtStatusKey | null
   impactTags: string[]
@@ -130,7 +139,16 @@ function findProvinceCode(text: string): string | undefined {
 }
 
 function needsAreaScope(text: string): boolean {
-  return /เศรษฐกิจ|รายได้|ท่องเที่ยว|เข้าพัก|ฝน|ฝุ่น|pm\s*2\.5|อากาศ|สารพิษ|สารหนู|มลพิษ|น้ำท่วม|ข่าว|economic|revenue|tourism|occupancy|rain|weather|air quality|haze|pollution|arsenic|toxin|flood|news/i.test(text)
+  const hasExplicitAreaMetric =
+    /เศรษฐกิจ|รายได้(?:จังหวัด|ท่องเที่ยว|พื้นที่|ภาค)|ท่องเที่ยว|อัตราเข้าพัก|เข้าพัก|ฝน|ฝุ่น|pm\s*2\.5|คุณภาพอากาศ|อากาศ|สารพิษ|สารหนู|มลพิษ|น้ำท่วม|ข่าว|สถานการณ์จังหวัด|economic|(?:provincial|tourism|local)\s+revenue|tourism|occupancy|rain|weather|air quality|haze|pollution|arsenic|toxin|flood|news|local conditions/i.test(
+      text,
+    )
+  if (!hasExplicitAreaMetric) return false
+  const isPurePersonalDebtPrep =
+    /(ถ้ารายได้ลด|เมื่อรายได้ลด|ถ้ารายได้สะดุด|เตรียมตัวยังไง|วางแผนยังไง|คุยกับเจ้าหนี้|ประเมินภาระหนี้|prepare if income|plan if income|talk to my lender|check my debt)/i.test(
+      text,
+    ) && !/จังหวัด|ภาคเหนือ|ท่องเที่ยว|เข้าพัก|ฝน|ฝุ่น|pm\s*2\.5|อากาศ|สารพิษ|สารหนู|มลพิษ|น้ำท่วม|ข่าว|province|northern|tourism|occupancy|rain|weather|haze|pollution|flood|news/i.test(text)
+  return !isPurePersonalDebtPrep
 }
 
 function asksNorthernOverview(text: string): boolean {
@@ -143,10 +161,10 @@ function nextAssessmentStep(data: AssessmentDraft): AssessmentStep {
   if (data.monthlyDebt == null) return "debt"
   if (data.monthlyExpenses == null && !data.expensesSkipped) return "expenses"
   if (data.cashReserve == null && !data.reserveSkipped) return "reserve"
-  if (data.totalPrincipal == null) return "principal"
-  if (data.annualRate == null) return "rate"
-  if (data.horizonYears == null) return "horizon"
+  if (data.totalPrincipal == null && !data.principalSkipped) return "principal"
+  if (data.annualRate == null && !data.rateSkipped) return "rate"
   if (!data.debtStatus) return "status"
+  if (data.horizonYears == null) return "horizon"
   if (data.returnToConfirm) return "confirm"
   return "impact"
 }
@@ -164,8 +182,9 @@ function assessmentQuestion(step: AssessmentStep, province: string, lang: "th" |
   if (step === "expenses") return lang === "th" ? "ค่าใช้จ่ายจำเป็นต่อเดือนประมาณเท่าไหร่ครับ เช่น ค่าเช่า อาหาร ค่าน้ำไฟ ถ้าไม่ทราบเลือกข้ามได้ครับ" : "About how much are your essential monthly expenses? Skip if unsure."
   if (step === "reserve") return lang === "th" ? "มีเงินสำรองที่ใช้ได้ตอนนี้ประมาณเท่าไหร่ครับ? ถ้าไม่ทราบเลือกข้ามได้ครับ" : "How much accessible savings do you have? Skip if unsure."
   if (step === "principal") return lang === "th" ? "ยอดเงินต้นหนี้คงเหลือรวมประมาณเท่าไหร่ครับ? ถ้าไม่ทราบเลือกข้ามได้ครับ" : "What is the approximate total outstanding principal? Skip if unsure."
-  if (step === "rate") return lang === "th" ? "ดอกเบี้ยสัญญาเดิมประมาณกี่เปอร์เซ็นต์ต่อปีครับ? ถ้าไม่ทราบ ระบบจะใช้สมมติฐานตามประเภทหนี้และระบุให้เห็นครับ" : "What is the approximate annual interest rate? Skip if unsure; any estimate will be labeled."
-  if (step === "horizon") return lang === "th" ? "อยากดูตัวอย่างแผนผ่อนกี่ปีครับ เลือก 3, 5 หรือ 10 ปีได้ครับ" : "What repayment horizon should I illustrate? Choose 3, 5, or 10 years."
+  if (step === "rate") return lang === "th" ? "ดอกเบี้ยสัญญาเดิมประมาณกี่เปอร์เซ็นต์ต่อปีครับ? (เช่น 15 สำหรับ 15% ต่อปี) ถ้าไม่ทราบ ระบบจะใช้สมมติฐานตามประเภทหนี้และระบุให้เห็นครับ" : "What is the approximate annual interest rate (e.g., 15 for 15% p.a.)? Skip if unsure; any estimate will be labeled."
+  if (step === "rate_low_confirm") return lang === "th" ? "ตัวเลขดอกเบี้ยที่กรอกต่ำกว่า 1% ต่อปี ตั้งใจระบุเป็นเปอร์เซ็นต์ตามนี้จริง ๆ หรือหมายถึงคูณ 100 (เช่น 0.15 = 15% ต่อปี) ครับ?" : "The rate entered is under 1% p.a. Did you mean that exact percentage, or 100x higher (e.g., 0.15 = 15% p.a.)?"
+  if (step === "horizon") return lang === "th" ? "อยากดูตัวอย่างแผนผ่อนกี่ปีครับ เลือกจำนวนปีด้านล่างได้เลย" : "What repayment horizon should I illustrate? Choose a number of years below."
   if (step === "status") return lang === "th" ? "ตอนนี้สถานะหนี้ใกล้เคียงข้อไหนครับ? เลือกตามจริงเพื่อให้ตัวอย่างมาตรการตรงขึ้น" : "Which option best describes your current debt status?"
   if (step === "impact") return lang === "th" ? "มีเหตุที่กระทบรายได้หรือการจ่ายหนี้เป็นพิเศษไหมครับ? เลือกข้อที่ใกล้เคียง หรือข้ามได้" : "Has anything affected your income or debt payments? Choose an option or skip."
   if (step === "confirm") return lang === "th" ? "ขอทวนข้อมูลก่อนคำนวณครับ" : "Please confirm your information before I calculate."
@@ -249,6 +268,23 @@ function followUpsFor(question: string, answer: string, lang: "th" | "en"): stri
     : ["Help me check my debt burden", "Ask about support programs"]
 }
 
+function subscribeNoop() {
+  return () => {}
+}
+
+function getSpeechInputSupported() {
+  const browserWindow = window as WindowWithSpeech
+  return Boolean(browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition)
+}
+
+function getSpeechOutputSupported() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window
+}
+
+function getServerFalse() {
+  return false
+}
+
 export function CTA({ fullPage = false }: { fullPage?: boolean }) {
   const { lang, selectedProvinceCode } = useAppState()
   const [isOpen, setIsOpen] = useState(fullPage)
@@ -261,17 +297,15 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
   const [areaClarification, setAreaClarification] = useState<AreaClarification | null>(null)
   const [areaProvinceDraft, setAreaProvinceDraft] = useState(selectedProvinceCode || "CM")
   const [listening, setListening] = useState(false)
-  const [speechSupported, setSpeechSupported] = useState(false)
-  const [speechOutputSupported, setSpeechOutputSupported] = useState(false)
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
+  const router = useRouter()
+  const speechSupported = useSyncExternalStore(subscribeNoop, getSpeechInputSupported, getServerFalse)
+  const speechOutputSupported = useSyncExternalStore(subscribeNoop, getSpeechOutputSupported, getServerFalse)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(2)
   const speechRef = useRef<SpeechRecognitionLike | null>(null)
-
-  useEffect(() => {
-    setMessages((curr) => (curr.length === 1 && curr[0].id === 1 ? [greetingFor(lang)] : curr))
-  }, [lang])
+  const displayedMessages = messages.length === 1 && messages[0].id === 1 ? [greetingFor(lang)] : messages
 
   useEffect(() => {
     if (isOpen) inputRef.current?.focus()
@@ -280,12 +314,6 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
   }, [messages, sending, assessment, followUps])
-
-  useEffect(() => {
-    const browserWindow = window as WindowWithSpeech
-    setSpeechSupported(Boolean(browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition))
-    setSpeechOutputSupported("speechSynthesis" in window && "SpeechSynthesisUtterance" in window)
-  }, [])
 
   useEffect(
     () => () => {
@@ -296,7 +324,11 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
   )
 
   function addMessage(message: Omit<ChatMessage, "id">) {
-    setMessages((curr) => [...curr, { ...message, id: nextId.current++ }])
+    setMessages((curr) =>
+      curr.length === 1 && curr[0].id === 1
+        ? [greetingFor(lang), { ...message, id: nextId.current++ }]
+        : [...curr, { ...message, id: nextId.current++ }],
+    )
   }
 
   function startAssessment(promptText?: string) {
@@ -365,34 +397,43 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
       const incomeVal = data.monthlyIncome ?? 0
       const debtVal = data.monthlyDebt ?? 0
       const principalVal = data.totalPrincipal ?? 0
+      const isSme = data.businessType !== "household"
       const hasPaidDebt = debtVal > 0
       const hasPrincipalWithZeroPay = !hasPaidDebt && principalVal > 0
       const zeroIncomeNoPayments = incomeVal === 0 && debtVal === 0 && principalVal === 0
-      const diagnostic = data.monthlyExpenses != null && data.cashReserve != null && !data.expensesSkipped && !data.reserveSkipped
+      const hasExpenses = data.monthlyExpenses != null && !data.expensesSkipped
+      const hasReserve = data.cashReserve != null && !data.reserveSkipped
+      const diagnostic = hasExpenses
         ? computeFinancialDiagnostic({
-            isSme: data.businessType !== "household",
+            isSme,
             monthlyRevenue: incomeVal,
-            monthlyOpex: data.monthlyExpenses,
+            monthlyOpex: data.monthlyExpenses ?? 0,
             monthlyDebt: debtVal,
-            cashReserve: data.cashReserve,
+            cashReserve: hasReserve ? (data.cashReserve ?? 0) : 0,
             stressDropPct: 30,
           })
         : null
-      const loan = data.debtStatus
+      const loan = data.debtStatus && data.debtStatus !== "overdue_120_plus"
         ? buildLoanComparison({
             status: data.debtStatus,
-            isSme: data.businessType !== "household",
+            isSme,
             monthlyRevenue: incomeVal,
             monthlyDebt: debtVal,
             totalPrincipalInput: principalVal,
-            ...(data.annualRate != null ? { customAnnualRatePct: data.annualRate } : {}),
-            borrowerAge: 40,
+            ...(data.annualRate != null && data.annualRate > 0 ? { customAnnualRatePct: data.annualRate } : {}),
+            borrowerAge: 0,
             clinicMonths: (data.horizonYears ?? 5) * 12,
             deferMonths: 6,
             customHorizonYears: data.horizonYears ?? 5,
             lang,
           })
         : null
+      const matchedPrograms = matchOfficialPrograms({
+        status: data.debtStatus ?? "current",
+        isSme,
+        dscr: diagnostic?.dscr ?? null,
+        dsrPct: incomeVal > 0 && hasPaidDebt ? Number(((debtVal / incomeVal) * 100).toFixed(1)) : null,
+      })
 
       const estPay = loan?.originalMonthlyPayment ?? 0
       const estDsrPct = estPay > 0 && incomeVal > 0 ? Number(((estPay / incomeVal) * 100).toFixed(1)) : null
@@ -423,13 +464,49 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
 
       const baselinePaymentLabelTh = hasPaidDebt ? "ค่างวดเดิมที่ใช้เปรียบเทียบ" : "ค่างวดมาตรฐานประมาณการจากเงินต้น"
       const baselinePaymentLabelEn = hasPaidDebt ? "baseline payment" : "estimated standard payment from principal"
+      const cashflowNoteTh = diagnostic
+        ? `เงินเหลือหลังหักค่าใช้จ่ายจำเป็นและค่างวด: ${money(diagnostic.netMonthlyCashflow, "th")}/เดือน · ${hasReserve ? `เงินสำรองคิดเป็น ${diagnostic.runwayTotalMonths == null ? "คำนวณระยะเวลาไม่ได้" : `${diagnostic.runwayTotalMonths} เดือน`}` : "ระยะเวลาเงินสำรอง: ยังคำนวณไม่ได้เนื่องจากไม่ได้ระบุเงินสำรอง"} · หากรายรับลดลง 30% เงินเหลือจะเป็น ${money(diagnostic.stressedNetMonthlyCashflow, "th")}/เดือน`
+        : "ยังสรุปเงินเหลือหลังหักค่าใช้จ่ายจำเป็นไม่ได้ เนื่องจากไม่ได้ระบุค่าใช้จ่ายจำเป็น"
+      const cashflowNoteEn = diagnostic
+        ? `Monthly cash flow after essential expenses and debt: ${money(diagnostic.netMonthlyCashflow, "en")}/month · ${hasReserve ? `Reserve runway: ${diagnostic.runwayTotalMonths == null ? "not available" : `${diagnostic.runwayTotalMonths} months`}` : "Reserve runway: not calculated because savings were skipped"} · With a 30% income reduction: ${money(diagnostic.stressedNetMonthlyCashflow, "en")}/month`
+        : "Post-expense cash flow is unavailable because essential expenses were not provided"
+      const loanNoteTh = data.debtStatus === "overdue_120_plus"
+        ? !isSme
+          ? "\nกรณีค้างชำระเกิน 4 เดือน (120 วัน): แนะนำตรวจสอบสิทธิ์ตรงกับ คลินิกแก้หนี้ by SAM (โทร 1443 สำหรับหนี้เสียไม่มีหลักประกัน ดอกเบี้ย 3–5% ต่อปี ผ่อนสูงสุด 10 ปี) หรือ โครงการปิดหนี้ไว ไปต่อได้ (หนี้เสียรวมทุกแห่งไม่เกิน 100,000 บาท โทร 1213 หรือ 1443 กด 6)"
+          : "\nกรณีค้างชำระเกิน 4 เดือน (กิจการ): แนะนำติดต่อสถาบันการเงินเจ้าหนี้โดยตรงเพื่อขอปรับโครงสร้างหนี้ตามความสามารถในการชำระจริง (หลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบ 2568 เอกสารแนบ 7)"
+        : loan
+          ? `\nตัวอย่างจำลอง ${loan.horizonYears} ปี: ${baselinePaymentLabelTh} ${money(loan.originalMonthlyPayment, "th")}/เดือน · เงินต้น ${loan.usesEstimatedPrincipal ? `ประมาณ ${money(loan.principalUsed, "th")} (ประเมินจากค่างวดเดิมภายใต้สมมติฐานเหลือ ${loan.estimatedPrincipalMonths} งวด)` : money(loan.principalUsed, "th")} · ดอกเบี้ยอ้างอิง ${formatRatePct(loan.originalRatePct)}% ต่อปี${loan.usesAssumedRate ? " (สมมติฐาน ไม่ใช่อัตราจริงในสัญญา)" : ""}\n${loan.policyTitleTh} · ค่างวดตัวอย่างปีแรก ${money(loan.policyYear1Payment, "th")}/เดือน\n${loan.ruleCaptionTh}`
+          : "\nยังทำตัวอย่างแผนผ่อนไม่ได้จากข้อมูลยอดหนี้หรือค่างวดที่ระบุ"
+      const loanNoteEn = data.debtStatus === "overdue_120_plus"
+        ? !isSme
+          ? "\nFor unsecured personal NPLs overdue > 4 months (120 days): verify eligibility directly with Debt Clinic by SAM (call 1443; 3–5% p.a. up to 10 years) or Clear Debt Move Forward (combined NPLs <= 100,000 THB; call 1213 or 1443 ext. 6)."
+          : "\nFor business loans overdue > 4 months: contact your lender directly to request capacity-based restructuring under Responsible Lending 2568 (Annex 7)."
+        : loan
+          ? `\nIllustrative ${loan.horizonYears}-year comparison: ${baselinePaymentLabelEn} ${money(loan.originalMonthlyPayment, "en")}/month · principal ${loan.usesEstimatedPrincipal ? `estimated at ${money(loan.principalUsed, "en")} from payment (assuming ${loan.estimatedPrincipalMonths} remaining months)` : money(loan.principalUsed, "en")} · reference rate ${formatRatePct(loan.originalRatePct)}% p.a.${loan.usesAssumedRate ? " (assumption, not your contract rate)" : ""}\n${loan.policyTitleEn} · illustrative year-one payment ${money(loan.policyYear1Payment, "en")}/month\n${loan.ruleCaptionEn}`
+          : "\nAn illustrative repayment comparison could not be calculated from the principal/payment provided"
+      const matchedProgramsBlockTh = matchedPrograms.length > 0
+        ? `\n\nช่องทางและมาตรการที่ตรงกับข้อมูลเบื้องต้น:\n${matchedPrograms.map((prog, idx) => `${idx + 1}. ${prog.title_th} — ${prog.benefit_th}`).join("\n")}`
+        : ""
+      const matchedProgramsBlockEn = matchedPrograms.length > 0
+        ? `\n\nMatched official channels and frameworks:\n${matchedPrograms.map((prog, idx) => `${idx + 1}. ${prog.title_en} — ${prog.benefit_en}`).join("\n")}`
+        : ""
+      const ragGuidanceBlockTh = !res.policy_guidance.was_refused && res.policy_guidance.answer_text
+        ? `\n\nข้อมูลอ้างอิงจากเอกสารทางการ:\n${res.policy_guidance.answer_text}`
+        : res.policy_guidance.was_refused
+          ? "\n\nรอบนี้ยังหาเอกสารมาตรการที่ตรงกับข้อมูลไม่พบ จึงยังสรุปรายละเอียดหรือสิทธิ์เพิ่มเติมจากเอกสารไม่ได้"
+          : ""
+      const ragGuidanceBlockEn = !res.policy_guidance.was_refused && res.policy_guidance.answer_text
+        ? `\n\nGrounded official document guidance:\n${res.policy_guidance.answer_text}`
+        : res.policy_guidance.was_refused
+          ? "\n\nI could not find a source that directly matches this case, so I cannot summarize additional document terms."
+          : ""
       const calculationNote = lang === "th"
-        ? `\n\n${diagnostic ? `เงินเหลือหลังหักค่าใช้จ่ายจำเป็นและค่างวด: ${money(diagnostic.netMonthlyCashflow, "th")}/เดือน · เงินสำรองคิดเป็น ${diagnostic.runwayTotalMonths == null ? "คำนวณระยะเวลาไม่ได้" : `${diagnostic.runwayTotalMonths} เดือน`} · หากรายรับลดลง 30% เงินเหลือจะเป็น ${money(diagnostic.stressedNetMonthlyCashflow, "th")}/เดือน` : `ยังสรุปเงินเหลือและระยะเวลาที่เงินสำรองรองรับไม่ได้ เนื่องจาก${data.expensesSkipped ? "ไม่ได้ระบุค่าใช้จ่ายจำเป็น" : "ไม่ได้ระบุเงินสำรอง"}`}${loan ? `\nตัวอย่างจำลอง ${loan.horizonYears} ปี: ${baselinePaymentLabelTh} ${money(loan.originalMonthlyPayment, "th")}/เดือน · เงินต้น ${loan.usesEstimatedPrincipal ? `ประมาณ ${money(loan.principalUsed, "th")} (ประเมินจากค่างวด)` : money(loan.principalUsed, "th")} · ดอกเบี้ยอ้างอิง ${loan.originalRatePct.toFixed(1)}% ต่อปี${loan.usesAssumedRate ? " (สมมติฐาน ไม่ใช่อัตราจริงในสัญญา)" : ""}\n${loan.policyTitleTh} · ค่างวดตัวอย่างปีแรก ${money(loan.policyYear1Payment, "th")}/เดือน\n${loan.ruleCaptionTh}` : "\nยังทำตัวอย่างแผนผ่อนไม่ได้จากข้อมูลยอดหนี้หรือค่างวดที่ระบุ"}${hasPrincipalWithZeroPay ? "\nหมายเหตุ: ค่างวดจำลองนี้คำนวณจากเงินต้น ดอกเบี้ย และระยะเวลา ไม่ใช่ยอดที่แจ้งว่าจ่ายอยู่ในปัจจุบัน" : ""}\nตัวเลขเป็นการจำลองเบื้องต้น ไม่ใช่การยืนยันสิทธิหรือข้อเสนอจากเจ้าหนี้`
-        : `\n\n${diagnostic ? `Monthly cash flow after essential expenses and debt: ${money(diagnostic.netMonthlyCashflow, "en")}/month · Reserve runway: ${diagnostic.runwayTotalMonths == null ? "not available" : `${diagnostic.runwayTotalMonths} months`} · With a 30% income reduction: ${money(diagnostic.stressedNetMonthlyCashflow, "en")}/month` : `Cash flow and reserve runway are unavailable because ${data.expensesSkipped ? "essential expenses were not provided" : "savings were not provided"}`}${loan ? `\nIllustrative ${loan.horizonYears}-year comparison: ${baselinePaymentLabelEn} ${money(loan.originalMonthlyPayment, "en")}/month · principal ${loan.usesEstimatedPrincipal ? `estimated at ${money(loan.principalUsed, "en")} from payment` : money(loan.principalUsed, "en")} · reference rate ${loan.originalRatePct.toFixed(1)}% p.a.${loan.usesAssumedRate ? " (assumption, not your contract rate)" : ""}\n${loan.policyTitleEn} · illustrative year-one payment ${money(loan.policyYear1Payment, "en")}/month\n${loan.ruleCaptionEn}` : "An illustrative repayment comparison could not be calculated from the principal/payment provided"}${hasPrincipalWithZeroPay ? "\nNote: this simulated payment uses principal, rate, and term; it is not the current payment you reported." : ""}\nThis is an estimate, not confirmation of eligibility or a lender offer.`
+        ? `\n\n${cashflowNoteTh}${loanNoteTh}${hasPrincipalWithZeroPay ? "\nหมายเหตุ: ค่างวดจำลองนี้คำนวณจากเงินต้น ดอกเบี้ย และระยะเวลา ไม่ใช่ยอดที่แจ้งว่าจ่ายอยู่ในปัจจุบัน" : ""}\nตัวเลขเป็นการจำลองเบื้องต้น ไม่ใช่การยืนยันสิทธิหรือข้อเสนอจากเจ้าหนี้${matchedProgramsBlockTh}${ragGuidanceBlockTh}`
+        : `\n\n${cashflowNoteEn}${loanNoteEn}${hasPrincipalWithZeroPay ? "\nNote: this simulated payment uses principal, rate, and term; it is not the current payment you reported." : ""}\nThis is an estimate, not confirmation of eligibility or a lender offer.${matchedProgramsBlockEn}${ragGuidanceBlockEn}`
       const answer = normalizeCurrencyLabels(
         lang === "th"
-          ? `ผลประเมินเบื้องต้นของ${provinceLabel(data.province, "th")}\n${dsrBlockTh}${zeroIncomeNoPayments ? "\n\nรายรับและค่างวดเป็น 0 ทั้งคู่ จึงยังสรุปความสามารถชำระหนี้จากอัตราส่วนนี้ไม่ได้" : ""}${calculationNote}${res.policy_guidance.was_refused ? "\n\nรอบนี้ยังหาเอกสารมาตรการที่ตรงกับข้อมูลไม่พบ จึงยังสรุปรายละเอียดหรือสิทธิ์ไม่ได้" : ""}`
-          : `Preliminary check for ${provinceLabel(data.province, "en")}\n${dsrBlockEn}${zeroIncomeNoPayments ? "\n\nBoth income and payments are zero, so this ratio cannot establish affordability." : ""}${calculationNote}${res.policy_guidance.was_refused ? "\n\nI could not find a source that directly matches this case, so I cannot summarize specific terms or eligibility." : ""}`
+          ? `ผลประเมินเบื้องต้นของ${provinceLabel(data.province, "th")}\n${dsrBlockTh}${zeroIncomeNoPayments ? "\n\nรายรับและค่างวดเป็น 0 ทั้งคู่ จึงยังสรุปความสามารถชำระหนี้จากอัตราส่วนนี้ไม่ได้" : ""}${calculationNote}`
+          : `Preliminary check for ${provinceLabel(data.province, "en")}\n${dsrBlockEn}${zeroIncomeNoPayments ? "\n\nBoth income and payments are zero, so this ratio cannot establish affordability." : ""}${calculationNote}`
       )
       const summaryKeyPoint = hasPaidDebt
         ? (lang === "th"
@@ -442,12 +519,18 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
           : (lang === "th"
             ? `รายรับ ${money(incomeVal, "th")} · ยังไม่มีค่างวดรายเดือนที่ระบุ`
             : `Income ${money(incomeVal, "en")} · no monthly debt payment specified`)
+      const ragKeyPoints = !res.policy_guidance.was_refused ? (res.policy_guidance.key_points ?? []).slice(0, 3) : []
       addMessage({
         role: "assistant",
         text: answer,
-        keyPoints: [summaryKeyPoint],
+        keyPoints: [summaryKeyPoint, ...ragKeyPoints],
         citations: res.policy_guidance.citations,
         wasRefused: res.policy_guidance.was_refused,
+        feedback: {
+          modelUsed: "relief_check_rag",
+          topVectorSim: res.policy_guidance.top_vector_sim ?? 0,
+          wasRefused: res.policy_guidance.was_refused,
+        },
       })
       setAssessment(null)
       setFollowUps(lang === "th"
@@ -518,10 +601,34 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
 
   function chooseDebtStatus(status: DebtStatusKey, label: string) {
     if (!assessment) return
-    const next = { ...assessment, debtStatus: status, step: "impact" as const }
+    const clampedHorizon =
+      status === "persistent" && assessment.horizonYears != null && assessment.horizonYears > 7
+        ? 7
+        : assessment.horizonYears
+    const next: AssessmentDraft = {
+      ...assessment,
+      debtStatus: status,
+      horizonYears: clampedHorizon,
+      step: "horizon",
+    }
+    next.step = nextAssessmentStep(next)
     setAssessment(next)
     addMessage({ role: "user", text: label })
-    addMessage({ role: "assistant", text: lang === "th" ? "มีเหตุที่กระทบรายได้หรือการจ่ายหนี้เพิ่มเติมไหมครับ? เลือกได้ หรือเลือกไม่มีเหตุพิเศษ" : "Has anything else affected income or payments? Choose an option, or none." })
+    addMessage({
+      role: "assistant",
+      text:
+        next.step === "confirm"
+          ? buildConfirmationMessage(next)
+          : next.step === "horizon"
+            ? status === "persistent"
+              ? lang === "th"
+                ? "สำหรับมาตรการปิดจบหนี้เรื้อรัง เลือกระยะเวลาจำลองได้สูงสุด 7 ปีครับ (เลือก 3, 5 หรือ 7 ปี)"
+                : "For Persistent Debt exit, choose an illustrative horizon up to 7 years (3, 5, or 7 years)."
+              : assessmentQuestion("horizon", next.province, lang)
+            : lang === "th"
+              ? "มีเหตุที่กระทบรายได้หรือการจ่ายหนี้เพิ่มเติมไหมครับ? เลือกได้ หรือเลือกไม่มีเหตุพิเศษ"
+              : "Has anything else affected income or payments? Choose an option, or none.",
+    })
   }
 
   function handleAssessmentText(prompt: string) {
@@ -621,6 +728,35 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
       }
       return
     }
+    if (assessment.step === "rate_low_confirm") {
+      const lowVal = assessment.pendingLowRate ?? 0.15
+      const scaledVal = Number((lowVal * 100).toFixed(2))
+      if (/^(ข้าม|ไม่ทราบ|ไม่แน่ใจ|skip|unknown|not sure)$/i.test(value)) {
+        const next: AssessmentDraft = { ...assessment, annualRate: 0, rateSkipped: true, pendingLowRate: null, step: "status" }
+        next.step = nextAssessmentStep(next)
+        setAssessment(next)
+        addMessage({ role: "user", text: lang === "th" ? "ข้าม ใช้สมมติฐาน" : "Skip, use assumption" })
+        addMessage({ role: "assistant", text: advancePromptMessage(next) })
+        return
+      }
+      const typedNum = parseAmount(value)
+      if (typedNum != null && typedNum > 0 && typedNum <= 36) {
+        const next: AssessmentDraft = { ...assessment, annualRate: typedNum, rateSkipped: false, pendingLowRate: null, step: "status" }
+        next.step = nextAssessmentStep(next)
+        setAssessment(next)
+        addMessage({ role: "user", text: `${formatRatePct(typedNum)}% ${lang === "th" ? "ต่อปี" : "p.a."}` })
+        addMessage({ role: "assistant", text: advancePromptMessage(next) })
+        return
+      }
+      addMessage({
+        role: "assistant",
+        text:
+          lang === "th"
+            ? `กรุณาเลือก "${formatRatePct(lowVal)}% ต่อปี" หรือ "${formatRatePct(scaledVal)}% ต่อปี" หรือพิมพ์ตัวเลขใหม่ (ไม่เกิน 36%) ครับ`
+            : `Please choose "${formatRatePct(lowVal)}% p.a." or "${formatRatePct(scaledVal)}% p.a.", or enter a rate up to 36%.`,
+      })
+      return
+    }
     const optionalSteps: AssessmentStep[] = ["expenses", "reserve", "principal", "rate"]
     if (optionalSteps.includes(assessment.step)) {
       const skipped = /^(ข้าม|ไม่ทราบ|ไม่แน่ใจ|skip|unknown|not sure)$/i.test(value)
@@ -634,30 +770,76 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
         addMessage({ role: "assistant", text: lang === "th" ? "ดอกเบี้ยที่กรอกสูงเกินช่วงที่ระบบจำลองได้ กรุณาระบุไม่เกิน 36% ต่อปี หรือเลือกข้ามครับ" : "The rate is above the supported simulation range. Enter up to 36% p.a. or skip." })
         return
       }
+      if (assessment.step === "rate" && !skipped && amount != null && amount > 0 && amount < 1) {
+        const scaled = Number((amount * 100).toFixed(2))
+        const next: AssessmentDraft = { ...assessment, pendingLowRate: amount, step: "rate_low_confirm" }
+        setAssessment(next)
+        addMessage({ role: "user", text: `${amount}` })
+        addMessage({
+          role: "assistant",
+          text:
+            lang === "th"
+              ? `คุณกรอก ${formatRatePct(amount)} ซึ่งต่ำกว่า 1% ต่อปี ตั้งใจระบุ ${formatRatePct(amount)}% ต่อปีจริง ๆ หรือหมายถึง ${formatRatePct(scaled)}% ต่อปีครับ? เลือกปุ่มด้านล่างหรือพิมพ์ตัวเลขใหม่ได้เลย`
+              : `You entered ${formatRatePct(amount)}, which is under 1% p.a. Did you mean ${formatRatePct(amount)}% p.a. or ${formatRatePct(scaled)}% p.a.? Choose below or type a new rate.`,
+        })
+        return
+      }
       const fields = { expenses: "monthlyExpenses", reserve: "cashReserve", principal: "totalPrincipal", rate: "annualRate" } as const
       const field = fields[assessment.step as keyof typeof fields]
-      const next = { ...assessment, [field]: amount, ...(assessment.step === "expenses" ? { expensesSkipped: skipped } : {}), ...(assessment.step === "reserve" ? { reserveSkipped: skipped } : {}), step: "income" as AssessmentStep }
+      const next: AssessmentDraft = {
+        ...assessment,
+        [field]: amount,
+        ...(assessment.step === "expenses" ? { expensesSkipped: skipped } : {}),
+        ...(assessment.step === "reserve" ? { reserveSkipped: skipped } : {}),
+        ...(assessment.step === "principal" ? { principalSkipped: skipped } : {}),
+        ...(assessment.step === "rate" ? { rateSkipped: skipped, pendingLowRate: null } : {}),
+        step: "income",
+      }
       next.step = nextAssessmentStep(next)
       setAssessment(next)
       const userReplyText = skipped
         ? (lang === "th" ? "ข้าม" : "Skip")
         : assessment.step === "rate"
-          ? `${amount}% ${lang === "th" ? "ต่อปี" : "p.a."}`
+          ? `${formatRatePct(amount ?? 0)}% ${lang === "th" ? "ต่อปี" : "p.a."}`
           : money(amount ?? 0, lang)
       addMessage({ role: "user", text: userReplyText })
       addMessage({ role: "assistant", text: advancePromptMessage(next) })
       return
     }
     if (assessment.step === "horizon") {
+      const maxYears = assessment.debtStatus === "persistent" ? 7 : 30
       const years = parseAmount(value)
-      if (years == null || years < 1 || years > 30) {
-        addMessage({ role: "assistant", text: lang === "th" ? "เลือกระยะเวลา 3, 5 หรือ 10 ปี หรือพิมพ์ 1–30 ปีครับ" : "Choose 3, 5, or 10 years, or enter 1–30 years." })
+      if (years == null || years < 1 || years > maxYears) {
+        addMessage({
+          role: "assistant",
+          text:
+            assessment.debtStatus === "persistent"
+              ? lang === "th"
+                ? "สำหรับมาตรการปิดจบหนี้เรื้อรัง เลือกระยะเวลาได้ 1–7 ปี (เช่น 3, 5 หรือ 7 ปี) ตามหลักเกณฑ์ ธปท. ครับ"
+                : "For Persistent Debt exit, choose between 1 and 7 years (e.g., 3, 5, or 7 years) under BOT rules."
+              : lang === "th"
+                ? "เลือกระยะเวลา 3, 5 หรือ 10 ปี หรือพิมพ์ 1–30 ปีครับ"
+                : "Choose 3, 5, or 10 years, or enter 1–30 years.",
+        })
         return
       }
-      const next = { ...assessment, horizonYears: years, step: "status" as const }
+      const next: AssessmentDraft = {
+        ...assessment,
+        horizonYears: years,
+        step: assessment.returnToConfirm ? "confirm" : "impact",
+      }
+      if (!assessment.returnToConfirm) next.step = nextAssessmentStep(next)
       setAssessment(next)
       addMessage({ role: "user", text: `${years} ${lang === "th" ? "ปี" : "years"}` })
-      addMessage({ role: "assistant", text: assessmentQuestion("status", next.province, lang) })
+      addMessage({
+        role: "assistant",
+        text:
+          next.step === "confirm"
+            ? buildConfirmationMessage(next)
+            : lang === "th"
+              ? "มีเหตุที่กระทบรายได้หรือการจ่ายหนี้เพิ่มเติมไหมครับ? เลือกได้ หรือเลือกไม่มีเหตุพิเศษ"
+              : "Has anything else affected income or payments? Choose an option, or none.",
+      })
     }
   }
 
@@ -752,12 +934,33 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
         dataSources: res.data_sources,
         piiRedacted: res.pii_redacted_count,
         wasRefused: res.was_refused,
+        feedback: { modelUsed: res.model_used, topVectorSim: res.top_vector_sim, wasRefused: res.was_refused },
       })
       if (!res.was_refused) setFollowUps(followUpsFor(prompt, res.answer_text, lang))
     } catch (err) {
       addMessage({ role: "assistant", text: formatFetchError(err, lang) })
     } finally {
       setSending(false)
+    }
+  }
+
+  async function rateChatAnswer(messageId: number, rating: "helpful" | "inaccurate") {
+    const message = messages.find((item) => item.id === messageId)
+    if (!message?.feedback || message.feedback.sent) return
+    try {
+      await submitChatFeedback({
+        rating,
+        reason_tag: rating === "inaccurate" ? "wrong_fact" : undefined,
+        language: lang,
+        model_used: message.feedback.modelUsed,
+        top_vector_sim: message.feedback.topVectorSim,
+        was_refused: message.feedback.wasRefused,
+      })
+      setMessages((current) => current.map((item) => item.id === messageId && item.feedback
+        ? { ...item, feedback: { ...item.feedback, sent: true } }
+        : item))
+    } catch {
+      // Keep the chat usable when the optional feedback endpoint is unavailable.
     }
   }
 
@@ -790,7 +993,7 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
   function handleSuggestion(prompt: string) {
     if (/เปิดเครื่องคำนวณละเอียด|open detailed calculator/i.test(prompt)) {
       if (fullPage) {
-        window.location.assign("/#relief-assistant")
+        router.push("/#relief-assistant")
         return
       }
       setIsOpen(false)
@@ -919,7 +1122,7 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
             </div>
 
             <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" aria-live="polite">
-              {messages.map((message) => (
+              {displayedMessages.map((message) => (
                 <div key={message.id} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
                   <div className={`max-w-[92%] whitespace-pre-line rounded-2xl px-3.5 py-3 text-sm leading-6 ${message.role === "user" ? "bg-foreground text-background" : "bg-secondary text-foreground"}`}>
                     {message.text}
@@ -948,6 +1151,19 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
                       {message.dataSources.map((source, index) => source.source_url
                         ? <a key={`${source.title}-${index}`} href={source.source_url} target="_blank" rel="noreferrer" className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-[10px] leading-4 text-foreground hover:bg-secondary"><span className="max-w-[230px] truncate">{source.title}</span><ExternalLink aria-hidden="true" className="size-2.5 shrink-0" /></a>
                         : <span key={`${source.title}-${index}`} className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-[10px] leading-4 text-muted-foreground"><span className="max-w-[230px] truncate">{source.title}</span></span>)}
+                    </div>
+                  )}
+                  {message.feedback && (
+                    <div className="mt-1 flex items-center gap-1" aria-label={lang === "th" ? "ประเมินคำตอบ" : "Rate this answer"}>
+                      {message.feedback.sent ? (
+                        <span className="px-2 text-[11px] text-muted-foreground">{lang === "th" ? "ขอบคุณสำหรับความเห็น" : "Thanks for the feedback"}</span>
+                      ) : (
+                        <>
+                          <span className="px-2 text-[11px] text-muted-foreground">{lang === "th" ? "คำตอบนี้ช่วยได้ไหม" : "Was this helpful?"}</span>
+                          <button type="button" onClick={() => void rateChatAnswer(message.id, "helpful")} aria-label={lang === "th" ? "คำตอบมีประโยชน์" : "Helpful answer"} className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"><ThumbsUp aria-hidden="true" className="size-4" /></button>
+                          <button type="button" onClick={() => void rateChatAnswer(message.id, "inaccurate")} aria-label={lang === "th" ? "คำตอบคลาดเคลื่อน" : "Inaccurate answer"} className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"><ThumbsDown aria-hidden="true" className="size-4" /></button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -986,9 +1202,20 @@ export function CTA({ fullPage = false }: { fullPage?: boolean }) {
                   {assessment.step === "reserve" && <button type="button" onClick={() => handleAssessmentText("ข้าม")} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "ข้าม ไม่ทราบตัวเลข" : "Skip, not sure"}</button>}
                   {assessment.step === "principal" && <button type="button" onClick={() => handleAssessmentText("ข้าม")} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "ข้าม ไม่ทราบยอด" : "Skip, not sure"}</button>}
                   {assessment.step === "rate" && <button type="button" onClick={() => handleAssessmentText("ข้าม")} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "ข้าม ใช้สมมติฐาน" : "Skip, use assumption"}</button>}
-                  {assessment.step === "horizon" && [3, 5, 10].map((years) => <button key={years} type="button" onClick={() => handleAssessmentText(String(years))} className="min-h-11 rounded-full border border-border px-3 text-sm">{years} {lang === "th" ? "ปี" : "years"}</button>)}
+                  {assessment.step === "rate_low_confirm" && (() => {
+                    const lowVal = assessment.pendingLowRate ?? 0.15
+                    const scaledVal = Number((lowVal * 100).toFixed(2))
+                    return (
+                      <>
+                        <button type="button" onClick={() => handleAssessmentText(String(scaledVal))} className="min-h-11 rounded-full bg-foreground px-3.5 text-sm font-medium text-background hover:opacity-90">{lang === "th" ? `ใช้ ${formatRatePct(scaledVal)}% ต่อปี` : `Use ${formatRatePct(scaledVal)}% p.a.`}</button>
+                        <button type="button" onClick={() => handleAssessmentText(String(lowVal))} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? `ยืนยัน ${formatRatePct(lowVal)}% ต่อปี` : `Keep ${formatRatePct(lowVal)}% p.a.`}</button>
+                        <button type="button" onClick={() => handleAssessmentText("ข้าม")} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "ข้าม ใช้สมมติฐาน" : "Skip, use assumption"}</button>
+                      </>
+                    )
+                  })()}
+                  {assessment.step === "horizon" && (assessment.debtStatus === "persistent" ? [3, 5, 7] : [3, 5, 10]).map((years) => <button key={years} type="button" onClick={() => handleAssessmentText(String(years))} className="min-h-11 rounded-full border border-border px-3 text-sm">{years} {lang === "th" ? "ปี" : "years"}</button>)}
                   {assessment.step === "status" && <><button type="button" onClick={() => chooseDebtStatus("current", lang === "th" ? "ยังชำระตรงเวลา" : "Current")} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "ยังชำระตรงเวลา" : "Current"}</button><button type="button" onClick={() => chooseDebtStatus("persistent", lang === "th" ? "หนี้เรื้อรัง" : "Persistent debt")} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "หนี้เรื้อรัง" : "Persistent debt"}</button><button type="button" onClick={() => chooseDebtStatus("overdue_31_120", lang === "th" ? "ค้างชำระ 1–4 เดือน" : "1–4 months overdue")} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "ค้างชำระ 1–4 เดือน" : "1–4 months overdue"}</button><button type="button" onClick={() => chooseDebtStatus("overdue_120_plus", lang === "th" ? "ค้างเกิน 4 เดือน" : "Over 4 months overdue")} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "ค้างเกิน 4 เดือน" : "Over 4 months overdue"}</button><button type="button" onClick={() => chooseDebtStatus("disaster", lang === "th" ? "ได้รับผลกระทบจากภัยพิบัติ" : "Disaster affected")} className="min-h-11 rounded-full border border-border px-3 text-sm">{lang === "th" ? "ได้รับผลกระทบจากภัยพิบัติ" : "Disaster affected"}</button></>}                  {assessment.step === "impact" && <><button type="button" onClick={() => chooseImpact([], lang === "th" ? "ไม่มีเหตุพิเศษ" : "No special impact")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "ไม่มีเหตุพิเศษ" : "None"}</button><button type="button" onClick={() => chooseImpact(["overdue_debt"], lang === "th" ? "มีหนี้ค้างชำระ" : "Overdue debt")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "หนี้ค้างชำระ" : "Overdue debt"}</button><button type="button" onClick={() => chooseImpact(["revenue_drop"], lang === "th" ? "รายได้ลดลง" : "Income has dropped")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "รายได้ลดลง" : "Income drop"}</button><button type="button" onClick={() => chooseImpact(["disaster"], lang === "th" ? "ได้รับผลกระทบจากภัยพิบัติ" : "Disaster impact")} className="min-h-11 rounded-full border border-border bg-background px-3 text-sm hover:bg-secondary">{lang === "th" ? "ภัยพิบัติ" : "Disaster"}</button></>}
-                  {assessment.step === "confirm" && <><button type="button" disabled={sending} onClick={() => void runAssessment(assessment)} className="min-h-11 rounded-full bg-foreground px-4 text-sm font-semibold text-background disabled:opacity-50">{lang === "th" ? "ถูกต้อง คำนวณได้เลย" : "Correct, calculate"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "province", returnToConfirm: true }); addMessage({ role: "assistant", text: lang === "th" ? "ได้ครับ พิมพ์จังหวัดที่ต้องการแก้ได้เลย" : "Sure. Type the province you want to change." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้จังหวัด" : "Edit province"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "income", returnToConfirm: true }); addMessage({ role: "assistant", text: lang === "th" ? "พิมพ์รายรับต่อเดือนที่ถูกต้องได้เลยครับ" : "Type the correct monthly income." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้รายรับ" : "Edit income"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "debt", debtSkipped: false, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("debt", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้ค่างวด" : "Edit debt payment"}</button><button type="button" onClick={() => { setAssessment(null); addMessage({ role: "assistant", text: lang === "th" ? "ยกเลิกการประเมินแล้วครับ ถ้าอยากเริ่มใหม่บอกได้เลย" : "Assessment cancelled. You can start again anytime." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm text-muted-foreground hover:bg-secondary">{lang === "th" ? "ยกเลิก" : "Cancel"}</button></>}
+                  {assessment.step === "confirm" && <><button type="button" disabled={sending} onClick={() => void runAssessment(assessment)} className="min-h-11 rounded-full bg-foreground px-4 text-sm font-semibold text-background disabled:opacity-50">{lang === "th" ? "ถูกต้อง คำนวณได้เลย" : "Correct, calculate"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "province", returnToConfirm: true }); addMessage({ role: "assistant", text: lang === "th" ? "ได้ครับ พิมพ์จังหวัดที่ต้องการแก้ได้เลย" : "Sure. Type the province you want to change." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้จังหวัด" : "Edit province"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "income", returnToConfirm: true }); addMessage({ role: "assistant", text: lang === "th" ? "พิมพ์รายรับต่อเดือนที่ถูกต้องได้เลยครับ" : "Type the correct monthly income." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้รายรับ" : "Edit income"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "debt", debtSkipped: false, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("debt", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้ค่างวด" : "Edit debt payment"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "expenses", expensesSkipped: false, monthlyExpenses: null, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("expenses", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้ค่าใช้จ่าย/เงินสำรอง" : "Edit expenses/reserve"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "principal", principalSkipped: false, totalPrincipal: null, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("principal", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้เงินต้น" : "Edit principal"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "rate", rateSkipped: false, annualRate: null, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("rate", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้ดอกเบี้ย" : "Edit interest rate"}</button><button type="button" onClick={() => { setAssessment({ ...assessment, step: "status", debtStatus: null, returnToConfirm: true }); addMessage({ role: "assistant", text: assessmentQuestion("status", assessment.province, lang) }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm hover:bg-secondary">{lang === "th" ? "แก้สถานะหนี้/ระยะเวลา" : "Edit status/horizon"}</button><button type="button" onClick={() => { setAssessment(null); addMessage({ role: "assistant", text: lang === "th" ? "ยกเลิกการประเมินแล้วครับ ถ้าอยากเริ่มใหม่บอกได้เลย" : "Assessment cancelled. You can start again anytime." }) }} className="min-h-11 rounded-full border border-border bg-background/90 px-3 text-sm text-muted-foreground hover:bg-secondary">{lang === "th" ? "ยกเลิก" : "Cancel"}</button></>}
                   {assessment.step !== "confirm" && (
                     <button
                       type="button"

@@ -1,38 +1,18 @@
 import type { Metadata, Viewport } from "next"
-import { IBM_Plex_Sans_Thai, Inter, Space_Grotesk } from "next/font/google"
 import { AppProviders } from "@/app/providers"
 
 import "./globals.css"
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-})
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  display: "swap",
-})
-
-const ibmPlexThai = IBM_Plex_Sans_Thai({
-  subsets: ["thai", "latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-thai",
-  display: "swap",
-})
-
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://northrisk-analytics.vercel.app"
-const pageTitle = "NorthRisk Analytics | ระบบวิเคราะห์ความเสี่ยงภาคบริการภาคเหนือและมาตรการทางการเงิน"
+const pageTitle = "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ | NorthRisk Analytics"
 const pageDescription =
-  "ระบบติดตามภาวะเศรษฐกิจภาคบริการ ความเปราะบางด้านหนี้สิน 17 จังหวัดภาคเหนือ และผู้ช่วยนำทางมาตรการทางการเงินจากเอกสารทางการ"
+  "เครื่องมือประเมินภาระหนี้ จำลองค่างวด ติดตามภาวะเศรษฐกิจ 17 จังหวัดภาคเหนือ และผู้ช่วยแนะนำมาตรการทางการเงินจากเอกสารทางการ"
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
     default: pageTitle,
-    template: "%s | NorthRisk Analytics",
+    template: "%s | วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ",
   },
   description: pageDescription,
   keywords: [
@@ -57,7 +37,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "th_TH",
     url: siteUrl,
-    siteName: "NorthRisk Analytics",
+    siteName: "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ (NorthRisk Analytics)",
     title: pageTitle,
     description: pageDescription,
     images: [
@@ -65,7 +45,7 @@ export const metadata: Metadata = {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "NorthRisk Analytics regional economic pulse and financial resilience",
+        alt: "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ | NorthRisk Analytics",
       },
     ],
   },
@@ -115,11 +95,9 @@ export default function RootLayout({
   return (
     <html lang="th" dir="ltr">
       <head>
-        <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body
-        className={`${inter.variable} ${spaceGrotesk.variable} ${ibmPlexThai.variable} font-sans antialiased`}
+        className="font-sans antialiased"
       >
         <AppProviders>{children}</AppProviders>
       </body>

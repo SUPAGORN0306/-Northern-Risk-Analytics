@@ -1,6 +1,6 @@
 {
-  "catalog_version": "2026-11-23",
-  "verified_on": "2026-11-23",
+  "catalog_version": "2026-11-25",
+  "verified_on": "2026-11-25",
   "max_age_days": 45,
   "programs": [
     {
@@ -37,7 +37,7 @@
       "debt_statuses": ["overdue_120_plus"],
       "title_th": "คลินิกแก้หนี้ by SAM",
       "title_en": "Debt Clinic by SAM",
-      "summary_th": "ช่องทางตรวจสอบคุณสมบัติสำหรับหนี้เสียไม่มีหลักประกันของบุคคล",
+      "summary_th": "ช่องทางตรวจสอบคุณสมบัติสำหรับหนี้เสียไม่มีหลักประกันของบุคคลธรรมดา",
       "summary_en": "Eligibility channel for qualifying unsecured personal NPLs.",
       "source_doc_ids": ["debt_doctor_8steps_clinic"],
       "source_url": "https://www.debtclinicbysam.com/"
@@ -46,12 +46,12 @@
       "id": "clear_debt",
       "status": "ongoing_conditional",
       "application_status": "check_eligibility",
-      "audiences": ["individual", "sme"],
+      "audiences": ["individual"],
       "debt_statuses": ["overdue_120_plus"],
       "title_th": "โครงการปิดหนี้ไว ไปต่อได้",
       "title_en": "Clear Debt, Move Forward",
-      "summary_th": "ช่องทางตรวจสอบสิทธิสำหรับลูกหนี้หนี้เสียรายย่อยตามเกณฑ์โครงการ",
-      "summary_en": "Eligibility channel for retail NPL borrowers meeting the program criteria.",
+      "summary_th": "ช่องทางตรวจสอบสิทธิสำหรับลูกหนี้รายย่อยบุคคลธรรมดาที่มีหนี้เสียตามเกณฑ์โครงการ",
+      "summary_en": "Eligibility channel for individual retail NPL borrowers meeting the program criteria.",
       "source_doc_ids": ["cleardebt_faq_2569"],
       "source_url": "https://www.bot.or.th/th/cleardebt.html"
     },
@@ -66,7 +66,7 @@
       "summary_th": "กรอบสินเชื่อที่ต้องเป็นไปตามคุณสมบัติและผลิตภัณฑ์ที่ผู้ให้กู้เปิดใช้ ไม่ใช่สิทธิสมัครได้อัตโนมัติ",
       "summary_en": "A lending framework subject to eligibility and each lender's active product; not automatic enrollment.",
       "source_doc_ids": ["smes_secure_plus_2569"],
-      "source_url": "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2569/ThaiPDF/25690073.pdf"
+      "source_url": "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2569/ThaiPDF/25690074.pdf"
     },
     {
       "id": "sme_credit_guarantee",
@@ -80,6 +80,19 @@
       "summary_en": "Products and applications depend on active schemes and lender/TCG underwriting.",
       "source_doc_ids": [],
       "source_url": "https://www.tcg.or.th/"
+    },
+    {
+      "id": "debt_relief_energy",
+      "status": "lender_dependent",
+      "application_status": "verify_with_lender",
+      "audiences": ["individual", "sme"],
+      "debt_statuses": ["current", "overdue_31_120"],
+      "title_th": "แนวทางช่วยเหลือลูกหนี้ที่ได้รับผลกระทบจากภาวะเศรษฐกิจและราคาพลังงาน",
+      "title_en": "Relief Guideline for Economic and Energy Cost Impacts",
+      "summary_th": "แนวทางให้สถาบันการเงินพิจารณาปรับลดค่างวดหรือขยายเวลาชำระตามผลกระทบต้นทุนและรายได้ของลูกหนี้",
+      "summary_en": "Guidance for lenders to consider installment reductions or term extensions for borrowers hit by cost or income pressure.",
+      "source_doc_ids": ["debt_relief_energy_2569"],
+      "source_url": "https://www.bot.or.th/content/dam/bot/documents/th/news-and-media/news/2026/news-20260408.pdf"
     },
     {
       "id": "disaster_relief",

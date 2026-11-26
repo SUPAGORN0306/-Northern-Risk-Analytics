@@ -5,12 +5,12 @@ const eslintConfig = [
   ...nextVitals,
   ...nextTypescript,
   {
-    ignores: [".next/**", "node_modules/**", "out/**", "build/**", "next-env.d.ts"],
+    ignores: ["**/.next/**", "**/node_modules/**", "**/out/**", "**/build/**", "next-env.d.ts", "public/**"],
   },
   {
     rules: {
       // Data-fetching effects legitimately update UI state after requests complete.
-      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/set-state-in-effect": "off",
       "@typescript-eslint/no-explicit-any": "warn",
     },
   },

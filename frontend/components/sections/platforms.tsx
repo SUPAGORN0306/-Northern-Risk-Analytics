@@ -79,7 +79,7 @@ export function RiskOutlook({
   const [canScrollNewsLeft, setCanScrollNewsLeft] = useState(false)
   const [canScrollNewsRight, setCanScrollNewsRight] = useState(false)
 
-  const provinces = outlook?.provinces ?? []
+  const provinces = useMemo(() => outlook?.provinces ?? [], [outlook?.provinces])
   const selectedItem = useMemo(
     () =>
       provinces.find((p) => p.province_code === selectedProvinceCode) ??
@@ -401,8 +401,8 @@ export function RiskOutlook({
         ]
 
   const summary = outlook?.regional_summary
-  const newsItems = outlook?.recent_verified_news ?? []
-  const tierGroups = outlook?.vulnerability_tiers ?? []
+  const newsItems = useMemo(() => outlook?.recent_verified_news ?? [], [outlook?.recent_verified_news])
+  const tierGroups = useMemo(() => outlook?.vulnerability_tiers ?? [], [outlook?.vulnerability_tiers])
 
   const isProvinceNews = (detail?.verified_news?.length ?? 0) > 0
   const displayedNews = useMemo(() => {
@@ -581,8 +581,8 @@ export function RiskOutlook({
             </h2>
             <p className="mt-2.5 text-sm leading-6 text-muted-foreground">
               {lang === "th"
-                ? "กดเลือกจังหวัดบนแผนที่ เพื่อดูว่าช่วงเดือนไหนลูกค้าเงียบ หรือมีฝุ่นและฝนหนัก จะได้วางแผนกันเงินสำรองและตั้งค่างวดไม่ให้ตึงมือเกินไป"
-                : "Select any province to see slow months, haze or rainfall peaks, and household debt benchmarks so you can plan cash reserves safely."}
+                ? "เลือกจังหวัดเพื่อดูข้อมูลฤดูกาล ฝุ่น ฝน และสถิติหนี้ระดับพื้นที่ ใช้ประกอบการเตรียมเงินสำรองและวางแผนได้ แต่ไม่ใช่การประเมินรายรับหรือค่างวดที่เหมาะกับแต่ละคน"
+                : "Select a province to view seasonal, air, rainfall, and area-level debt data. Use it as planning context; it does not assess an individual's income or suitable payment."}
             </p>
           </div>
         </motion.div>
@@ -711,7 +711,7 @@ export function RiskOutlook({
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {lang === "th"
                   ? `จังหวัดที่ควรเฝ้าระวังเป็นพิเศษ: ${shockProvinceNames.join(", ")} (ตรวจสอบข่าวอ้างอิงจริงและเกณฑ์มาตรการด้านล่าง)`
-                  : `Provinces under active alert: ${shockProvinceNames.join(", ")} (inspect verified field reports and relief playbook below).`}
+                  : `Provinces with active system alerts: ${shockProvinceNames.join(", ")} (review screened event reports and guidance below).`}
               </p>
             </div>
           </div>
@@ -1074,34 +1074,34 @@ export function RiskOutlook({
                         </div>
                         <span className="rounded-full bg-background px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
                           {lang === "th"
-                            ? `สัญญาณระดับจังหวัด ${selectedItem.vulnerability_score ?? 0}/100`
-                            : `Provincial Signal ${selectedItem.vulnerability_score ?? 0}/100`}
+                            ? `ดัชนีคัดกรองจังหวัด ${selectedItem.vulnerability_score ?? 0}/100`
+                            : `Provincial Screening Index ${selectedItem.vulnerability_score ?? 0}/100`}
                         </span>
                       </div>
 
                       <p className="mt-2 rounded-xl border border-border/70 bg-background px-3 py-2 text-xs leading-5 text-foreground">
-                        <strong>{lang === "th" ? "ความหมายต่อการวางแผนของคุณ: " : "What this means for you: "}</strong>
+                        <strong>{lang === "th" ? "สัญญาณภาพรวมจังหวัด: " : "Provincial context: "}</strong>
                         {selectedItem.vulnerability_tier === 1
                           ? lang === "th"
-                            ? "พื้นที่นี้มีทั้งภาระหนี้และรายจ่ายสูงหรือมีแรงกดดันจากภัยพื้นที่ ควรรีบกันเงินสำรองและเจรจาปรับค่างวดล่วงหน้าก่อนเริ่มค้างชำระ"
-                            : "High financial strain and local pressure. Build reserve cash and negotiate payment relief early before missing installments."
+                            ? "ข้อมูลจังหวัดเข้ากลุ่มสัญญาณเปราะบางสูงตามเกณฑ์โครงการ ใช้เป็นบริบทประกอบการวางแผน และตรวจสอบสถานการณ์รายบุคคลกับเจ้าหนี้โดยตรง"
+                            : "This province falls in the higher-vulnerability signal group under the project criteria. Use as planning context; discuss personal circumstances directly with your lender."
                           : selectedItem.vulnerability_tier === 2
                             ? lang === "th"
-                              ? "รายได้ในพื้นที่แกว่งแรงตามฤดูกาล ฝุ่น หรือฝนตกหนัก ควรคุมค่างวดให้อยู่ในระดับที่จ่ายไหวแม้ในช่วงลูกค้าเงียบ"
-                              : "Income swings strongly with seasons, haze, or rainfall. Keep monthly debt payments manageable during slow months."
+                              ? "ข้อมูลชี้ความอ่อนไหวต่อฤดูกาลหรือภัยตามเกณฑ์โครงการ ควรพิจารณารายรับและรายจ่ายจริงของตนก่อนตัดสินใจเรื่องหนี้"
+                              : "Data indicate seasonal or hazard sensitivity under project criteria. Consider your actual income and expenses before making debt decisions."
                             : selectedItem.vulnerability_tier === 3
                               ? lang === "th"
-                                ? "ภาพรวมยังพอไปได้แต่รายจ่ายเริ่มตึงมือ แนะนำติดตามต้นทุนและทบทวนหนี้ดอกเบี้ยสูงไม่ให้สะสมเพิ่ม"
-                                : "Manageable overall, though costs are tightening. Watch expenses and avoid adding high-interest debt."
+                                ? "สัญญาณอยู่ในกลุ่มเฝ้าระวังปานกลางตามเกณฑ์โครงการ ไม่ได้บอกความสามารถชำระหนี้ของบุคคลหรือกิจการใดโดยเฉพาะ"
+                                : "This falls in the project's moderate-watch group and does not indicate any individual's or business's repayment capacity."
                               : lang === "th"
-                                ? "ภาพรวมจังหวัดยังมีสภาพคล่องค่อนข้างดี เหมาะแก่การทยอยออมเงินสำรองและโปะหนี้ดอกเบี้ยสูงให้หมดไวขึ้น"
-                                : "Provincial liquidity is relatively resilient. Good window to build savings and pay down high-interest loans."}
+                                ? "สัญญาณเปราะบางอยู่ในระดับต่ำตามเกณฑ์โครงการ แต่ไม่ควรใช้แทนข้อมูลรายรับ รายจ่าย หรือภาระหนี้ของแต่ละราย"
+                                : "Vulnerability signals are lower under the project criteria; this does not replace an individual's income, expenses, or debt information."}
                       </p>
 
                       <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
                         {lang === "th"
-                          ? "หมายเหตุ: คะแนนและระดับข้างต้นคำนวณจากค่าเฉลี่ยสถิติทางการระดับจังหวัดเพื่อเฝ้าระวังภาพรวม ไม่ใช่การประเมินเครดิตของบุคคลหรือกิจการใดเป็นการเฉพาะ"
-                          : "Note: This tier reflects provincial statistical averages for macro surveillance, not an individual credit assessment."}
+                          ? "หมายเหตุ: คะแนนข้างต้นเป็นดัชนีคัดกรองเชิงพรรณนาจากสถิติสำรวจระดับจังหวัด (เช่น สสช. SFD_SPB0801 และ กทก.) เพื่อดูบริบทภาพรวม ไม่ใช่ความน่าจะเป็นผิดนัดชำระหนี้ และใช้แทนฐานะการเงินหรือการประเมินเครดิตของบุคคลหรือกิจการใดเป็นการเฉพาะไม่ได้"
+                          : "Note: This is a rule-based descriptive screening index derived from provincial open surveys (e.g., NSO SFD_SPB0801, MOTS) for macro context—not a calibrated default probability or individual credit assessment."}
                       </p>
 
                       {/* Drivers explaining why this province falls in this tier */}
@@ -1820,13 +1820,13 @@ export function RiskOutlook({
               <strong className="font-medium text-foreground">
                 {lang === "th" ? "ฝุ่นและปริมาณฝน:" : "Haze & Rain:"}
               </strong>{" "}
-              {lang === "th" ? "กรมควบคุมมลพิษและข้อมูลอากาศ (ปรับปรุงรายวัน)" : "PCD Air4Thai & Weather Data (Daily)"}
+                {lang === "th" ? "Air4Thai และ Open-Meteo (ตรวจวัน/ช่วงข้อมูลในแต่ละตัวชี้วัด)" : "Air4Thai & Open-Meteo (check the date or period shown for each indicator)"}
             </span>
           </div>
           <span className="text-[10px] text-muted-foreground">
             {lang === "th"
-              ? "คะแนนความเสี่ยงเป็นดัชนีสรุปจากข้อมูลเปิดภาครัฐเพื่อประกอบการวางแผน"
-              : "Risk scores synthesize open official datasets for planning support"}
+              ? "สัญญาณเปราะบางระดับจังหวัดตามเกณฑ์โครงการ ไม่ใช่ผลประเมินบุคคลหรือการยืนยันสิทธิ"
+              : "Project-defined provincial vulnerability signals; not an individual assessment or eligibility decision."}
           </span>
         </div>
 

@@ -14,6 +14,7 @@ venv/
 # Raw downloaded data
 backend/data/raw/*
 !backend/data/raw/.gitkeep
+backend/data/ocr_review/
 backend/reports/figures/*.png
 
 # Frontend

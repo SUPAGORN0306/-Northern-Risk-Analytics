@@ -209,6 +209,13 @@ export function NorthernThailandMap({
             <p className="mt-0.5 text-[10px] text-muted-foreground">
               {metricValueText(hoveredItem, metricMode, lang)}
             </p>
+            {metricMode === "cluster" && (
+              <p className="mt-1 text-[9px] leading-4 text-muted-foreground">
+                {lang === "th"
+                  ? "สัญญาณเปราะบางระดับจังหวัดตามเกณฑ์โครงการ ไม่ใช่ผลประเมินบุคคล"
+                  : "Project-defined provincial vulnerability signals, not an individual assessment."}
+              </p>
+            )}
             {hoveredItem.has_active_water_pollution && (
               <p className="mt-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800">
                 {lang === "th"
@@ -240,10 +247,10 @@ export function NorthernThailandMap({
         )}
         {metricMode === "cluster" && (
           <>
-            <LegendDot color="#e57373" label={lang === "th" ? "อันดับ 1 เปราะบางสูง" : "Tier 1 Critical"} />
-            <LegendDot color="#f5b87a" label={lang === "th" ? "อันดับ 2 เปราะบางต่อภัยและฤดูกาล" : "Tier 2 Hazard & Seasonal"} />
-            <LegendDot color="#93c5e8" label={lang === "th" ? "อันดับ 3 เฝ้าระวังปานกลาง" : "Tier 3 Moderate"} />
-            <LegendDot color="#7ec8a9" label={lang === "th" ? "อันดับ 4 คล่องตัว" : "Tier 4 Resilient"} />
+            <LegendDot color="#e57373" label={lang === "th" ? "ระดับ 1 สัญญาณเปราะบางสูง" : "Tier 1 · Higher vulnerability signals"} />
+            <LegendDot color="#f5b87a" label={lang === "th" ? "ระดับ 2 อ่อนไหวต่อภัยและฤดูกาล" : "Tier 2 · Hazard & seasonal sensitivity"} />
+            <LegendDot color="#93c5e8" label={lang === "th" ? "ระดับ 3 เฝ้าระวังตามเกณฑ์" : "Tier 3 · Moderate watch"} />
+            <LegendDot color="#7ec8a9" label={lang === "th" ? "ระดับ 4 สัญญาณเปราะบางต่ำ" : "Tier 4 · Lower vulnerability signals"} />
           </>
         )}
       </div>

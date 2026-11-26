@@ -42,6 +42,7 @@ export type LoanComparisonResult = {
   ruleCaptionEn: string
   principalUsed: number
   usesEstimatedPrincipal: boolean
+  estimatedPrincipalMonths: number
   originalRatePct: number
   usesAssumedRate: boolean
   policyRateLabel: string
@@ -63,41 +64,10 @@ export type LoanComparisonResult = {
   points: LoanCurvePoint[]
 }
 
-export type ParsedCsvSummary = {
-  monthsDetected: number
-  rowCount: number
-  avgMonthlyRevenue: number
-  avgMonthlyOpex: number
-  avgMonthlyDebt: number
-  estimatedCashReserve: number
+export function formatRatePct(rate: number): string {
+  const rounded2 = Math.round(rate * 100) / 100
+  return Number.isInteger(rounded2 * 10) ? rounded2.toFixed(1) : rounded2.toFixed(2)
 }
-
-export const SAMPLE_STATEMENT_CSV = `date,category,description,income,expense
-2026-08-05,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 1,42000,0
-2026-08-12,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 2,38000,0
-2026-08-20,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 3,45000,0
-2026-08-28,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 4,40000,0
-2026-08-03,opex,ค่าเช่าและสาธารณูปโภค,0,34000
-2026-08-15,opex,ค่าวัตถุดิบอาหารและเครื่องดื่ม,0,32000
-2026-08-30,opex,ค่าจ้างพนักงานประจำ,0,46000
-2026-08-28,debt,ค่างวดสินเชื่อธุรกิจ SME,0,42000
-2026-09-06,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 1,35000,0
-2026-09-14,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 2,34000,0
-2026-09-22,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 3,39000,0
-2026-09-29,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 4,37000,0
-2026-09-03,opex,ค่าเช่าและสาธารณูปโภค,0,33000
-2026-09-15,opex,ค่าวัตถุดิบอาหารและเครื่องดื่ม,0,29000
-2026-09-30,opex,ค่าจ้างพนักงานประจำ,0,46000
-2026-09-28,debt,ค่างวดสินเชื่อธุรกิจ SME,0,42000
-2026-10-05,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 1,41000,0
-2026-10-13,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 2,44000,0
-2026-10-21,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 3,42000,0
-2026-10-29,room_sales,ยอดขายห้องพักและคาเฟ่ สัปดาห์ที่ 4,43000,0
-2026-10-03,opex,ค่าเช่าและสาธารณูปโภค,0,34000
-2026-10-15,opex,ค่าวัตถุดิบอาหารและเครื่องดื่ม,0,31000
-2026-10-30,opex,ค่าจ้างพนักงานประจำ,0,46000
-2026-10-28,debt,ค่างวดสินเชื่อธุรกิจ SME,0,42000
-`
 
 export function calcAnnuityPayment(principal: number, annualRatePct: number, months: number): number {
   if (principal <= 0 || months <= 0) return 0
@@ -188,7 +158,6 @@ export function buildLoanComparison(params: {
   const {
     status,
     isSme,
-    monthlyRevenue,
     monthlyDebt,
     totalPrincipalInput,
     customAnnualRatePct,
@@ -209,7 +178,7 @@ export function buildLoanComparison(params: {
     : isSme ? 9.5
     : 10.5
 
-  const resolvedBaseRate = hasCustomRate ? Math.min(36.0, Math.max(0.5, customAnnualRatePct)) : defaultRatePct
+  const resolvedBaseRate = hasCustomRate ? Math.min(36.0, Math.max(0.01, Number(customAnnualRatePct.toFixed(2)))) : defaultRatePct
   const rEst = resolvedBaseRate / 100 / 12
   const estMonths = 48
   const estimatedPrincipal =
@@ -229,6 +198,9 @@ export function buildLoanComparison(params: {
   let mode: LoanComparisonResult["mode"] = "responsible_lending"
   let horizonMonths = userMonths
   const origRate = resolvedBaseRate
+  const origRateLabel = formatRatePct(origRate)
+  const pdCapRate = Math.min(15.0, origRate)
+  const reducedRlRate = origRate > 3.0 ? Math.max(3.0, Number((origRate - 2.0).toFixed(2))) : origRate
   let policyRateLabel = ""
   let policyTitleTh = ""
   let policyTitleEn = ""
@@ -236,11 +208,11 @@ export function buildLoanComparison(params: {
   let ruleCaptionEn = ""
 
   const rateSrcTh = hasCustomRate
-    ? `ตามอัตราดอกเบี้ยที่คุณกรอก ${origRate.toFixed(1)}% ต่อปี`
-    : `ภายใต้สมมติฐานดอกเบี้ยสัญญาเดิม ${origRate.toFixed(1)}% ต่อปี (ยังไม่ได้กรอกดอกเบี้ยจริง)`
+    ? `ตามอัตราดอกเบี้ยที่คุณกรอก ${origRateLabel}% ต่อปี`
+    : `ภายใต้สมมติฐานดอกเบี้ยสัญญาเดิม ${origRateLabel}% ต่อปี (ยังไม่ได้กรอกดอกเบี้ยจริง)`
   const rateSrcEn = hasCustomRate
-    ? `using your entered ${origRate.toFixed(1)}% p.a. rate`
-    : `under an assumed ${origRate.toFixed(1)}% p.a. baseline rate (actual contract rate not entered)`
+    ? `using your entered ${origRateLabel}% p.a. rate`
+    : `under an assumed ${origRateLabel}% p.a. baseline rate (actual contract rate not entered)`
 
   if (status === "overdue_120_plus" && !isSme) {
     mode = "debt_clinic"
@@ -263,11 +235,11 @@ export function buildLoanComparison(params: {
     mode = "persistent_5y"
     const pdMonths = Math.min(84, userMonths)
     horizonMonths = pdMonths
-    policyRateLabel = lang === "th" ? "ดอกเบี้ยไม่เกิน 15% (สูงสุด 7 ปี)" : "Max 15% (Up to 7 yrs)"
+    policyRateLabel = lang === "th" ? `ตัวอย่าง ${pdCapRate}%/ปี (เพดานไม่เกิน 15% · สูงสุด 7 ปี)` : `Illustrative ${pdCapRate}% p.a. (15% cap · up to 7 yrs)`
     policyTitleTh = `ตัวอย่างแผนปิดจบหนี้เรื้อรังภายในสูงสุด ${Math.round(pdMonths / 12)} ปี (เกณฑ์ปรับปรุง 1 ม.ค. 2568 · ดอกเบี้ยไม่เกิน 15%)`
     policyTitleEn = `Illustrative Persistent Debt Exit up to ${Math.round(pdMonths / 12)} Years (2025 Rule · Max 15% p.a.)`
-    ruleCaptionTh = `ประมาณการเปรียบเทียบ ${rateSrcTh} กับสินเชื่อผ่อนงวดดอกเบี้ยไม่เกิน 15% ปิดจบภายใน ${Math.round(pdMonths / 12)} ปี (เฉพาะสินเชื่อหมุนเวียนที่ยังไม่เป็นหนี้เสียและเข้าเกณฑ์รายได้ของธนาคารแห่งประเทศไทย)`
-    ruleCaptionEn = `Illustrative comparison ${rateSrcEn} against ${pdMonths} month payoff capped at 15% p.a. (revolving Non-NPL borrowers meeting BOT income criteria).`
+    ruleCaptionTh = `ตัวอย่างคำนวณที่ ${pdCapRate}% ต่อปี โดยอัตราจริงต้องไม่เกิน 15% และอาจต่ำกว่านี้ ผ่อน ${Math.round(pdMonths / 12)} ปี (สูงสุด 7 ปี) เฉพาะสินเชื่อบุคคลหมุนเวียนที่ยังไม่เป็นหนี้เสียและเข้าเกณฑ์รายได้ ไม่ใช่ข้อเสนออนุมัติจากเจ้าหนี้`
+    ruleCaptionEn = `Illustration calculated at ${pdCapRate}% p.a.; the actual rate is capped at 15% and may be lower. ${Math.round(pdMonths / 12)}-year term (up to 7 years), only for eligible non-NPL personal revolving credit. Not a lender offer or approval.`
   } else if (status === "disaster") {
     mode = "disaster_defer"
     horizonMonths = userMonths
@@ -279,26 +251,37 @@ export function buildLoanComparison(params: {
   } else if (isSme && status === "current") {
     mode = "sme_scenario"
     horizonMonths = userMonths
-    policyRateLabel = lang === "th" ? "ตัวอย่างพักดอกเบี้ย 2 ปี" : "Illustrative 2yr Interest Pause"
-    policyTitleTh = "ตัวอย่างจำลองลดค่างวดและพักดอกเบี้ยสำหรับกิจการ"
-    policyTitleEn = "Illustrative SME Payment Reduction and Interest Pause"
-    ruleCaptionTh = `แบบจำลองสมมติลดค่างวด 15% และพักดอกเบี้ย 24 เดือนแรก (${rateSrcTh}) เพื่อเทียบตัวเลขเท่านั้น ไม่ใช่มาตรการหรือเงื่อนไขที่เจ้าหนี้เสนอ`
-    ruleCaptionEn = `A comparison scenario assuming 15% lower payments and a 24-month interest pause (${rateSrcEn}); these are not program terms or a lender offer.`
+    policyRateLabel = lang === "th" ? "ไม่คิดดอกเบี้ย 24 เดือนแรก · หลังจากนั้น 6.5%/ปี" : "No interest first 24 months · 6.5% p.a. after"
+    policyTitleTh = "ตัวอย่างจำลองลดค่างวดและไม่คิดดอกเบี้ยช่วงแรกสำหรับกิจการ"
+    policyTitleEn = "Illustrative SME Payment Reduction and Initial Interest Waiver"
+    ruleCaptionTh = `ตัวอย่างนี้สมมติลดค่างวด 15% ไม่คิดดอกเบี้ยใน 24 เดือนแรก (ไม่ได้ทบไปคิดย้อนหลัง) และคิด 6.5% ต่อปีตั้งแต่เดือนที่ 25 โดยใช้อัตราเดิม ${origRateLabel}% เป็นฐานเปรียบเทียบ ตัวเลขนี้ไม่ใช่มาตรการหรือข้อเสนอจากเจ้าหนี้`
+    ruleCaptionEn = `This illustration assumes 15% lower payments, no interest charged in the first 24 months (not deferred for later collection), then 6.5% p.a. from month 25. The ${origRateLabel}% assumed/entered rate is the comparison baseline. These are not lender terms or an offer.`
   } else {
     mode = "responsible_lending"
     horizonMonths = userMonths
-    policyRateLabel = lang === "th" ? "ตัวอย่างลดดอกเบี้ย 2%" : "Illustrative -2% Rate"
+    const rateCutPct = Number((origRate - reducedRlRate).toFixed(2))
+    policyRateLabel =
+      rateCutPct > 0
+        ? lang === "th"
+          ? `ตัวอย่างลดดอกเบี้ย ${formatRatePct(rateCutPct)}%`
+          : `Illustrative -${formatRatePct(rateCutPct)}% Rate`
+        : lang === "th"
+          ? "ตัวอย่างขยายงวดผ่อน (คงดอกเบี้ยเดิม)"
+          : "Illustrative Term Extension (Same Rate)"
     policyTitleTh = "ตัวอย่างสถานการณ์ปรับโครงสร้างหนี้เชิงป้องกันก่อนเป็นหนี้เสีย (หลักเกณฑ์ปี 2568)"
     policyTitleEn = "Illustrative Pre Emptive Restructuring Scenario (Responsible Lending 2568)"
-    ruleCaptionTh = `ประมาณการปรับลดค่างวดและอัตราดอกเบี้ย (${rateSrcTh}) เพื่อใช้ประกอบการเจรจากับเจ้าหนี้ ไม่ใช่ข้อผูกพันอนุมัติ`
-    ruleCaptionEn = `Illustrative payment and rate reduction (${rateSrcEn}) to support lender negotiation, not an approval guarantee.`
+    ruleCaptionTh =
+      rateCutPct > 0
+        ? `ประมาณการปรับลดค่างวดและอัตราดอกเบี้ยเหลือ ${formatRatePct(reducedRlRate)}% ต่อปี (${rateSrcTh}) เพื่อใช้ประกอบการเจรจากับเจ้าหนี้ ไม่ใช่ข้อผูกพันอนุมัติ`
+        : `ประมาณการปรับลดค่างวดจากการจัดตารางผ่อน ${Math.round(horizonMonths / 12)} ปี โดยคงอัตราดอกเบี้ยเดิม (${rateSrcTh}) เพื่อใช้ประกอบการเจรจากับเจ้าหนี้ ไม่ใช่ข้อผูกพันอนุมัติ`
+    ruleCaptionEn =
+      rateCutPct > 0
+        ? `Illustrative payment and rate reduction to ${formatRatePct(reducedRlRate)}% p.a. (${rateSrcEn}) to support lender negotiation, not an approval guarantee.`
+        : `Illustrative payment adjustment over ${Math.round(horizonMonths / 12)} years at your existing rate (${rateSrcEn}) to support lender negotiation, not an approval guarantee.`
   }
 
   const origMonthlyPay = monthlyDebt > 0 ? monthlyDebt : Math.round(calcAnnuityPayment(principal, origRate, horizonMonths))
   const origR = origRate / 100 / 12
-  const reducedRlRate = Math.max(3.0, Number((origRate - 2.0).toFixed(2)))
-  const pdCapRate = Math.min(15.0, origRate)
-
   let policyY1Pay = origMonthlyPay
   let policyY2Pay = origMonthlyPay
   let policyY3Pay = origMonthlyPay
@@ -495,6 +478,7 @@ export function buildLoanComparison(params: {
     ruleCaptionEn,
     principalUsed: Math.round(principal),
     usesEstimatedPrincipal,
+    estimatedPrincipalMonths: estMonths,
     originalRatePct: origRate,
     usesAssumedRate: !hasCustomRate,
     policyRateLabel,
@@ -517,85 +501,11 @@ export function buildLoanComparison(params: {
   }
 }
 
-export function parseStatementCsv(csvText: string): ParsedCsvSummary | null {
-  const cleaned = csvText.replace(/^\uFEFF/, "").trim()
-  const lines = cleaned.split(/\r?\n/).filter((l) => l.trim().length > 0)
-  if (lines.length < 2) return null
-
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase())
-  const dateIdx = headers.findIndex((h) => ["date", "วันที่", "month", "เดือน"].some((k) => h.includes(k)))
-  const catIdx = headers.findIndex((h) => ["category", "หมวด", "type", "ประเภท"].some((k) => h.includes(k)))
-  const descIdx = headers.findIndex((h) => ["desc", "รายการ", "detail", "note"].some((k) => h.includes(k)))
-  const incIdx = headers.findIndex((h) => ["income", "credit", "รายรับ", "เงินเข้า", "ยอดขาย"].some((k) => h.includes(k)))
-  const expIdx = headers.findIndex((h) => ["expense", "debit", "รายจ่าย", "เงินออก"].some((k) => h.includes(k)))
-  const amtIdx = headers.findIndex((h) => ["amount", "จำนวนเงิน", "ยอดเงิน"].some((k) => h.includes(k)))
-
-  if (incIdx === -1 && expIdx === -1 && amtIdx === -1) return null
-
-  const months = new Set<string>()
-  let totalRev = 0
-  let totalOpex = 0
-  let totalDebt = 0
-  let parsedRows = 0
-
-  const debtKeywords = ["debt", "loan", "installment", "ค่างวด", "สินเชื่อ", "เงินกู้", "ผ่อน", "ธนาคาร"]
-
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""))
-    if (cols.length < 2) continue
-
-    const rawDate = dateIdx >= 0 ? cols[dateIdx] || "" : ""
-    const ymMatch = rawDate.match(/(\d{4})[-/](\d{1,2})/)
-    if (ymMatch) {
-      months.add(`${ymMatch[1]}-${ymMatch[2].padStart(2, "0")}`)
-    }
-
-    const catText = `${catIdx >= 0 ? cols[catIdx] || "" : ""} ${descIdx >= 0 ? cols[descIdx] || "" : ""}`.toLowerCase()
-    const isDebtRow = debtKeywords.some((kw) => catText.includes(kw))
-
-    const parseNum = (v: string | undefined) => {
-      if (!v) return 0
-      const n = Number(v.replace(/,/g, ""))
-      return Number.isFinite(n) ? n : 0
-    }
-
-    let incVal = incIdx >= 0 ? parseNum(cols[incIdx]) : 0
-    let expVal = expIdx >= 0 ? parseNum(cols[expIdx]) : 0
-
-    if (incIdx === -1 && expIdx === -1 && amtIdx >= 0) {
-      const a = parseNum(cols[amtIdx])
-      if (a >= 0) incVal = a
-      else expVal = Math.abs(a)
-    }
-
-    if (incVal > 0 || expVal > 0) {
-      parsedRows += 1
-      totalRev += incVal
-      if (isDebtRow) totalDebt += expVal
-      else totalOpex += expVal
-    }
-  }
-
-  if (parsedRows === 0) return null
-  const monthDiv = Math.max(1, months.size)
-  const avgRev = Math.round(totalRev / monthDiv)
-  const avgOpex = Math.round(totalOpex / monthDiv)
-  const avgDebt = Math.round(totalDebt / monthDiv)
-  const estReserve = Math.max(0, Math.round((avgRev - avgOpex - avgDebt) * 6 + avgOpex * 1.5))
-
-  return {
-    monthsDetected: monthDiv,
-    rowCount: parsedRows,
-    avgMonthlyRevenue: avgRev,
-    avgMonthlyOpex: avgOpex,
-    avgMonthlyDebt: avgDebt,
-    estimatedCashReserve: estReserve,
-  }
-}
-
 export type ScenarioComparisonItem = {
   id: string
   matchesStatus: boolean
+  principalBasisTh: string
+  principalBasisEn: string
   titleTh: string
   titleEn: string
   estimatedMonthlyTh: string
@@ -627,7 +537,7 @@ export function buildScenarioComparison(params: {
   const { status, isSme, monthlyDebt, totalPrincipalInput, customAnnualRatePct, horizonYears, deferMonths } = params
   const hasCustomRate = typeof customAnnualRatePct === "number" && Number.isFinite(customAnnualRatePct) && customAnnualRatePct > 0
   const baseRate = hasCustomRate
-    ? Math.min(36, Math.max(0.5, customAnnualRatePct))
+    ? Math.min(36, Math.max(0.01, Number(customAnnualRatePct.toFixed(2))))
     : status === "persistent"
       ? 25
       : status === "overdue_120_plus"
@@ -645,68 +555,86 @@ export function buildScenarioComparison(params: {
   if (principal <= 0) return []
 
   const extendMonths = Math.max(60, Math.min(120, Math.round(horizonYears * 12) + 24))
-  const extendPay = Math.round(calcAnnuityPayment(principal, Math.max(3, baseRate - 2), extendMonths))
+  const restructuredRate = baseRate > 3 ? Math.max(3, baseRate - 2) : baseRate
+  const extendPay = Math.round(calcAnnuityPayment(principal, restructuredRate, extendMonths))
   const gracePay = Math.round(principal * (baseRate / 100 / 12))
   const persistMonths = Math.min(84, Math.max(36, Math.round(horizonYears * 12)))
-  const persistPay = Math.round(calcAnnuityPayment(principal, Math.min(15, baseRate), persistMonths))
+  // Use the official 15% ceiling as the illustrative persistent-debt rate.
+  // The borrower's assumed contract rate is not the rate promised by this option.
+  const persistentRate = 15
+  const persistPay = Math.round(calcAnnuityPayment(principal, persistentRate, persistMonths))
   const clinicPay = Math.round(calcAnnuityPayment(principal, 4, 84))
+  const principalBasisTh = totalPrincipalInput > 0
+    ? `ใช้ยอดเงินต้นที่กรอก ${principal.toLocaleString()} บาท; อัตราและเงื่อนไขแต่ละแผนเป็นสมมติฐานเพื่อเปรียบเทียบ ไม่ใช่ข้อเสนอจากเจ้าหนี้`
+    : `ไม่ได้กรอกยอดเงินต้น จึงประเมิน ${principal.toLocaleString()} บาทจากค่างวด ${monthlyDebt.toLocaleString()} บาท โดยสมมติดอกเบี้ย ${baseRate}% ต่อปีและเหลือผ่อน 48 เดือน; ตัวเลขอาจคลาดเคลื่อนมาก`
+  const principalBasisEn = totalPrincipalInput > 0
+    ? `Uses the entered principal of ${principal.toLocaleString()} THB. Each plan's rate and terms are illustrative, not a lender offer.`
+    : `No principal was entered. Estimated ${principal.toLocaleString()} THB from a ${monthlyDebt.toLocaleString()} THB payment, assuming ${baseRate}% p.a. and 48 months remaining; actual figures may differ substantially.`
 
   return [
     {
       id: "restructure_extend",
       matchesStatus: status === "current" || status === "overdue_31_120",
+      principalBasisTh,
+      principalBasisEn,
       titleTh: "ขอปรับลดค่างวดหรือขยายงวดกับเจ้าหนี้เดิม",
       titleEn: "Adjust Installment or Extend Term with Current Lender",
-      estimatedMonthlyTh: `ราว ${extendPay.toLocaleString()} บาท/เดือน (ขยายเป็น ${Math.round(extendMonths / 12)} ปี)`,
-      estimatedMonthlyEn: `~${extendPay.toLocaleString()} THB/mo (${Math.round(extendMonths / 12)} yrs)`,
-      prosTh: "ลดภาระรายเดือนทันทีตั้งแต่ก่อนค้างชำระ และยังรักษาความสัมพันธ์กับเจ้าหนี้เดิมไว้ได้",
-      prosEn: "Lowers monthly burden early before delinquency while keeping your existing lender relationship.",
+      estimatedMonthlyTh: `ราว ${extendPay.toLocaleString()} บาท/เดือน (สมมติดอกเบี้ย ${restructuredRate}% · ${Math.round(extendMonths / 12)} ปี)`,
+      estimatedMonthlyEn: `~${extendPay.toLocaleString()} THB/mo (assumed ${restructuredRate}% · ${Math.round(extendMonths / 12)} yrs)`,
+      prosTh: "อาจช่วยลดค่างวดได้ หากเจ้าหนี้อนุมัติเงื่อนไขที่เหมาะกับความสามารถจ่าย",
+      prosEn: "May lower installments if the lender approves terms that fit your ability to pay.",
       tradeoffTh: "หากยืดระยะเวลาผ่อนนานขึ้น ยอดดอกเบี้ยสะสมตลอดสัญญาอาจสูงกว่าการผ่อนจบเร็ว",
       tradeoffEn: "Extending the term can increase total cumulative interest over the full loan life.",
-      creditImpactTh: "ไม่เสียประวัติหนี้เสียหากเจรจาปรับโครงสร้างก่อนค้างชำระเกินกำหนด",
-      creditImpactEn: "Avoids NPL status if restructured proactively before delinquency.",
+      creditImpactTh: "ผลต่อข้อมูลเครดิตขึ้นกับสถานะและวิธีรายงานของเจ้าหนี้ ควรถามก่อนตกลง",
+      creditImpactEn: "Credit reporting depends on your account status and lender reporting; ask before agreeing.",
     },
     {
       id: "disaster_defer",
       matchesStatus: status === "disaster",
+      principalBasisTh,
+      principalBasisEn,
       titleTh: `ขอพักชำระเงินต้นชั่วคราว (${deferMonths} เดือน)`,
       titleEn: `Temporary Principal Deferral (${deferMonths} Months)`,
-      estimatedMonthlyTh: `ราว ${gracePay.toLocaleString()} บาท/เดือน (จ่ายเฉพาะดอกเบี้ยช่วงพัก)`,
-      estimatedMonthlyEn: `~${gracePay.toLocaleString()} THB/mo (interest only during grace)`,
+      estimatedMonthlyTh: `ราว ${gracePay.toLocaleString()} บาท/เดือน (ดอกเบี้ยสมมติ ${baseRate}% · ${deferMonths} เดือน)`,
+      estimatedMonthlyEn: `~${gracePay.toLocaleString()} THB/mo (assumed ${baseRate}% · ${deferMonths} mos)`,
       prosTh: "เก็บเงินสดไว้หมุนเวียนและฟื้นตัวได้ทันทีในช่วงรายได้สะดุดจากภัยพิบัติหรือช่วงเงียบ",
       prosEn: "Frees immediate cashflow during hazard disruption or seasonal slowdowns.",
-      tradeoffTh: "เงินต้นและดอกเบี้ยรวมไม่ลดลง ต้องเตรียมแผนรับค่างวดที่กลับมาเต็มจำนวนหลังครบกำหนดพัก",
-      tradeoffEn: "Principal and total interest do not drop; payments return to full level after deferral ends.",
-      creditImpactTh: "ไม่บันทึกเป็นหนี้เสียหากยื่นคำขอและได้รับอนุมัติจากเจ้าหนี้ล่วงหน้า",
-      creditImpactEn: "Not recorded as NPL when approved in advance by your lender.",
+      tradeoffTh: "สมมติว่าจ่ายดอกเบี้ยระหว่างพัก เงินต้นจึงยังไม่ลด และค่างวดหลังพักต้องตกลงกับเจ้าหนี้ อาจสูงขึ้นหรือยืดเวลา",
+      tradeoffEn: "Assumes interest is paid during the pause, so principal does not fall. Agree on post-pause payments with the lender; they may rise or extend the term.",
+      creditImpactTh: "ผลต่อข้อมูลเครดิตขึ้นกับข้อตกลงและการรายงานของเจ้าหนี้ ให้ตรวจสอบก่อนเข้าร่วม",
+      creditImpactEn: "Credit reporting depends on the agreement and lender reporting; verify before joining.",
     },
     {
       id: "persistent_exit",
       matchesStatus: status === "persistent",
+      principalBasisTh,
+      principalBasisEn,
       titleTh: "เปลี่ยนหนี้หมุนเวียนเป็นผ่อนรายงวดปิดจบหนี้เรื้อรัง",
       titleEn: "Convert Revolving Debt to Fixed Payoff (Persistent Debt)",
-      estimatedMonthlyTh: `ราว ${persistPay.toLocaleString()} บาท/เดือน (ดอกเบี้ยไม่เกิน 15% · ${Math.round(persistMonths / 12)} ปี)`,
-      estimatedMonthlyEn: `~${persistPay.toLocaleString()} THB/mo (max 15% · ${Math.round(persistMonths / 12)} yrs)`,
-      prosTh: "กดเพดานดอกเบี้ยลงมากและมีกำหนดวันปิดหนี้ชัดเจน ไม่วนจ่ายแต่ดอกเบี้ยขั้นต่ำ",
-      prosEn: "Caps interest at 15% p.a. with a clear payoff date instead of endless minimum payments.",
-      tradeoffTh: "ต้องปิดวงเงินเดิมของสินเชื่อที่เข้าร่วม และจำกัดเฉพาะลูกหนี้ที่เข้าเกณฑ์รายได้และยังไม่เป็นหนี้เสีย",
-      tradeoffEn: "Requires closing the converted revolving credit line and meeting official income thresholds.",
-      creditImpactTh: "มีบันทึกการปรับเงื่อนไขหนี้เรื้อรังในประวัติข้อมูลเครดิต แต่ช่วยป้องกันการกลายเป็นหนี้เสีย",
-      creditImpactEn: "Recorded as persistent debt restructuring, but prevents severe NPL default.",
+      estimatedMonthlyTh: `ราว ${persistPay.toLocaleString()} บาท/เดือน (จำลองที่เพดาน 15% · ${Math.round(persistMonths / 12)} ปี)`,
+      estimatedMonthlyEn: `~${persistPay.toLocaleString()} THB/mo (illustrated at 15% cap · ${Math.round(persistMonths / 12)} yrs)`,
+      prosTh: "หากเข้าเกณฑ์ อาจเปลี่ยนหนี้หมุนเวียนเป็นผ่อนรายงวดและมีกรอบเวลาปิดหนี้",
+      prosEn: "If eligible, revolving debt may be converted to installments with a defined payoff period.",
+      tradeoffTh: "เฉพาะสินเชื่อส่วนบุคคลหมุนเวียนที่เข้าเกณฑ์และยังไม่เป็นหนี้เสีย; อัตราจริงไม่เกิน 15% และอาจต่ำกว่านี้ ไม่ใช่ทางเลือกสำหรับหนี้กิจการโดยตรง",
+      tradeoffEn: "Only for eligible non-NPL personal revolving credit. The actual rate is at most 15% and may be lower; this is not a direct business-debt option.",
+      creditImpactTh: "การปรับเงื่อนไขอาจปรากฏในข้อมูลเครดิต รายละเอียดขึ้นกับการรายงานของเจ้าหนี้ ควรถามก่อนเลือก",
+      creditImpactEn: "The restructuring may appear in credit data; details depend on lender reporting. Ask before choosing.",
     },
     {
       id: "debt_clinic",
       matchesStatus: status === "overdue_120_plus",
+      principalBasisTh,
+      principalBasisEn,
       titleTh: "รวมหนี้เสียไม่มีหลักประกันผ่านคลินิกแก้หนี้",
       titleEn: "Consolidate Unsecured NPL via Debt Clinic",
       estimatedMonthlyTh: `ราว ${clinicPay.toLocaleString()} บาท/เดือน (ตัวอย่างดอกเบี้ย 4% · 7 ปี)`,
       estimatedMonthlyEn: `~${clinicPay.toLocaleString()} THB/mo (sample 4% · 7 yrs)`,
       prosTh: "รวมหนี้บัตรเครดิตและสินเชื่อบุคคลหลายแห่งมาจ่ายที่เดียว ดอกเบี้ยผ่อนปรน 3 ถึง 5% ต่อปี",
       prosEn: "Combines multiple unsecured cards/loans into one low rate plan (3 to 5% p.a.).",
-      tradeoffTh: "เข้าเกณฑ์เฉพาะหนี้ไม่มีหลักประกันที่ค้างชำระเกิน 120 วันแล้ว และต้องงดก่อหนี้ใหม่ระหว่างผ่อน",
-      tradeoffEn: "Only for unsecured debt overdue >120 days; no new borrowing allowed during repayment.",
-      creditImpactTh: "แสดงสถานะกำลังปรับโครงสร้างหนี้เสียชั่วคราว และจะค่อยๆ ฟื้นเมื่อผ่อนครบตามสัญญา",
-      creditImpactEn: "Shows active NPL restructuring temporarily until the agreed schedule is completed.",
+      tradeoffTh: "สำหรับบุคคลธรรมดาที่มีหนี้ไม่มีหลักประกันและผ่านเกณฑ์โครงการเท่านั้น; ยอดจริงและเงื่อนไขให้ SAM ตรวจสอบ",
+      tradeoffEn: "For individuals with eligible unsecured debt only; SAM must verify the actual balance and eligibility.",
+      creditImpactTh: "เป็นการปรับโครงสร้างหนี้เสีย รายงานเครดิตเป็นไปตามสถานะบัญชีและเงื่อนไขโครงการ ควรถาม SAM ก่อนสมัคร",
+      creditImpactEn: "This restructures NPL debt; credit reporting follows account status and program terms. Confirm with SAM before applying.",
     },
   ]
 }
@@ -974,14 +902,11 @@ export function buildFinancialDossierHtml(params: {
 <head>
 <meta charset="utf-8" />
 <title>${lang === "th" ? "สรุปข้อมูลการเงินและแนวทางเจรจาเบื้องต้น" : "Personal Financial Summary & Negotiation Notes"}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   @page { size: A4 portrait; margin: 13mm; }
   * { box-sizing: border-box; }
   body {
-    font-family: 'IBM Plex Sans Thai', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'IBM Plex Sans Thai', 'Inter', 'Leelawadee UI', 'Tahoma', -apple-system, BlinkMacSystemFont, sans-serif;
     color: #0f172a;
     background: #ffffff;
     margin: 0;
@@ -1167,7 +1092,7 @@ export function buildFinancialDossierHtml(params: {
     comparison
       ? `
   <h2>${lang === "th" ? `2. ตารางเปรียบเทียบค่างวดและยอดหนี้คงเหลือ (${comparison.policyTitleTh})` : `2. Proposed Repayment Schedule (${comparison.policyTitleEn})`}</h2>
-  <div style="font-size:9.2px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (ประมาณการ)" : ""} · ประมาณการส่วนต่างดอกเบี้ย ${fmt(comparison.totalInterestSaved)}${comparison.usesAssumedRate ? ` (สมมติฐานดอกเบี้ยเดิม ${comparison.originalRatePct.toFixed(1)}%/ปี)` : ` (ดอกเบี้ยที่กรอก ${comparison.originalRatePct.toFixed(1)}%/ปี)`}` : `Principal ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? " (est.)" : ""} · Est. Interest Difference ${fmt(comparison.totalInterestSaved)} (${comparison.usesAssumedRate ? "assumed" : "entered"} ${comparison.originalRatePct.toFixed(1)}% p.a.)`})</div>
+  <div style="font-size:9.2px;color:#475569;margin-bottom:4px">${lang === "th" ? comparison.ruleCaptionTh : comparison.ruleCaptionEn} (${lang === "th" ? `ยอดหนี้ตั้งต้น ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? ` (ประเมินจากค่างวดเดิมสมมติเหลือ ${comparison.estimatedPrincipalMonths} งวด)` : ""} · ประมาณการส่วนต่างดอกเบี้ย ${fmt(comparison.totalInterestSaved)}${comparison.usesAssumedRate ? ` (สมมติฐานดอกเบี้ยเดิม ${formatRatePct(comparison.originalRatePct)}%/ปี)` : ` (ดอกเบี้ยที่กรอก ${formatRatePct(comparison.originalRatePct)}%/ปี)`}` : `Principal ${fmt(comparison.principalUsed)}${comparison.usesEstimatedPrincipal ? ` (est. from payment assuming ${comparison.estimatedPrincipalMonths} remaining mos)` : ""} · Est. Interest Difference ${fmt(comparison.totalInterestSaved)} (${comparison.usesAssumedRate ? "assumed" : "entered"} ${formatRatePct(comparison.originalRatePct)}% p.a.)`})</div>
   <table>
     <thead>
       <tr>

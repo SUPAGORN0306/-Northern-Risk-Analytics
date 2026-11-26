@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 import numpy as np
 from dotenv import load_dotenv
 from google import genai
@@ -18,24 +20,27 @@ from src.db.connection import bulk_execute, fetch_all, get_connection
 from src.extract.bot_pdf_loader import (
     DOCS_RAW_DIR,
     assess_pdf_text_quality,
+    create_ocr_review_draft,
     download_configured_pdfs,
     extract_pdf_pages,
+    get_approved_ocr_pages,
 )
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BACKEND_DIR / ".env")
 
-EMBEDDING_MODELS: tuple[str, ...] = ("gemini-embedding-001",)
+_PRIMARY_EMBEDDING_MODEL = (os.getenv("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-001").strip()
+EMBEDDING_MODELS: tuple[str, ...] = tuple(dict.fromkeys((_PRIMARY_EMBEDDING_MODEL, "gemini-embedding-001")))
 EMBEDDING_DIM = 768
 EMBED_BATCH_SIZE = 16
 
 
-def _get_genai_client() -> genai.Client:
+def _get_genai_client(timeout_ms: int = 25_000) -> genai.Client:
     """Create Gemini API client with explicit network timeout."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing from backend/.env")
-    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=25000))
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=timeout_ms))
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -148,15 +153,21 @@ def _get_existing_doc_state(doc_title: str) -> tuple[set[str], int]:
 def _delete_stale_doc_versions(doc_title: str, conn: Any | None = None) -> None:
     """Remove outdated bronze pages and silver chunks for a document title."""
     if conn is not None:
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             cur.execute("DELETE FROM silver.policy_chunks WHERE doc_title = %s", (doc_title,))
             cur.execute("DELETE FROM bronze.bot_docs_raw WHERE doc_title = %s", (doc_title,))
+        finally:
+            cur.close()
         return
 
     with get_connection() as own_conn:
-        with own_conn.cursor() as cur:
+        cur = own_conn.cursor()
+        try:
             cur.execute("DELETE FROM silver.policy_chunks WHERE doc_title = %s", (doc_title,))
             cur.execute("DELETE FROM bronze.bot_docs_raw WHERE doc_title = %s", (doc_title,))
+        finally:
+            cur.close()
 
 
 def index_single_pdf(
@@ -173,8 +184,17 @@ def index_single_pdf(
     file_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     existing_hashes, existing_chunks = _get_existing_doc_state(doc_title)
 
+    source_cfg = yaml.safe_load((BACKEND_DIR / "config" / "sources.yaml").read_text(encoding="utf-8"))
+    configured_doc = next(
+        (item for item in source_cfg.get("official_pdfs", {}).get("docs", [])
+         if str(item.get("doc_title", "")).strip() == doc_title.strip()
+         or str(item.get("doc_id", "")).strip() == path.stem),
+        {},
+    )
+    doc_id = str(configured_doc.get("doc_id") or path.stem)
+
     # Skip unchanged document versions completely to avoid redundant embedding API usage
-    if not force_reindex and file_sha256 in existing_hashes and existing_chunks > 0:
+    if file_sha256 in existing_hashes and existing_chunks > 0:
         return {
             "doc_title": doc_title,
             "status": "skipped_unchanged",
@@ -187,15 +207,58 @@ def index_single_pdf(
     # Extract once and validate quality BEFORE deleting any existing version or calling embedding API
     pages = extract_pdf_pages(pdf_path=path, doc_title=doc_title, doc_url=doc_url)
     quality_ok, quality_reason = assess_pdf_text_quality(pages)
+    import pymupdf
+
+    with pymupdf.open(path) as pdf:
+        page_count = len(pdf)
+    extracted_page_numbers = {int(page["page_num"]) for page in pages}
+    complete_page_coverage = extracted_page_numbers == set(range(1, page_count + 1))
+    if not complete_page_coverage:
+        quality_ok = False
+        quality_reason = (
+            f"Text extraction covered {len(extracted_page_numbers)} of {page_count} pages; "
+            "all pages must be readable or manually reviewed via OCR"
+        )
     if not quality_ok:
-        return {
-            "doc_title": doc_title,
-            "status": "rejected_quality",
-            "reason": quality_reason,
-            "pages": len(pages),
-            "chunks_inserted": 0,
-            "model_used": None,
-        }
+        pages, review = get_approved_ocr_pages(file_sha256, doc_id, page_count)
+        if pages is None:
+            vision_timeout_ms = max(30_000, int(os.getenv("GEMINI_VISION_TIMEOUT_MS", "180000")))
+            draft_path = create_ocr_review_draft(
+                path,
+                doc_id=doc_id,
+                doc_title=doc_title,
+                doc_url=doc_url,
+                client=_get_genai_client(timeout_ms=vision_timeout_ms),
+            )
+            try:
+                draft_state = json.loads(draft_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                draft_state = {}
+            return {
+                "doc_title": doc_title,
+                "doc_id": doc_id,
+                "status": "pending_ocr_review",
+                "reason": draft_state.get("last_error") or quality_reason,
+                "page_count": page_count,
+                "ocr_completed_pages": int(draft_state.get("completed_pages") or 0),
+                "ocr_status": draft_state.get("status"),
+                "ocr_model": draft_state.get("ocr_model"),
+                "retry_after_at": draft_state.get("retry_after_at"),
+                "review_draft": str(draft_path),
+                "chunks_inserted": 0,
+                "model_used": None,
+            }
+        quality_ok, quality_reason = assess_pdf_text_quality(pages)
+        if not quality_ok:
+            return {
+                "doc_title": doc_title,
+                "status": "rejected_ocr_quality",
+                "reason": quality_reason,
+                "reviewed_by": review.get("reviewed_by") if review else None,
+                "pages": len(pages),
+                "chunks_inserted": 0,
+                "model_used": None,
+            }
 
     chunk_records: list[dict[str, Any]] = []
     embed_inputs: list[str] = []
@@ -204,7 +267,7 @@ def index_single_pdf(
         page_num = int(page["page_num"])
         pieces = split_page_into_chunks(str(page["raw_text"]))
         for c_idx, piece in enumerate(pieces):
-            sha = hashlib.sha256(f"{doc_title}|{page_num}|{c_idx}|{piece}".encode("utf-8")).hexdigest()
+            sha = hashlib.sha256(f"{doc_title}|{file_sha256}|{page_num}|{c_idx}|{piece}".encode("utf-8")).hexdigest()
             embed_inputs.append(f"{doc_title} หน้า {page_num}\n{piece}")
             chunk_records.append(
                 {
@@ -214,6 +277,9 @@ def index_single_pdf(
                     "chunk_index": c_idx,
                     "chunk_text": piece,
                     "content_sha256": sha,
+                    "extraction_method": str(page.get("extraction_method") or "pdf_text"),
+                    "ocr_reviewed_by": page.get("ocr_reviewed_by"),
+                    "ocr_reviewed_at": page.get("ocr_reviewed_at"),
                 }
             )
 
@@ -231,7 +297,7 @@ def index_single_pdf(
     for rec, vec in zip(chunk_records, vectors):
         rec["embedding"] = format_pgvector_literal(vec)
 
-    should_replace_existing = bool(existing_hashes) and (force_reindex or file_sha256 not in existing_hashes)
+    should_replace_existing = file_sha256 not in existing_hashes
 
     bronze_rows = [
         (
@@ -240,9 +306,16 @@ def index_single_pdf(
             int(r["page_num"]),
             str(r["raw_text"]),
             str(r["file_sha256"]),
+            str(r.get("extraction_method") or "pdf_text"),
+            r.get("ocr_reviewed_by"),
+            r.get("ocr_reviewed_at"),
         )
         for r in pages
     ]
+    # Local drop-ins remain identifiable but are not promoted as official policy.
+    effective_from = configured_doc.get("effective_from")
+    doc_version = str(configured_doc.get("doc_version") or file_sha256[:12])
+
     silver_rows = [
         (
             r["doc_title"],
@@ -252,19 +325,39 @@ def index_single_pdf(
             r["chunk_text"],
             r["embedding"],
             r["content_sha256"],
+            doc_id,
+            doc_version,
+            effective_from,
+            True,
+            str(r.get("extraction_method") or "pdf_text"),
+            r.get("ocr_reviewed_by"),
         )
         for r in chunk_records
     ]
 
     with get_connection() as conn:
         if should_replace_existing:
-            _delete_stale_doc_versions(doc_title, conn=conn)
-        with conn.cursor() as cur:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    UPDATE silver.policy_chunks
+                    SET is_active = FALSE,
+                        effective_to = COALESCE(effective_to, CURRENT_DATE)
+                    WHERE doc_id = %s AND is_active = TRUE
+                    """,
+                    (doc_id,),
+                )
+            finally:
+                cur.close()
+        cur = conn.cursor()
+        try:
             cur.executemany(
                 """
                 INSERT INTO bronze.bot_docs_raw (
-                    doc_title, doc_url, page_num, raw_text, file_sha256
-                ) VALUES (%s, %s, %s, %s, %s)
+                    doc_title, doc_url, page_num, raw_text, file_sha256,
+                    extraction_method, ocr_reviewed_by, ocr_reviewed_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::timestamptz)
                 ON CONFLICT (file_sha256, page_num) DO NOTHING
                 """,
                 bronze_rows,
@@ -272,15 +365,18 @@ def index_single_pdf(
             cur.executemany(
                 """
                 INSERT INTO silver.policy_chunks (
-                    doc_title, doc_url, page_num, chunk_index, chunk_text, embedding, content_sha256
+                    doc_title, doc_url, page_num, chunk_index, chunk_text, embedding, content_sha256,
+                    doc_id, doc_version, effective_from, is_active, extraction_method, ocr_reviewed_by
                 ) VALUES (
-                    %s, %s, %s, %s, %s, CAST(%s AS vector), %s
+                    %s, %s, %s, %s, %s, CAST(%s AS vector), %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (content_sha256) DO NOTHING
                 """,
                 silver_rows,
             )
             inserted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else len(silver_rows)
+        finally:
+            cur.close()
 
     clear_bm25_cache()
     return {
@@ -298,6 +394,22 @@ def index_all_official_pdfs(force_download: bool = False, force_reindex: bool = 
     downloaded = download_configured_pdfs(force_refresh=force_download)
     configured_paths = {Path(item["local_path"]).resolve() for item in downloaded}
 
+    # Backfill stable identity for chunks created before version metadata was introduced.
+    for item in downloaded:
+        bulk_execute(
+            """
+            UPDATE silver.policy_chunks p
+            SET doc_id = :doc_id,
+                doc_version = COALESCE(
+                    (SELECT max(b.file_sha256) FROM bronze.bot_docs_raw b WHERE b.doc_title = p.doc_title),
+                    p.doc_version,
+                    'legacy'
+                )
+            WHERE p.doc_title = :doc_title AND p.doc_id IS NULL
+            """,
+            [{"doc_id": item["doc_id"], "doc_title": item["doc_title"]}],
+        )
+
     results: list[dict[str, Any]] = []
     for item in downloaded:
         res = index_single_pdf(
@@ -307,8 +419,10 @@ def index_all_official_pdfs(force_download: bool = False, force_reindex: bool = 
             force_reindex=force_reindex,
             client=client,
         )
+        res["doc_id"] = item["doc_id"]
         res["size_kb"] = item["size_kb"]
         res["category"] = item["category"]
+        res["source_refreshed"] = item.get("source_refreshed", False)
         results.append(res)
 
     if DOCS_RAW_DIR.exists():
@@ -329,10 +443,14 @@ def index_all_official_pdfs(force_download: bool = False, force_reindex: bool = 
 
     totals = fetch_all(
         """
-        SELECT
+            SELECT
             (SELECT count(*) FROM bronze.bot_docs_raw) AS bronze_pages,
-            (SELECT count(DISTINCT doc_title) FROM silver.policy_chunks) AS silver_docs,
-            (SELECT count(*) FROM silver.policy_chunks) AS silver_chunks,
+            (SELECT count(DISTINCT doc_id) FROM silver.policy_chunks WHERE is_active = TRUE
+                AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+                AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS silver_docs,
+            (SELECT count(*) FROM silver.policy_chunks WHERE is_active = TRUE
+                AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+                AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS silver_chunks,
             round((pg_total_relation_size('silver.policy_chunks') / 1048576.0)::numeric, 2) AS silver_chunks_mb
         """
     )[0]

@@ -17,6 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.config.feature_registry import (
+    get_clustering_core_features,
+    get_eda_inference_policy,
     get_git_commit_short,
     get_spec_version,
     get_validation_policy,
@@ -55,7 +57,7 @@ DYNAMIC_CANDIDATES: tuple[tuple[str, str], ...] = (
 STRUCTURAL_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("avg_occupancy_rate", "mots_tourism"),
     ("occupancy_volatility", "mots_tourism"),
-    ("foreign_visitor_share", "mots_tourism"),
+    ("log_foreign_visitor_share", "mots_tourism"),
     ("foreign_revenue_share", "mots_tourism"),
     ("avg_monthly_revenue_mthb", "mots_tourism"),
     ("pm25_mean_3y", "open_meteo_pm25"),
@@ -113,6 +115,50 @@ def _iterative_vif_prune(
     return active, final_vifs, dropped_vifs
 
 
+def _within_province_block_permutation_p(
+    pair: pd.DataFrame,
+    observed_r: float,
+    *,
+    n_permutations: int = 299,
+    block_length: int = 3,
+    seed: int = 42,
+) -> float:
+    """Two-sided within-province circular block permutation preserving local serial runs."""
+    rng = np.random.default_rng(seed)
+    groups = [g[["x", "y"]].dropna() for _, g in pair.groupby("province_code", sort=True)]
+    groups = [g for g in groups if len(g) >= block_length * 2]
+    if not groups or not np.isfinite(observed_r):
+        return 1.0
+    exceed = 0
+    valid = 0
+    for _ in range(n_permutations):
+        perm_x: list[float] = []
+        perm_y: list[float] = []
+        for group in groups:
+            x = group["x"].to_numpy(dtype=float)
+            y = group["y"].to_numpy(dtype=float)
+            # Each observed value appears once; unlike bootstrap resampling, no rows are duplicated or dropped.
+            shuffled = _circular_block_permutation(x, block_length, rng)
+            perm_x.extend((shuffled - float(np.mean(shuffled))).tolist())
+            perm_y.extend((y - float(np.mean(y))).tolist())
+        if len(set(perm_x)) < 2 or len(set(perm_y)) < 2:
+            continue
+        statistic = float(stats.spearmanr(perm_x, perm_y).statistic)
+        if np.isfinite(statistic):
+            valid += 1
+            exceed += int(abs(statistic) >= abs(observed_r))
+    return round((exceed + 1) / (valid + 1), 6)
+
+
+def _circular_block_permutation(values: np.ndarray, block_length: int, rng: np.random.Generator) -> np.ndarray:
+    """Permute contiguous circular blocks once each, preserving the observed marginal values."""
+    if block_length < 1 or len(values) < 1:
+        raise ValueError("values and block_length must be non-empty and positive")
+    rotated = np.roll(values, -int(rng.integers(0, len(values))))
+    blocks = [rotated[i : i + block_length] for i in range(0, len(rotated), block_length)]
+    return np.concatenate([blocks[int(i)] for i in rng.permutation(len(blocks))])
+
+
 def screen_monthly_panel_features(
     panel: pd.DataFrame,
     target_col: str = "occupancy_deseason",
@@ -122,8 +168,11 @@ def screen_monthly_panel_features(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Run within province lag correlation, controlled fixed effects OLS, and VIF pruning."""
     policy = get_validation_policy()
+    inference_policy = get_eda_inference_policy()
     alpha = float(policy["alpha_threshold"]) if alpha is None else float(alpha)
     max_vif = float(policy["max_vif"]) if max_vif is None else float(max_vif)
+    max_missing_pct = float(policy["max_missing_pct"])
+    min_coverage_pct = round(100.0 - max_missing_pct, 1)
     df = panel.sort_values(["province_code", "period_date"]).copy()
     records: list[dict[str, Any]] = []
     lag_matrix_rows: list[dict[str, Any]] = []
@@ -136,12 +185,25 @@ def screen_monthly_panel_features(
         for lag in range(max_lag + 1):
             # Shift strictly within each province to prevent cross province leakage
             shifted = df.groupby("province_code", sort=False)[feat].shift(lag)
-            pair = pd.DataFrame({"x": shifted, "y": df[target_col]}).dropna()
-            if len(pair) < 30 or pair["x"].nunique() < 3:
+            pair = pd.DataFrame({"province_code": df["province_code"], "x": shifted, "y": df[target_col]}).dropna()
+            if len(pair) < inference_policy["minimum_observations"] or pair["x"].nunique() < 3:
                 continue
 
-            pr, _ = stats.pearsonr(pair["x"], pair["y"])
-            sr, sp = stats.spearmanr(pair["x"], pair["y"])
+            # Within transform removes cross-province level differences before correlation inference.
+            grouped = pair.groupby("province_code", sort=False)
+            x_within = pair["x"] - grouped["x"].transform("mean")
+            y_within = pair["y"] - grouped["y"].transform("mean")
+            if x_within.nunique() < 3 or y_within.nunique() < 3:
+                continue
+            pr, _ = stats.pearsonr(x_within, y_within)
+            sr, sp = stats.spearmanr(x_within, y_within)
+            p_block = _within_province_block_permutation_p(
+                pair,
+                float(sr),
+                n_permutations=inference_policy["block_permutation_replicates"],
+                block_length=inference_policy["block_length_months"],
+                seed=42 + lag + sum(ord(ch) for ch in f"{feat}:{target_col}"),
+            )
             lag_matrix_rows.append(
                 {
                     "feature_name": feat,
@@ -150,6 +212,7 @@ def screen_monthly_panel_features(
                     "pearson_r": float(pr),
                     "spearman_r": float(sr),
                     "p_value": float(sp),
+                    "p_block_perm": p_block,
                     "missing_pct": missing_pct,
                     "n_obs": int(len(pair)),
                 }
@@ -158,7 +221,8 @@ def screen_monthly_panel_features(
     # Apply true Benjamini Hochberg FDR across ALL feature lag hypotheses BEFORE selecting best lag
     lag_df_all = pd.DataFrame(lag_matrix_rows)
     if not lag_df_all.empty:
-        raw_p_all = lag_df_all["p_value"].to_numpy(dtype=float)
+        # The IID Spearman p-value is diagnostic only; selection uses the within-province block null.
+        raw_p_all = lag_df_all["p_block_perm"].to_numpy(dtype=float)
         m_total = len(raw_p_all)
         order = np.argsort(raw_p_all)
         ranks = np.empty_like(order)
@@ -184,16 +248,33 @@ def screen_monthly_panel_features(
                     "pearson_r": round(float(best["pearson_r"]), 4),
                     "spearman_r": round(float(best["spearman_r"]), 4),
                     "p_value": round(float(best["p_value"]), 6),
+                    "p_block_perm": round(float(best["p_block_perm"]), 6),
                     "p_value_fdr": round(float(best["p_value_fdr"]), 6),
                     "missing_pct": float(best["missing_pct"]),
                 }
             )
     n_tests = len(lag_matrix_rows)
 
-    # Permanently audit sparse news coverage to enforce media bias guardrail
-    news_prov_rows = fetch_all("SELECT count(DISTINCT province_code) AS n FROM silver.news_events")
-    news_prov_count = int(news_prov_rows[0]["n"]) if news_prov_rows else 0
+    # Permanently audit news distribution to enforce media concentration and coverage guardrail
+    news_dist_rows = fetch_all(
+        """
+        SELECT province_code, count(*) AS n
+        FROM silver.news_events
+        GROUP BY province_code
+        ORDER BY n DESC
+        """
+    )
+    news_prov_count = len(news_dist_rows)
     news_cov_pct = round((news_prov_count / 17.0) * 100.0, 2)
+    total_news_events = sum(int(r["n"]) for r in news_dist_rows)
+    top3_news_share = (
+        round((sum(int(r["n"]) for r in news_dist_rows[:3]) / float(total_news_events)) * 100.0, 1)
+        if total_news_events > 0
+        else 0.0
+    )
+    min_news_cnt = int(news_dist_rows[-1]["n"]) if news_dist_rows else 0
+    max_news_cnt = int(news_dist_rows[0]["n"]) if news_dist_rows else 0
+    news_ratio = round(max_news_cnt / float(max(min_news_cnt, 1)), 1) if max_news_cnt > 0 else 0.0
     records.append(
         {
             "feature_name": "news_shock_count",
@@ -214,7 +295,7 @@ def screen_monthly_panel_features(
     sig_mask = (
         res_df["p_value_fdr"].notna()
         & (res_df["p_value_fdr"] < alpha)
-        & (res_df["missing_pct"] <= 30.0)
+        & (res_df["missing_pct"] <= max_missing_pct)
     )
     sig_df = res_df[sig_mask].sort_values("spearman_r", key=lambda s: s.abs(), ascending=False)
     sig_features = sig_df["feature_name"].tolist()
@@ -240,13 +321,18 @@ def screen_monthly_panel_features(
         if feat == "news_shock_count":
             vifs_col.append(None)
             sel_col.append(False)
-            reason_col.append(
-                f"Dropped due to media bias ({news_prov_count} of 17 provinces covered, below 70 percent threshold)"
-            )
-        elif rec["missing_pct"] > 30.0:
+            if news_cov_pct < min_coverage_pct:
+                reason_col.append(
+                    f"Dropped due to sparse coverage ({news_prov_count} of 17 provinces covered, {news_cov_pct:.1f}% below {min_coverage_pct:.0f} percent gate)"
+                )
+            else:
+                reason_col.append(
+                    f"Excluded from quantitative modeling due to media concentration bias ({news_prov_count} of 17 provinces covered, top 3 hold {top3_news_share:.1f}% of {total_news_events} events, {news_ratio:.1f}x max to min gap); routed to qualitative alerts only"
+                )
+        elif rec["missing_pct"] > max_missing_pct:
             vifs_col.append(None)
             sel_col.append(False)
-            reason_col.append("Dropped because missing rate exceeds 30 percent")
+            reason_col.append(f"Dropped because missing rate exceeds {max_missing_pct:.0f} percent")
         elif rec["p_value"] is None or rec["p_value"] >= alpha:
             vifs_col.append(None)
             sel_col.append(False)
@@ -277,10 +363,27 @@ def screen_monthly_panel_features(
     # Run true within province fixed effects OLS controlling for macro variables simultaneously
     ols_summary = _run_controlled_panel_ols(df, target_col, selected_feats, lag_lookup)
     ols_summary["analysis_scope"] = "exploratory_within_province_screening_not_causal"
+    ols_summary["target_domain_scope"] = (
+        "Tourism demand and provincial service sector indicators only "
+        "(occupancy_deseason, revenue_deseason_pct, occupancy_yoy_diff)"
+    )
+    ols_summary["debt_interpretation_guardrail"] = (
+        "NSO household and SME debt ratios are cross sectional provincial context features used only "
+        "for 17 province structural clustering; do not use this monthly EDA to claim proof of debt relief "
+        "effectiveness, individual default probability, or ranking of personal debt distress"
+    )
     ols_summary["multiple_testing_correction"] = "benjamini_hochberg_fdr_all_feature_lag_hypotheses"
-    ols_summary["autocorrelation_caveat"] = "Univariate Spearman p values assume iid observations; rely on province FE clustered OLS for panel dependence"
+    inference_policy = get_eda_inference_policy()
+    ols_summary["autocorrelation_caveat"] = (
+        "Feature screening uses within-province circular block permutation to preserve local serial dependence. "
+        "Fixed-effects OLS p-values use province-clustered covariance and restricted Rademacher wild-cluster "
+        f"bootstrap ({inference_policy['wild_cluster_bootstrap_replicates']} replicates); only "
+        f"{ols_summary.get('n_clusters', 0)} province clusters are available, below the configured "
+        f"{inference_policy['minimum_province_clusters_for_confirmatory_inference']} cluster threshold, "
+        "so all results remain exploratory and are not causal evidence."
+    )
     ols_summary["total_lag_hypotheses_tested"] = int(n_tests)
-    return res_df, pd.DataFrame(lag_matrix_rows), ols_summary
+    return res_df, lag_df_all, ols_summary
 
 
 def _run_controlled_panel_ols(
@@ -303,7 +406,9 @@ def _run_controlled_panel_ols(
         return {"n_obs": int(len(reg_df)), "r2_within": 0.0, "province_fixed_effects": True, "terms": {}}
 
     # Prune macro collinearity inside OLS design matrix for clean inference
-    clean_cols, _, _ = _iterative_vif_prune(reg_df, model_cols, max_vif=6.0)
+    clean_cols, _, _ = _iterative_vif_prune(
+        reg_df, model_cols, max_vif=get_validation_policy()["ols_max_vif"]
+    )
     if not clean_cols:
         return {"n_obs": int(len(reg_df)), "r2_within": 0.0, "province_fixed_effects": True, "terms": {}}
 
@@ -347,11 +452,46 @@ def _run_controlled_panel_ols(
     t_stats = beta / se
     p_vals = 2.0 * stats.t.sf(np.abs(t_stats), df=max(n_groups - 1, 1))
 
+    inference_policy = get_eda_inference_policy()
+
+    def wild_cluster_pvalue(term_idx: int, n_boot: int) -> float:
+        """Restricted Rademacher wild-cluster bootstrap p-value for one coefficient."""
+        keep = [i for i in range(k_slopes) if i != term_idx]
+        x0 = x_mat[:, keep] if keep else np.empty((n_obs, 0), dtype=float)
+        beta0 = np.linalg.pinv(x0.T @ x0) @ (x0.T @ y_within) if keep else np.empty(0)
+        fitted0 = x0 @ beta0 if keep else np.zeros(n_obs, dtype=float)
+        resid0 = y_within - fitted0
+        rng = np.random.default_rng(109 + term_idx)
+        observed_t = abs(float(t_stats[term_idx]))
+        exceed = 0
+        valid = 0
+        for _ in range(n_boot):
+            signs = {g: float(rng.choice((-1.0, 1.0))) for g in unique_groups}
+            y_star = fitted0 + np.asarray([signs[g] for g in groups]) * resid0
+            beta_star = bread @ (x_mat.T @ y_star)
+            resid_star = y_star - x_mat @ beta_star
+            meat_star = np.zeros((k_slopes, k_slopes), dtype=float)
+            for g in unique_groups:
+                mask = groups == g
+                score_g = x_mat[mask].T @ resid_star[mask]
+                meat_star += np.outer(score_g, score_g)
+            cov_star = dof_scale * (bread @ meat_star @ bread)
+            se_star = float(np.sqrt(max(float(cov_star[term_idx, term_idx]), 1e-12)))
+            t_star = abs(float(beta_star[term_idx]) / se_star)
+            if np.isfinite(t_star):
+                valid += 1
+                exceed += int(t_star >= observed_t)
+        return round((exceed + 1) / (valid + 1), 6)
+
+    wild_replicates = inference_policy["wild_cluster_bootstrap_replicates"]
+    wild_p = [wild_cluster_pvalue(idx, wild_replicates) for idx in range(k_slopes)]
+
     terms = {
         col: {
             "std_beta": round(float(beta[idx]), 4),
             "se_cluster": round(float(se[idx]), 4),
             "p_value": round(float(p_vals[idx]), 5),
+            "p_wild_bootstrap": wild_p[idx],
         }
         for idx, col in enumerate(clean_cols)
     }
@@ -361,7 +501,8 @@ def _run_controlled_panel_ols(
         "province_fixed_effects": True,
         "n_obs": int(n_obs),
         "n_clusters": int(n_groups),
-        "small_cluster_count_warning": n_groups < 30,
+        "small_cluster_count_warning": n_groups < inference_policy["minimum_province_clusters_for_confirmatory_inference"],
+        "wild_cluster_bootstrap": {"method": "restricted_rademacher_wild_cluster_t", "replicates": wild_replicates},
         "r2": round(float(r2_within), 4),
         "r2_within": round(float(r2_within), 4),
         "adj_r2": round(float(adj_r2_within), 4),
@@ -371,46 +512,61 @@ def _run_controlled_panel_ols(
 
 def screen_structural_clustering_features(
     struct_df: pd.DataFrame,
-    max_vif: float = 5.0,
+    max_vif: float | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Screen 17 province structural features using collinearity and VIF pruning across 3 risk pillars."""
+    """Screen 17 province structural features using collinearity, small sample parsimony, and VIF pruning."""
+    policy = get_validation_policy()
+    max_vif = float(policy["max_vif"]) if max_vif is None else float(max_vif)
+    max_corr = float(policy["max_pairwise_spearman"])
     avail_cols = [c for c, _ in STRUCTURAL_CANDIDATES if c in struct_df.columns]
     ds_map = dict(STRUCTURAL_CANDIDATES)
     missing_map = {c: round(float(struct_df[c].isna().mean() * 100.0), 2) for c in avail_cols}
 
-    # Pre prune near duplicate pairs with absolute correlation above 0.85 keeping higher variance representative
+    # Stage 1 pre prune near duplicate pairs with absolute Spearman correlation at or above policy cutoff
     corr = struct_df[avail_cols].corr(method="spearman").abs()
-    pref_order = [
-        "foreign_visitor_share",
-        "avg_occupancy_rate",
-        "occupancy_volatility",
-        "annual_pm25_days_over_37_5",
-        "annual_heavy_rain_days",
-        "debt_to_annual_income_sme",
-        "debt_to_annual_income_all",
-        "expense_to_income_pct_sme",
-        "pm25_mean_3y",
-        "pm25_p90_3y",
-        "max_monthly_rainfall_mm",
-        "avg_monthly_revenue_mthb",
-        "foreign_revenue_share",
-        "expense_to_income_pct_all",
+    core_tuple = get_clustering_core_features()
+    pref_order = list(core_tuple) + [
+        c
+        for c in [
+            "annual_heavy_rain_days",
+            "debt_to_annual_income_sme",
+            "expense_to_income_pct_sme",
+            "expense_to_income_pct_all",
+            "avg_monthly_revenue_mthb",
+            "pm25_mean_3y",
+            "pm25_p90_3y",
+            "foreign_revenue_share",
+        ]
+        if c not in core_tuple
     ]
     ordered = [c for c in pref_order if c in avail_cols]
     kept_after_corr: list[str] = []
     dropped_corr: dict[str, str] = {}
 
     for col in ordered:
-        conflict = next((k for k in kept_after_corr if corr.loc[col, k] >= 0.85), None)
+        conflict = next((k for k in kept_after_corr if corr.loc[col, k] >= max_corr), None)
         if conflict is not None:
             dropped_corr[col] = f"Dropped due to high correlation with {conflict} (|r|={corr.loc[col, conflict]:.2f})"
         else:
             kept_after_corr.append(col)
 
+    # Stage 2 validate canonical Core 6 features from feature_specs.yaml directly via VIF
+    core_candidates = [c for c in core_tuple if c in kept_after_corr]
     selected, final_vifs, dropped_vifs = _iterative_vif_prune(
-        struct_df, kept_after_corr, max_vif=max_vif
+        struct_df, core_candidates, max_vif=max_vif
     )
     selected_set = frozenset(selected)
+
+    # Stage 3 test every remaining non duplicate candidate marginally against the selected Core 6
+    extra_pool = [c for c in kept_after_corr if c not in selected_set and c not in dropped_vifs]
+    marginal_vifs: dict[str, float] = {}
+    for extra_col in extra_pool:
+        marg = _compute_vif_map(struct_df, selected + [extra_col])
+        mv = marg.get(extra_col, 1.0)
+        if mv >= max_vif:
+            dropped_vifs[extra_col] = mv
+        else:
+            marginal_vifs[extra_col] = mv
 
     rows: list[dict[str, Any]] = []
     for col in avail_cols:
@@ -426,7 +582,14 @@ def screen_structural_clustering_features(
             vif_v, is_sel, reason = (
                 final_vifs.get(col, 1.0),
                 True,
-                f"Selected for 17 province clustering (VIF={final_vifs.get(col, 1.0)})",
+                f"Selected canonical core feature for 17 province clustering (VIF={final_vifs.get(col, 1.0)})",
+            )
+        elif col in marginal_vifs:
+            vif_v = marginal_vifs[col]
+            is_sel = False
+            reason = (
+                f"Secondary context excluded from Core 6 to preserve N/p=2.83 parsimony "
+                f"(marginal VIF={vif_v}; available for drilldown or optional Lab toggle)"
             )
         else:
             vif_v, is_sel, reason = None, False, "Not selected"
@@ -449,9 +612,16 @@ def screen_structural_clustering_features(
     return pd.DataFrame(rows), selected
 
 
-def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[str, Any]) -> int:
+def save_screening_results_to_neon(
+    combined_df: pd.DataFrame,
+    ols_summary: dict[str, Any],
+    run_id: str | None = None,
+    data_cutoff: pd.Timestamp | None = None,
+    connection: Any | None = None,
+) -> int:
     """Persist empirical screening audit table atomically into gold.feature_screening_results with run lineage."""
-    run_id = f"eda_{uuid.uuid4().hex[:12]}"
+    resolved_run_id = run_id or f"eda_{uuid.uuid4().hex[:12]}"
+    cutoff = data_cutoff.date() if data_cutoff is not None else None
     rows = []
     for rec in combined_df.to_dict(orient="records"):
         rows.append(
@@ -467,6 +637,10 @@ def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[
                 "missing_pct": float(rec["missing_pct"]),
                 "is_selected": bool(rec["is_selected"]),
                 "decision_reason": str(rec["decision_reason"]),
+                "run_id": resolved_run_id,
+                "feature_spec_version": get_spec_version(),
+                "data_cutoff": cutoff,
+                "p_block_perm": None if pd.isna(rec.get("p_block_perm")) else float(rec.get("p_block_perm")),
             }
         )
 
@@ -474,17 +648,18 @@ def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[
         INSERT INTO gold.feature_screening_results (
             feature_name, dataset_name, target_name, best_lag_months,
             pearson_r, spearman_r, p_value, vif_score, missing_pct,
-            is_selected, decision_reason
+            is_selected, decision_reason, run_id, feature_spec_version, data_cutoff, p_block_perm
         ) VALUES (
             :feature_name, :dataset_name, :target_name, :best_lag_months,
             :pearson_r, :spearman_r, :p_value, :vif_score, :missing_pct,
-            :is_selected, :decision_reason
+            :is_selected, :decision_reason, :run_id, :feature_spec_version, :data_cutoff, :p_block_perm
         )
     """
-    inserted = atomic_replace_table("DELETE FROM gold.feature_screening_results", insert_sql, rows)
+    # Preserve prior screening runs for audit and run-to-run comparison.
+    inserted = bulk_execute(insert_sql, rows, connection=connection)
 
     lineage_payload = {
-        "run_id": run_id,
+        "run_id": resolved_run_id,
         "git_commit": get_git_commit_short(),
         "feature_spec_version": get_spec_version(),
         "validation_policy": get_validation_policy(),
@@ -503,6 +678,7 @@ def save_screening_results_to_neon(combined_df: pd.DataFrame, ols_summary: dict[
                 "metrics_json": json.dumps(lineage_payload, ensure_ascii=False),
             }
         ],
+        connection=connection,
     )
     return inserted
 
@@ -512,57 +688,95 @@ def plot_eda_figures(
     struct_df: pd.DataFrame,
     lag_df: pd.DataFrame,
     struct_screen_df: pd.DataFrame,
+    ols_occ: dict[str, Any] | None = None,
 ) -> list[Path]:
-    """Generate 300 DPI institutional charts for analysis review and presentation slides."""
+    """Generate 300 DPI methodologically sound charts for analysis review and presentation slides."""
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     sns.set_theme(style="whitegrid", context="notebook")
     saved_paths: list[Path] = []
+    navy = "#0F2537"
+    teal = "#0D9488"
+    amber = "#D97706"
+    crimson = "#DC2626"
 
-    # Figure 1 data completeness and Sept 2024 Chiang Mai Chiang Rai flood impact verification
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.4), dpi=300)
+    # Figure 1 computed real completeness audit, media concentration proof, and MOTS shock check
+    fig, axes = plt.subplots(1, 3, figsize=(18.5, 5.4), dpi=300)
 
-    news_cov_rows = fetch_all("SELECT count(DISTINCT province_code) AS n FROM silver.news_events")
-    news_cov = (int(news_cov_rows[0]["n"]) / 17.0) * 100.0 if news_cov_rows else 0.0
+    n_months = int(panel["period_date"].nunique()) if not panel.empty else 0
+    mots_cov = round((1.0 - float(panel["occupancy_rate"].isna().mean())) * 100.0, 1) if "occupancy_rate" in panel.columns else 0.0
+    pm25_cov = round((1.0 - float(panel["pm25_mean"].isna().mean())) * 100.0, 1) if "pm25_mean" in panel.columns else 0.0
+    rain_cov = round((1.0 - float(panel["rainfall_sum_mm"].isna().mean())) * 100.0, 1) if "rainfall_sum_mm" in panel.columns else 0.0
+    nso_cov = (
+        round((int(struct_df["debt_to_annual_income_all"].notna().sum()) / 17.0) * 100.0, 1)
+        if "debt_to_annual_income_all" in struct_df.columns
+        else 0.0
+    )
+    cpi_cov = round((1.0 - float(panel["th_cpi_yoy_pct"].isna().mean())) * 100.0, 1) if "th_cpi_yoy_pct" in panel.columns else 0.0
+    oil_cov = round((1.0 - float(panel["oil_brent_yoy_pct"].isna().mean())) * 100.0, 1) if "oil_brent_yoy_pct" in panel.columns else 0.0
+
     cov_data = pd.DataFrame(
         {
             "Source": [
-                "MOTS Tourism (34M)",
-                "Open Meteo PM2.5 (34M)",
-                "Open Meteo Rainfall (34M)",
-                "NSO Debt and Income (2025)",
-                "BIS CPI and FRED Controls",
-                "Silver News Events (Media Bias)",
+                f"MOTS Occupancy ({n_months}M)",
+                f"Open Meteo PM2.5 ({n_months}M)",
+                f"Open Meteo Rain ({n_months}M)",
+                "NSO Debt & Income (2025)",
+                "FRED Brent Oil YoY",
+                "BIS Thailand CPI YoY",
             ],
-            "Coverage": [
-                100.0,
-                100.0,
-                100.0,
-                100.0,
-                round((1.0 - panel["th_cpi_yoy_pct"].isna().mean()) * 100.0, 1),
-                round(news_cov, 1),
-            ],
+            "Coverage": [mots_cov, pm25_cov, rain_cov, nso_cov, oil_cov, cpi_cov],
         }
     )
-    colors = ["#0F2537" if v >= 70.0 else "#DC2626" for v in cov_data["Coverage"]]
-    axes[0].barh(cov_data["Source"][::-1], cov_data["Coverage"][::-1], color=colors[::-1], height=0.58)
-    axes[0].axvline(70.0, color="#D97706", linestyle="--", linewidth=1.3, label="70% Inclusion Gate")
+    bar_c = [navy if v >= 70.0 else crimson for v in cov_data["Coverage"]]
+    axes[0].barh(cov_data["Source"][::-1], cov_data["Coverage"][::-1], color=bar_c[::-1], height=0.58)
+    axes[0].axvline(70.0, color=amber, linestyle="--", linewidth=1.3, label="70% Inclusion Gate")
     for idx, val in enumerate(cov_data["Coverage"][::-1]):
-        axes[0].text(min(val + 1.5, 102), idx, f"{val:.1f}%", va="center", fontsize=9, fontweight="bold")
-    axes[0].set_xlim(0, 115)
-    axes[0].set_title("Province Coverage Gate Across Real Data Sources", fontsize=11, fontweight="bold", color="#0F2537")
-    axes[0].set_xlabel("Coverage (%)")
-    axes[0].legend(loc="lower right", frameon=True)
+        axes[0].text(min(val + 1.2, 102), idx, f"{val:.1f}%", va="center", fontsize=8.5, fontweight="bold")
+    axes[0].set_xlim(0, 116)
+    axes[0].set_title("A. Computed Data Completeness Audit\n(Measured Live from Panel and DB)", fontsize=10.4, fontweight="bold", color=navy)
+    axes[0].set_xlabel("Observed Completeness (%)")
+    axes[0].legend(loc="lower right", fontsize=8.0, frameon=True)
 
-    # Right subplot Chiang Mai and Chiang Rai occupancy rate across 2024 to 2026
-    for code, label, color in [("CM", "Chiang Mai (CM)", "#0F2537"), ("CR", "Chiang Rai (CR)", "#0D9488")]:
+    # Panel B real media concentration distribution proving why news is excluded from numeric models
+    news_rows = fetch_all(
+        """
+        SELECT province_code, count(*) AS n
+        FROM silver.news_events
+        GROUP BY province_code
+        ORDER BY n DESC
+        """
+    )
+    if news_rows:
+        ndf = pd.DataFrame(news_rows)
+        total_ev = int(ndf["n"].sum())
+        top3_pct = round((float(ndf.head(3)["n"].sum()) / max(total_ev, 1)) * 100.0, 1)
+        ratio_mm = round(float(ndf["n"].max()) / max(float(ndf["n"].min()), 1.0), 1)
+        n_colors = [crimson if i < 3 else "#64748B" for i in range(len(ndf))]
+        axes[1].bar(ndf["province_code"], ndf["n"], color=n_colors, width=0.68)
+        axes[1].axhline(total_ev / 17.0, color=amber, linestyle="--", linewidth=1.2, label=f"Uniform Mean ({total_ev / 17.0:.1f})")
+        axes[1].set_title(
+            f"B. Media Concentration Bias Audit (n = {total_ev})\n(Top 3 Hold {top3_pct}%, {ratio_mm}x Max/Min -> Alerts Only)",
+            fontsize=10.2,
+            fontweight="bold",
+            color=navy,
+        )
+        axes[1].set_ylabel("Verified Silver News Events")
+        axes[1].tick_params(axis="x", labelsize=8.0, rotation=45)
+        axes[1].legend(loc="upper right", fontsize=8.0, frameon=True)
+    else:
+        axes[1].text(0.5, 0.5, "No silver.news_events records", ha="center", va="center")
+        axes[1].set_title("B. Media Concentration Bias Audit", fontsize=10.4, fontweight="bold", color=navy)
+
+    # Panel C Chiang Mai and Chiang Rai occupancy rate across 2024 to 2026
+    for code, label, color in [("CM", "Chiang Mai (CM)", navy), ("CR", "Chiang Rai (CR)", teal)]:
         sub = panel[panel["province_code"] == code].sort_values("period_date")
-        axes[1].plot(sub["period_date"], sub["occupancy_rate"], marker="o", markersize=3.5, linewidth=1.8, label=label, color=color)
-    axes[1].axvspan(pd.Timestamp("2024-09-01"), pd.Timestamp("2024-10-15"), color="#DC2626", alpha=0.14, label="Sept 2024 Flood Shock")
-    axes[1].axvspan(pd.Timestamp("2026-03-01"), pd.Timestamp("2026-04-30"), color="#D97706", alpha=0.14, label="Mar Apr 2026 Haze Peak")
-    axes[1].set_title("Official MOTS Occupancy Rate Verification (CM and CR)", fontsize=11, fontweight="bold", color="#0F2537")
-    axes[1].set_ylabel("Occupancy Rate (%)")
-    axes[1].tick_params(axis="x", rotation=30)
-    axes[1].legend(loc="lower right", fontsize=8, frameon=True)
+        axes[2].plot(sub["period_date"], sub["occupancy_rate"], marker="o", markersize=3.2, linewidth=1.8, label=label, color=color)
+    axes[2].axvspan(pd.Timestamp("2024-09-01"), pd.Timestamp("2024-10-15"), color=crimson, alpha=0.14, label="Sept 2024 Flood Shock")
+    axes[2].axvspan(pd.Timestamp("2026-03-01"), pd.Timestamp("2026-04-30"), color=amber, alpha=0.14, label="Mar Apr 2026 Haze Peak")
+    axes[2].set_title("C. Official MOTS Occupancy Verification\n(Chiang Mai & Chiang Rai)", fontsize=10.4, fontweight="bold", color=navy)
+    axes[2].set_ylabel("Occupancy Rate (%)")
+    axes[2].tick_params(axis="x", rotation=30, labelsize=8.5)
+    axes[2].legend(loc="lower right", fontsize=7.8, frameon=True)
 
     plt.tight_layout()
     p1 = FIGURES_DIR / "01_data_coverage_and_audit.png"
@@ -570,21 +784,21 @@ def plot_eda_figures(
     plt.close(fig)
     saved_paths.append(p1)
 
-    # Figure 2 lag correlation heatmap and structural feature correlation plus VIF screening
-    fig, axes = plt.subplots(1, 2, figsize=(15, 6.4), dpi=300)
+    # Figure 2 FDR adjusted lag heatmap, controlled FE OLS forest plot, and structural VIF screening
+    fig, axes = plt.subplots(1, 3, figsize=(20.5, 6.6), dpi=300, gridspec_kw={"width_ratios": [1.05, 1.0, 1.0]})
 
     piv_r = lag_df.pivot(index="feature_name", columns="lag", values="spearman_r")
-    piv_p = lag_df.pivot(index="feature_name", columns="lag", values="p_value")
+    piv_q = lag_df.pivot(index="feature_name", columns="lag", values="p_value_fdr")
     order_feats = piv_r.abs().max(axis=1).sort_values(ascending=False).index
     piv_r = piv_r.loc[order_feats]
-    piv_p = piv_p.loc[order_feats]
+    piv_q = piv_q.loc[order_feats]
 
     annot = piv_r.copy().astype(object)
     for r_idx in piv_r.index:
         for c_idx in piv_r.columns:
             rv = piv_r.loc[r_idx, c_idx]
-            pv = piv_p.loc[r_idx, c_idx]
-            stars = "**" if pv < 0.01 else ("*" if pv < 0.05 else "")
+            qv = piv_q.loc[r_idx, c_idx]
+            stars = "**" if qv < 0.01 else ("*" if qv < 0.05 else "")
             annot.loc[r_idx, c_idx] = f"{rv:+.2f}{stars}"
 
     piv_r.columns = [f"Lag {c}M" for c in piv_r.columns]
@@ -600,20 +814,91 @@ def plot_eda_figures(
         ax=axes[0],
         cbar_kws={"label": "Spearman r"},
     )
-    axes[0].set_title("Within Province Lag Correlation vs Deseasonalized Occupancy\n(* p<0.05, ** p<0.01)", fontsize=10.5, fontweight="bold", color="#0F2537")
+    axes[0].set_title("A. Exploratory Lag Correlation vs Deseason Occ\n(Stars Strictly BH-FDR: * q<0.05, ** q<0.01)", fontsize=10.0, fontweight="bold", color=navy)
     axes[0].set_ylabel("")
 
-    # Right subplot VIF bars for structural clustering candidates that passed pairwise check
-    vif_plot = struct_screen_df[struct_screen_df["vif_score"].notna()].sort_values("vif_score", ascending=True)
-    bar_colors = ["#0D9488" if s else "#DC2626" for s in vif_plot["is_selected"]]
-    axes[1].barh(vif_plot["feature_name"], vif_plot["vif_score"], color=bar_colors, height=0.58)
-    axes[1].axvline(5.0, color="#D97706", linestyle="--", linewidth=1.4, label="VIF = 5.0 Cutoff")
-    for idx, val in enumerate(vif_plot["vif_score"]):
-        axes[1].text(val + 0.15, idx, f"{val:.2f}", va="center", fontsize=8.5, fontweight="bold")
-    axes[1].set_title("17 Province Structural Clustering VIF Screening\n(Teal = Selected, Red = Dropped)", fontsize=10.5, fontweight="bold", color="#0F2537")
-    axes[1].set_xlabel("Variance Inflation Factor (VIF)")
-    axes[1].legend(loc="lower right", frameon=True)
+    # Panel B within province fixed effects OLS coefficient forest plot (Clustered SE)
+    ols_terms = (ols_occ or {}).get("terms", {})
+    if ols_terms:
+        t_rows = [
+            {
+                "term": k,
+                "beta": float(v["std_beta"]),
+                "se": float(v["se_cluster"]),
+                "p": float(v["p_value"]),
+            }
+            for k, v in ols_terms.items()
+        ]
+        tdf = pd.DataFrame(t_rows).sort_values("beta", ascending=True).reset_index(drop=True)
+        y_i = np.arange(len(tdf))
+        ci_half = 1.96 * tdf["se"]
+        pt_colors = [teal if pv < 0.05 else "#64748B" for pv in tdf["p"]]
+        axes[1].axvline(0.0, color=crimson, linestyle="--", linewidth=1.2)
+        for idx, row in tdf.iterrows():
+            axes[1].errorbar(
+                row["beta"],
+                idx,
+                xerr=float(ci_half.iloc[idx]),
+                fmt="o",
+                color=pt_colors[idx],
+                ecolor=pt_colors[idx],
+                elinewidth=1.8,
+                capsize=4,
+                markersize=6.5,
+            )
+        axes[1].set_yticks(y_i)
+        axes[1].set_yticklabels(tdf["term"], fontsize=8.8)
+        axes[1].set_xlabel("Standardized Beta (95% Province-Clustered CI)")
+        r2_w = float((ols_occ or {}).get("r2_within", 0.0))
+        n_obs = int((ols_occ or {}).get("n_obs", 0))
+        axes[1].set_title(
+            f"B. Within-Province FE OLS (Clustered SE, n={n_obs})\n(R2_within = {r2_w:.3f}; Teal = p<0.05, Gray = NS)",
+            fontsize=10.0,
+            fontweight="bold",
+            color=navy,
+        )
+    else:
+        axes[1].text(0.5, 0.5, "No FE OLS terms available", ha="center", va="center")
+        axes[1].set_title("B. Within-Province FE OLS (Clustered SE)", fontsize=10.0, fontweight="bold", color=navy)
 
+    # Panel C VIF bars for structural clustering candidates distinguishing Core 6, Secondary Context, and Dropped
+    vif_plot = struct_screen_df[struct_screen_df["vif_score"].notna()].sort_values("vif_score", ascending=True).reset_index(drop=True)
+    bar_colors = []
+    for _, r in vif_plot.iterrows():
+        if bool(r["is_selected"]):
+            bar_colors.append(teal)
+        elif float(r["vif_score"]) >= 5.0:
+            bar_colors.append(crimson)
+        else:
+            bar_colors.append("#94A3B8")
+    axes[2].barh(vif_plot["feature_name"], vif_plot["vif_score"], color=bar_colors, height=0.58)
+    axes[2].axvline(5.0, color=amber, linestyle="--", linewidth=1.4)
+    for idx, val in enumerate(vif_plot["vif_score"]):
+        axes[2].text(val + 0.35, idx, f"{val:.2f}", va="center", fontsize=8.4, fontweight="bold")
+    axes[2].set_xlim(0, max(float(vif_plot["vif_score"].max()) * 1.15, 7.0))
+    axes[2].set_title(
+        "C. Structural 17P VIF Screening (Canonical Core 6)\n(Teal = Core 6, Gray = Secondary, Red = Dropped VIF>=5)",
+        fontsize=9.8,
+        fontweight="bold",
+        color=navy,
+    )
+    axes[2].set_xlabel("Variance Inflation Factor (VIF)")
+    vif_legend = [
+        plt.Rectangle((0, 0), 1, 1, color=teal, label="Core 6 Selected (VIF<5)"),
+        plt.Rectangle((0, 0), 1, 1, color="#94A3B8", label="Secondary Context (N/p Guard)"),
+        plt.Rectangle((0, 0), 1, 1, color=crimson, label="Dropped (VIF >= 5.0)"),
+        plt.Line2D([0], [0], color=amber, linestyle="--", linewidth=1.4, label="VIF = 5.0 Cutoff"),
+    ]
+    axes[2].legend(handles=vif_legend, loc="lower right", fontsize=7.6, frameon=True)
+
+    fig.suptitle(
+        "Exploratory Tourism Macro Lag Screening & 17 Province Structural VIF Audit\n"
+        "(Monthly Targets Are Tourism Occupancy/Revenue Only · NSO Debt Is Provincial Clustering Context, Not Debt Relief Proof)",
+        fontsize=11.2,
+        fontweight="bold",
+        color=navy,
+        y=1.03,
+    )
     plt.tight_layout()
     p2 = FIGURES_DIR / "02_lag_correlation_and_vif.png"
     fig.savefig(p2, dpi=300, bbox_inches="tight")
@@ -623,8 +908,8 @@ def plot_eda_figures(
     return saved_paths
 
 
-def run_full_eda_screening() -> dict[str, Any]:
-    """Execute complete empirical EDA screening, persist audit records, and plot 300 DPI figures."""
+def run_full_eda_screening(run_id: str | None = None, persist: bool = True) -> dict[str, Any]:
+    """Execute EDA screening and optionally defer its Gold writes to a shared publish transaction."""
     panel = build_monthly_analysis_panel()
     struct = build_provincial_structural_profile(panel)
 
@@ -634,11 +919,12 @@ def run_full_eda_screening() -> dict[str, Any]:
     struct_screen, selected_struct = screen_structural_clustering_features(struct)
 
     combined = pd.concat([occ_screen, rev_screen, yoy_screen, struct_screen], ignore_index=True)
+    ols_summary = {"occupancy_deseason": ols_occ, "revenue_deseason_pct": ols_rev, "occupancy_yoy_diff": ols_yoy}
+    data_cutoff = pd.to_datetime(panel["period_date"]).max() if not panel.empty else None
     saved_rows = save_screening_results_to_neon(
-        combined,
-        {"occupancy_deseason": ols_occ, "revenue_deseason_pct": ols_rev, "occupancy_yoy_diff": ols_yoy},
-    )
-    figures = plot_eda_figures(panel, struct, lag_occ_df, struct_screen)
+        combined, ols_summary, run_id=run_id, data_cutoff=data_cutoff
+    ) if persist else 0
+    figures = plot_eda_figures(panel, struct, lag_occ_df, struct_screen, ols_occ=ols_occ)
 
     def json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
         """Return records with missing pandas values represented as JSON null, not NaN."""
@@ -647,6 +933,9 @@ def run_full_eda_screening() -> dict[str, Any]:
 
     return {
         "neon_rows_saved": saved_rows,
+        "_publish_screening_rows": combined,
+        "_publish_ols_summary": ols_summary,
+        "_publish_data_cutoff": data_cutoff,
         "selected_dynamic_occ": json_records(
             occ_screen[occ_screen["is_selected"]][
                 ["feature_name", "best_lag_months", "spearman_r", "p_value", "vif_score"]

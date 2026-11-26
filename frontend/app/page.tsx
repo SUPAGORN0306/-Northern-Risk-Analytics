@@ -7,7 +7,6 @@ import { Header } from "@/components/sections/header"
 import { Hero } from "@/components/sections/hero"
 import { RiskOutlook } from "@/components/sections/platforms"
 import { OfficialResources } from "@/components/sections/official-resources"
-import { StaffPortalProvider } from "@/components/staff-portal"
 import { Pricing } from "@/components/sections/pricing"
 import { CTA } from "@/components/sections/cta"
 import { Footer } from "@/components/sections/footer"
@@ -52,9 +51,5 @@ function PublicExperience() {
 }
 
 export default function Home() {
-  return (
-    <StaffPortalProvider>
-      <PublicExperience />
-    </StaffPortalProvider>
-  )
+  return <PublicExperience />
 }

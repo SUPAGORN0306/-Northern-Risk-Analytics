@@ -96,19 +96,25 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
 
   const demoUserEnv = process.env.NEXT_PUBLIC_DEMO_STAFF_USER || ""
   const demoPassEnv = process.env.NEXT_PUBLIC_DEMO_STAFF_PASSWORD || ""
-  const hasDemoFillConfig = Boolean(demoUserEnv && demoPassEnv)
+  const demoStewardUserEnv = process.env.NEXT_PUBLIC_DEMO_STEWARD_USER || ""
+  const demoStewardPassEnv = process.env.NEXT_PUBLIC_DEMO_STEWARD_PASSWORD || ""
+  const hasDemoAnalystConfig = Boolean(demoUserEnv && demoPassEnv)
+  const hasDemoStewardConfig = Boolean(demoStewardUserEnv && demoStewardPassEnv)
+  const hasDemoFillConfig = hasDemoAnalystConfig || hasDemoStewardConfig
 
-  function handleFillDemo() {
-    if (!hasDemoFillConfig) return
+  function handleFillDemo(targetRole: "policy_analyst" | "data_steward") {
+    const userVal = targetRole === "data_steward" ? demoStewardUserEnv : demoUserEnv
+    const passVal = targetRole === "data_steward" ? demoStewardPassEnv : demoPassEnv
+    if (!userVal || !passVal) return
     const form = formRef.current
     if (!form) return
     const usernameInput = form.elements.namedItem("username") as HTMLInputElement | null
     const passwordInput = form.elements.namedItem("password") as HTMLInputElement | null
     if (usernameInput) {
-      usernameInput.value = demoUserEnv
+      usernameInput.value = userVal
     }
     if (passwordInput) {
-      passwordInput.value = demoPassEnv
+      passwordInput.value = passVal
     }
     setSignInMessage("")
   }
@@ -175,9 +181,31 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
           </h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {lang === "th"
-              ? "เข้าใช้งานระบบติดตามภาวะเศรษฐกิจ จำลองความเสี่ยงกระแสเงินสด จัดกลุ่มความเปราะบางรายจังหวัด และออกรายงานสรุปผู้บริหาร"
-              : "Access regional policy monitoring, Monte Carlo risk simulation, dynamic clustering, and executive reporting."}
+              ? "ระบบแบ่งสิทธิ์การทำงานชัดเจนตามบทบาท เพื่อแยกการวิเคราะห์นโยบายออกจากการดูแลคุณภาพและท่อข้อมูล"
+              : "Role-based access separates policy analysis from data quality governance and live pipeline operations."}
           </p>
+          <div className="mt-3 grid gap-2 rounded-2xl border border-border bg-secondary/40 p-3 text-xs">
+            <div>
+              <span className="font-semibold text-foreground">
+                {lang === "th" ? "1) นักวิเคราะห์ข้อมูลและนโยบาย: " : "1) Policy & Data Analyst: "}
+              </span>
+              <span className="text-muted-foreground">
+                {lang === "th"
+                  ? "ติดตาม 17 จังหวัด จำลองความเสี่ยง และออกรายงานนโยบาย"
+                  : "Monitor 17 provinces, run simulations, and export briefs"}
+              </span>
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">
+                {lang === "th" ? "2) ผู้ดูแลคุณภาพข้อมูล: " : "2) Data Quality Steward: "}
+              </span>
+              <span className="text-muted-foreground">
+                {lang === "th"
+                  ? "ตรวจคุณภาพ Medallion/Quarantine ซิงก์ข้อมูลสด และอนุมัติเผยแพร่กลุ่มหลัก"
+                  : "Inspect Medallion/Quarantine health, trigger syncs, and publish primary clusters"}
+              </span>
+            </div>
+          </div>
 
           <form ref={formRef} onSubmit={handleSignIn} className="mt-6 flex flex-col gap-4">
             <div>
@@ -230,14 +258,28 @@ export function StaffPortalProvider({ children }: { children: ReactNode }) {
                 <div className="h-px flex-1 bg-border" />
               </div>
 
-              <button
-                type="button"
-                onClick={handleFillDemo}
-                disabled={loading}
-                className="inline-flex h-11 w-full items-center justify-center rounded-full border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
-              >
-                {lang === "th" ? "กรอกข้อมูลบัญชีทดสอบอัตโนมัติ (Demo Fill)" : "Fill Demo Credentials"}
-              </button>
+              <div className="flex flex-col gap-2">
+                {hasDemoAnalystConfig && (
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo("policy_analyst")}
+                    disabled={loading}
+                    className="inline-flex h-11 w-full items-center justify-center rounded-full border border-border bg-background px-5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+                  >
+                    {lang === "th" ? "กรอกบัญชีทดสอบ: นักวิเคราะห์ข้อมูลและนโยบาย" : "Fill Demo: Policy & Data Analyst"}
+                  </button>
+                )}
+                {hasDemoStewardConfig && (
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo("data_steward")}
+                    disabled={loading}
+                    className="inline-flex h-11 w-full items-center justify-center rounded-full border border-border bg-background px-5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+                  >
+                    {lang === "th" ? "กรอกบัญชีทดสอบ: ผู้ดูแลคุณภาพข้อมูล" : "Fill Demo: Data Quality Steward"}
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>

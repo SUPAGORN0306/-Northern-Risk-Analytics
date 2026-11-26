@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS bronze.bot_docs_raw (
     page_num        INTEGER NOT NULL,
     raw_text        TEXT NOT NULL,
     file_sha256     CHAR(64) NOT NULL,
+    extraction_method TEXT NOT NULL DEFAULT 'pdf_text',
+    ocr_reviewed_by TEXT,
+    ocr_reviewed_at TIMESTAMPTZ,
     fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (file_sha256, page_num)
 );
@@ -124,8 +127,25 @@ CREATE TABLE IF NOT EXISTS silver.policy_chunks (
     chunk_text      TEXT NOT NULL,
     embedding       vector(768),
     content_sha256  CHAR(64) NOT NULL UNIQUE,
+    doc_id          TEXT,
+    doc_version     TEXT NOT NULL DEFAULT '1.0',
+    effective_from  DATE,
+    effective_to    DATE,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    extraction_method TEXT NOT NULL DEFAULT 'pdf_text',
+    ocr_reviewed_by TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE bronze.bot_docs_raw ADD COLUMN IF NOT EXISTS extraction_method TEXT NOT NULL DEFAULT 'pdf_text';
+ALTER TABLE bronze.bot_docs_raw ADD COLUMN IF NOT EXISTS ocr_reviewed_by TEXT;
+ALTER TABLE bronze.bot_docs_raw ADD COLUMN IF NOT EXISTS ocr_reviewed_at TIMESTAMPTZ;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS doc_id TEXT;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS doc_version TEXT NOT NULL DEFAULT '1.0';
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS effective_from DATE;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS effective_to DATE;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS extraction_method TEXT NOT NULL DEFAULT 'pdf_text';
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS ocr_reviewed_by TEXT;
 CREATE INDEX IF NOT EXISTS idx_silver_policy_embedding_hnsw
     ON silver.policy_chunks USING hnsw (embedding vector_cosine_ops);
 
@@ -198,3 +218,125 @@ CREATE TABLE IF NOT EXISTS gold.pipeline_eval_runs (
     estimated_cost_thb  DOUBLE PRECISION DEFAULT 0.0,
     ran_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Silver natural key resolved provincial statistics (latest revision wins with conflict audit)
+CREATE TABLE IF NOT EXISTS silver.provincial_stats_resolved (
+    dataset_name        TEXT NOT NULL,
+    province_code       TEXT NOT NULL,
+    period_date         DATE NOT NULL,
+    metric_name         TEXT NOT NULL,
+    metric_value        DOUBLE PRECISION,
+    source_bronze_id    BIGINT,
+    revision_count      INTEGER NOT NULL DEFAULT 1,
+    has_conflict        BOOLEAN NOT NULL DEFAULT FALSE,
+    resolved_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (dataset_name, province_code, period_date, metric_name)
+);
+-- Idempotent upgrade path for databases that created the resolved table before revision audit fields existed.
+ALTER TABLE silver.provincial_stats_resolved ADD COLUMN IF NOT EXISTS metric_value DOUBLE PRECISION;
+ALTER TABLE silver.provincial_stats_resolved ADD COLUMN IF NOT EXISTS source_bronze_id BIGINT;
+ALTER TABLE silver.provincial_stats_resolved ADD COLUMN IF NOT EXISTS revision_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE silver.provincial_stats_resolved ADD COLUMN IF NOT EXISTS has_conflict BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE silver.provincial_stats_resolved ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_stats_resolved_natural_key
+    ON silver.provincial_stats_resolved (dataset_name, province_code, period_date, metric_name);
+CREATE INDEX IF NOT EXISTS idx_silver_stats_resolved_lookup
+    ON silver.provincial_stats_resolved (dataset_name, period_date DESC);
+
+-- Structured document versioning metadata on silver.policy_chunks
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS doc_id TEXT;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS doc_version TEXT DEFAULT '1.0';
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS effective_from DATE;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS effective_to DATE;
+ALTER TABLE silver.policy_chunks ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+CREATE INDEX IF NOT EXISTS idx_silver_policy_active_doc
+    ON silver.policy_chunks (is_active, doc_id);
+
+-- Lineage metadata on gold.feature_screening_results
+ALTER TABLE gold.feature_screening_results ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE gold.feature_screening_results ADD COLUMN IF NOT EXISTS feature_spec_version TEXT;
+ALTER TABLE gold.feature_screening_results ADD COLUMN IF NOT EXISTS data_cutoff DATE;
+ALTER TABLE gold.feature_screening_results ADD COLUMN IF NOT EXISTS p_block_perm DOUBLE PRECISION;
+
+-- Typed SQL columns are the stable query contract; JSONB remains for backwards compatibility and evolving metadata.
+-- Missingness taxonomy and lineage are persisted alongside the typed columns.
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS feature_spec_version TEXT;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS data_cutoff DATE;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS occupancy_rate DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS occupancy_deseason DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS occupancy_yoy_diff DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS revenue_total_mthb DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS pm25_mean DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS rainfall_sum_mm DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS visitors_total DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS visitors_yoy_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS revenue_deseason_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS revenue_yoy_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS foreign_visitor_share DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS rainfall_excess_mm DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS heavy_rain_days DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS pm25_days_over_37_5 DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS pm25_days_over_75_0 DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS pm25_z_prov DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS th_cpi_yoy_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS oil_brent_yoy_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS usdthb_yoy_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS flood_shock_subidx DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS haze_shock_subidx DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS physical_hazard_subidx DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS macro_pressure_subidx DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS hazard_data_coverage_pct DOUBLE PRECISION;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS shock_driver TEXT;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS shock_band TEXT;
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS data_status TEXT NOT NULL DEFAULT 'observed';
+ALTER TABLE gold.province_monthly_panel ADD COLUMN IF NOT EXISTS metric_status JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE gold.province_monthly_panel DROP CONSTRAINT IF EXISTS province_monthly_panel_occ_range_check;
+ALTER TABLE gold.province_monthly_panel ADD CONSTRAINT province_monthly_panel_occ_range_check
+    CHECK (occupancy_rate IS NULL OR (occupancy_rate >= 0 AND occupancy_rate <= 100));
+ALTER TABLE gold.province_monthly_panel DROP CONSTRAINT IF EXISTS province_monthly_panel_pm25_range_check;
+ALTER TABLE gold.province_monthly_panel ADD CONSTRAINT province_monthly_panel_pm25_range_check
+    CHECK (pm25_mean IS NULL OR (pm25_mean >= 0 AND pm25_mean <= 500));
+ALTER TABLE gold.province_monthly_panel DROP CONSTRAINT IF EXISTS province_monthly_panel_rain_range_check;
+ALTER TABLE gold.province_monthly_panel ADD CONSTRAINT province_monthly_panel_rain_range_check
+    CHECK (rainfall_sum_mm IS NULL OR rainfall_sum_mm >= 0);
+ALTER TABLE gold.province_monthly_panel DROP CONSTRAINT IF EXISTS province_monthly_panel_status_check;
+ALTER TABLE gold.province_monthly_panel ADD CONSTRAINT province_monthly_panel_status_check
+    CHECK (data_status IN ('observed', 'no_data', 'true_zero', 'not_applicable'));
+
+-- Lineage metadata on gold.province_clusters and append only snapshot archive for run to run diff
+ALTER TABLE gold.province_clusters ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE gold.province_clusters ADD COLUMN IF NOT EXISTS feature_spec_version TEXT;
+ALTER TABLE gold.province_clusters ADD COLUMN IF NOT EXISTS data_cutoff DATE;
+
+CREATE TABLE IF NOT EXISTS gold.cluster_run_history (
+    run_id               TEXT NOT NULL,
+    province_code        CHAR(2) NOT NULL REFERENCES silver.dim_provinces(province_code),
+    model_used           TEXT NOT NULL,
+    feature_spec_version TEXT NOT NULL,
+    git_commit           TEXT,
+    data_cutoff          DATE,
+    cluster_id           SMALLINT NOT NULL,
+    cluster_label        TEXT NOT NULL,
+    shock_intensity      DOUBLE PRECISION NOT NULL,
+    exposure_score       DOUBLE PRECISION NOT NULL,
+    silhouette_score     DOUBLE PRECISION,
+    computed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (run_id, province_code)
+);
+CREATE INDEX IF NOT EXISTS idx_gold_cluster_history_time
+    ON gold.cluster_run_history (computed_at DESC);
+
+-- Anonymous RAG chat quality feedback log without PII or conversation text
+CREATE TABLE IF NOT EXISTS gold.chat_feedback (
+    feedback_id      BIGSERIAL PRIMARY KEY,
+    rating           TEXT NOT NULL CHECK (rating IN ('helpful', 'inaccurate', 'incomplete')),
+    reason_tag       TEXT,
+    language         TEXT NOT NULL DEFAULT 'th' CHECK (language IN ('th', 'en')),
+    model_used       TEXT,
+    top_vector_sim   DOUBLE PRECISION,
+    was_refused      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gold_chat_feedback_time
+    ON gold.chat_feedback (created_at DESC);

@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -33,14 +34,17 @@ from src.analytics.vulnerability_lab import (
     run_empirical_monte_carlo,
     run_interactive_clustering,
 )
+from src.analytics.clustering import compute_cluster_run_diff
 from src.analytics.vulnerability_tiering import (
     build_tier_summary,
+    compute_weight_sensitivity,
     evaluate_province_vulnerability,
 )
 from src.db.connection import fetch_all
 from src.extract.air4thai_client import fetch_northern_air4thai
 from src.evaluation.layered_eval import build_layered_evaluation_summary
 from src.guardrails.schemas import get_province_metadata, resolve_northern_province
+from src.config.feature_registry import get_git_commit_short, get_spec_version
 from src.rag.policy_assistant import (
     answer_policy_question,
     assess_financial_resilience,
@@ -59,6 +63,25 @@ load_dotenv(BACKEND_DIR / ".env")
 ICT_TZ = timezone(timedelta(hours=7))
 TOKEN_TTL_SECONDS = 8 * 3600
 READ_CACHE_TTL_SECONDS = 120.0
+
+
+def _build_provenance(
+    population_scope: str,
+    source_org: list[str],
+    as_of_date: str | None,
+    run_id: str | None = None,
+    ecological_fallacy_warning: bool = True,
+) -> dict[str, Any]:
+    """Attach enough metadata to interpret and reproduce public analytics outputs."""
+    return {
+        "population_scope": population_scope,
+        "source_org": source_org,
+        "as_of_date": as_of_date,
+        "run_id": run_id,
+        "feature_spec_version": get_spec_version(),
+        "git_commit": get_git_commit_short(),
+        "ecological_fallacy_warning": ecological_fallacy_warning,
+    }
 
 _CACHE_LOCK = threading.Lock()
 _READ_CACHE: dict[str, tuple[float, Any]] = {}
@@ -123,10 +146,29 @@ LIMIT_STAFF_LOGIN = str(_RATE_CFG.get("staff_login", "10/minute"))
 
 limiter = Limiter(key_func=get_remote_address)
 
+def _is_production_env() -> bool:
+    """Detect production deployment runtime on Render or explicit ENV setting."""
+    return (
+        os.getenv("RENDER", "").strip().lower() in {"1", "true", "yes"}
+        or os.getenv("ENV", "").strip().lower() in {"prod", "production"}
+    )
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    """Fail fast at production startup when dedicated staff auth signing secret is missing."""
+    if _is_production_env():
+        secret = (os.getenv("STAFF_AUTH_SECRET") or "").strip()
+        if len(secret) < 16:
+            raise RuntimeError("STAFF_AUTH_SECRET must be explicitly configured with at least 16 characters in production")
+    yield
+
+
 app = FastAPI(
-    title="Northern Thailand Service Sector Risk and Resilience API",
-    description="Regional economic pulse, financial resilience navigator, and staff policy monitor for 17 Northern provinces.",
+    title="NorthRisk Analytics API",
+    description="Debt relief planning and regional economic risk analytics API for Thailand 17 Northern provinces.",
     version="1.0.0",
+    lifespan=_app_lifespan,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -134,7 +176,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Configure strict CORS origins from environment variable with project scoped Vercel regex
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
-    "https://northrisk.vercel.app,http://localhost:3000,http://127.0.0.1:3000",
+    "https://northrisk.vercel.app,https://northrisk-analytics.vercel.app,http://localhost:3000,http://127.0.0.1:3000",
 )
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 _allowed_origin_regex = os.getenv(
@@ -207,15 +249,65 @@ class ChatRequestPayload(BaseModel):
     regional_scope: bool = False
 
 
-# Stateless HMAC SHA256 staff token helpers
+class ChatFeedbackPayload(BaseModel):
+    """Minimal categorical feedback without retaining question or answer text."""
+
+    rating: Literal["helpful", "inaccurate", "incomplete"]
+    reason_tag: Literal["wrong_fact", "missing_source", "unclear", "other"] | None = None
+    language: Literal["th", "en"] = "th"
+    model_used: str | None = Field(default=None, max_length=80)
+    top_vector_sim: float | None = Field(default=None, ge=0.0, le=1.0)
+    was_refused: bool = False
+
+
+# Stateless HMAC SHA256 staff token helpers and role based access control
+
+STAFF_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "policy_analyst": ("view_overview", "export_brief", "run_modeling"),
+    "demo_policy_analyst": ("view_overview", "export_brief", "run_modeling"),
+    "data_steward": ("view_health", "trigger_refresh", "publish_clusters", "view_overview", "run_modeling"),
+    "demo_data_steward": ("view_health", "trigger_refresh", "publish_clusters", "view_overview", "run_modeling"),
+    "admin": (
+        "view_overview",
+        "export_brief",
+        "run_modeling",
+        "publish_clusters",
+        "view_health",
+        "trigger_refresh",
+    ),
+}
+
+
+def _permissions_for_role(role: str | None) -> tuple[str, ...]:
+    """Return canonical permission tuple for a staff role."""
+    return STAFF_ROLE_PERMISSIONS.get(str(role or "").strip().lower(), ())
+
+
+def _staff_has_permission(staff: dict[str, Any], permission: str) -> bool:
+    """Check whether an authenticated staff token payload grants the requested permission."""
+    return permission in _permissions_for_role(staff.get("role"))
+
 
 def _get_auth_secret() -> bytes:
-    """Return signing secret from environment or deterministic fallback derived from env."""
-    secret = os.getenv("STAFF_AUTH_SECRET") or os.getenv("DATABASE_URL") or "northrisk_local_dev_secret"
-    return hashlib.sha256(secret.encode("utf-8")).digest()
+    """Return dedicated signing secret and fail closed when unconfigured."""
+    dedicated = (os.getenv("STAFF_AUTH_SECRET") or "").strip()
+    if dedicated:
+        return hashlib.sha256(dedicated.encode("utf-8")).digest()
+    if _is_production_env():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dedicated STAFF_AUTH_SECRET is required in production",
+        )
+    local_fallback = (os.getenv("DATABASE_URL") or "").strip()
+    if not local_fallback:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Staff authentication signing secret is not configured",
+        )
+    return hashlib.sha256(local_fallback.encode("utf-8")).digest()
 
 
-def _create_staff_token(username: str, role: str = "analyst") -> dict[str, Any]:
+def _create_staff_token(username: str, role: str = "policy_analyst") -> dict[str, Any]:
     """Create signed bearer token valid for eight hours without external JWT dependencies."""
     exp_ts = int(time.time()) + TOKEN_TTL_SECONDS
     payload = {"sub": username, "role": role, "exp": exp_ts}
@@ -227,6 +319,7 @@ def _create_staff_token(username: str, role: str = "analyst") -> dict[str, Any]:
         "token_type": "bearer",
         "expires_in_seconds": TOKEN_TTL_SECONDS,
         "role": role,
+        "permissions": list(_permissions_for_role(role)),
         "username": username,
     }
 
@@ -256,6 +349,40 @@ def require_staff_token(authorization: str | None = Header(default=None)) -> dic
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Staff authentication required")
     token = authorization.split(" ", 1)[1].strip()
     return _verify_staff_token(token)
+
+
+def require_staff_permission(permission: str):
+    """Build a FastAPI dependency enforcing role based access control for a specific permission."""
+
+    def _dependency(staff: dict[str, Any] = Depends(require_staff_token)) -> dict[str, Any]:
+        if not _staff_has_permission(staff, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{staff.get('role', 'unknown')}' does not have permission '{permission}'.",
+            )
+        return staff
+
+    return _dependency
+
+
+def _configured_staff_accounts() -> list[tuple[str, str, str]]:
+    """Collect configured staff login accounts mapped to their operational RBAC roles."""
+    accounts: list[tuple[str, str, str]] = []
+    analyst_user = (os.getenv("STAFF_ANALYST_USERNAME") or os.getenv("STAFF_DEMO_USERNAME") or "").strip()
+    analyst_pass = os.getenv("STAFF_ANALYST_PASSWORD") or os.getenv("STAFF_DEMO_PASSWORD") or ""
+    if analyst_user and analyst_pass:
+        accounts.append((analyst_user, analyst_pass, "policy_analyst"))
+
+    steward_user = (os.getenv("STAFF_STEWARD_USERNAME") or "").strip()
+    steward_pass = os.getenv("STAFF_STEWARD_PASSWORD") or ""
+    if steward_user and steward_pass:
+        accounts.append((steward_user, steward_pass, "data_steward"))
+
+    admin_user = (os.getenv("STAFF_ADMIN_USERNAME") or "").strip()
+    admin_pass = os.getenv("STAFF_ADMIN_PASSWORD") or ""
+    if admin_user and admin_pass:
+        accounts.append((admin_user, admin_pass, "admin"))
+    return accounts
 
 
 def _fetch_nso_latest_by_province() -> dict[str, dict[str, float]]:
@@ -324,29 +451,37 @@ def health_check() -> dict[str, Any]:
 @app.post("/api/auth/staff-login")
 @limiter.limit(LIMIT_STAFF_LOGIN)
 def staff_login(request: Request, payload: StaffLoginRequest) -> dict[str, Any]:
-    """Authenticate staff analyst credentials failing closed when env secrets are unset."""
-    expected_user = (os.getenv("STAFF_DEMO_USERNAME") or "").strip()
-    expected_pass = os.getenv("STAFF_DEMO_PASSWORD") or ""
-    if not expected_user or not expected_pass:
+    """Authenticate staff credentials across configured RBAC roles failing closed when unset."""
+    accounts = _configured_staff_accounts()
+    if not accounts:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Staff authentication credentials are not configured on this server.",
         )
-    user_ok = hmac.compare_digest(payload.username.strip(), expected_user)
-    pass_ok = hmac.compare_digest(payload.password, expected_pass)
-    if not (user_ok and pass_ok):
+    incoming_user = payload.username.strip()
+    matched: tuple[str, str] | None = None
+    for expected_user, expected_pass, role in accounts:
+        user_ok = hmac.compare_digest(incoming_user, expected_user)
+        pass_ok = hmac.compare_digest(payload.password, expected_pass)
+        if user_ok and pass_ok and matched is None:
+            matched = (expected_user, role)
+    if matched is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid staff credentials")
-    return _create_staff_token(username=expected_user, role="policy_analyst")
+    return _create_staff_token(username=matched[0], role=matched[1])
 
 
 @app.post("/api/auth/demo-access")
-def staff_demo_access() -> dict[str, Any]:
+def staff_demo_access(
+    role: Literal["policy_analyst", "data_steward"] = Query(default="policy_analyst"),
+) -> dict[str, Any]:
     """Block unauthenticated demo token issuance unless explicitly opted in for local testing."""
     if os.getenv("ALLOW_DEMO_STAFF_ACCESS", "false").strip().lower() != "true":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Unauthenticated demo token issuance is disabled. Please sign in with staff credentials.",
         )
+    if role == "data_steward":
+        return _create_staff_token(username="demo_steward", role="demo_data_steward")
     return _create_staff_token(username="demo_analyst", role="demo_policy_analyst")
 
 
@@ -375,7 +510,7 @@ def get_risk_outlook(
         )
         SELECT
             d.province_code, d.name_th, d.name_en, d.subregion, d.lat, d.lon,
-            p.month_date, p.composite_shock_idx, p.target_metrics, p.selected_features,
+            p.month_date, p.composite_shock_idx, p.target_metrics, p.selected_features, p.run_id,
             c.cluster_id, c.cluster_label, c.shock_intensity, c.exposure_score, c.recommended_policy,
             a.obs_date AS air_obs_date, a.pm25_mean AS live_pm25_mean,
             a.exceeds_37_5 AS live_pm25_elevated, a.exceeds_75_0 AS live_pm25_critical
@@ -567,6 +702,12 @@ def get_risk_outlook(
 
     result = {
         "latest_month": latest_month,
+        "provenance": _build_provenance(
+            "17_provinces_northern_thailand", ["MOTS", "NSO", "PCD Air4Thai", "Open-Meteo", "BOT"],
+            str(latest_month) if latest_month else None,
+            str(next((r["run_id"] for r in latest_rows if r.get("run_id")), "")) or None,
+            ecological_fallacy_warning=True,
+        ),
         "regional_summary": {
             "provinces_count": len(provinces_out),
             "avg_occupancy_pct": round(sum(occ_list) / max(len(occ_list), 1), 2),
@@ -580,6 +721,7 @@ def get_risk_outlook(
         },
         "provinces": provinces_out,
         "vulnerability_tiers": build_tier_summary(provinces_out),
+        "weight_sensitivity": compute_weight_sensitivity(provinces_out),
         "regional_timeseries": ts_out,
         "recent_verified_news": news_out,
         "default_province_detail": default_cm_detail,
@@ -618,7 +760,7 @@ def get_province_detail(province_code: str) -> dict[str, Any]:
 
     series_rows = fetch_all(
         """
-        SELECT month_date, target_metrics, selected_features, composite_shock_idx
+        SELECT month_date, target_metrics, selected_features, composite_shock_idx, run_id
         FROM gold.province_monthly_panel
         WHERE province_code = :code
         ORDER BY month_date ASC
@@ -701,6 +843,12 @@ def get_province_detail(province_code: str) -> dict[str, Any]:
             "recommended_policy": str(meta["recommended_policy"] or ""),
         },
         "nso_2025": nso_latest,
+        "provenance": _build_provenance(
+            f"province_{code}", ["MOTS", "NSO", "PCD Air4Thai", "Open-Meteo", "BOT"],
+            str(monthly_series[-1]["month_date"]) if monthly_series else None,
+            str(series_rows[-1]["run_id"]) if series_rows and series_rows[-1].get("run_id") else None,
+            ecological_fallacy_warning=True,
+        ),
         "monthly_series": monthly_series,
         "seasonality_calendar": seasonality,
         "verified_news": [
@@ -743,6 +891,10 @@ def post_relief_check(request: Request, payload: ReliefCheckPayload) -> dict[str
         total_principal_thb=payload.total_principal_thb,
         debt_payment_unspecified=payload.debt_payment_unspecified,
     )
+    res["provenance"] = _build_provenance(
+        "individual_or_business_user_inputs", ["user-provided inputs", "BOT policy documents"],
+        datetime.now(ICT_TZ).date().isoformat(), ecological_fallacy_warning=False,
+    )
     _invalidate_read_cache()
     return res
 
@@ -766,6 +918,13 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
 
     province_context = None
     data_sources: list[dict[str, Any]] = []
+    asks_debt_or_policy = bool(
+        re.search(
+            r"หนี้|สินเชื่อ|ค่างวด|ผ่อน|มาตรการ|โครงการ|ช่วยเหลือ|ปรับโครงสร้าง|พักชำระ|พักต้น|คลินิก|ธนาคาร|เจ้าหนี้|แก้หนี้|debt|loan|installment|payment|relief|restructur|lender|program",
+            payload.question,
+            re.I,
+        )
+    )
     is_regional_news_question = bool(
         re.search(r"ข่าว|สารพิษ|สารหนู|มลพิษ|น้ำท่วม|เหตุการณ์|news|toxin|arsenic|pollution|flood|incident", payload.question, re.I)
     )
@@ -776,7 +935,7 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
             province_code, payload.language, payload.question, wants_weather, wants_air
         )
         province_context_data = json.loads(province_context)
-        if is_regional_news_question and not province_context_data.get("verified_local_news_in_database"):
+        if is_regional_news_question and not asks_debt_or_policy and not province_context_data.get("verified_local_news_in_database"):
             cutoff = (datetime.now(ICT_TZ).date() - timedelta(days=120)).isoformat()
             no_match_answer = (
                 "ยังไม่พบข่าวเหตุสารพิษหรือมลพิษทางน้ำที่ผ่านการคัดกรองในฐานข้อมูลจังหวัดนี้ช่วง 120 วันที่ผ่านมา ข้อนี้หมายถึงไม่พบรายการในฐานข้อมูล ไม่ได้ยืนยันว่าไม่มีเหตุเกิดขึ้น"
@@ -803,7 +962,7 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
             }
     elif payload.regional_scope:
         province_context, data_sources = _build_chat_regional_context(payload.language, payload.question)
-        if is_regional_news_question and not json.loads(province_context).get("verified_local_news_events"):
+        if is_regional_news_question and not asks_debt_or_policy and not json.loads(province_context).get("verified_local_news_events"):
             is_toxin_query = bool(re.search(r"สารพิษ|สารหนู|arsenic|toxin", payload.question, re.I))
             no_match_answer = (
                 "ยังไม่พบข่าวเหตุสารพิษหรือมลพิษทางน้ำที่ผ่านการยืนยันในฐานข้อมูลช่วง 120 วันที่ผ่านมา ข้อนี้หมายถึงไม่พบรายการในฐานข้อมูล ไม่ได้ยืนยันว่าไม่มีเหตุเกิดขึ้น"
@@ -828,8 +987,9 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
         province_context, data_sources = _build_chat_regional_news_context(payload.language, payload.question)
     is_province_data_question = bool(
         province_context
+        and not asks_debt_or_policy
         and (is_regional_news_question or re.search(
-            r"เศรษฐกิจ|รายได้|ท่องเที่ยว|เข้าพัก|ฝน|ฝุ่น|อากาศ|pm\s*2\.5|มลพิษ|สารพิษ|น้ำท่วม|ข่าว|economic|revenue|tourism|occupancy|rain|weather|air quality|pollution|news|flood",
+            r"เศรษฐกิจ|รายได้(?:จังหวัด|ท่องเที่ยว|พื้นที่|เฉลี่ย)|ท่องเที่ยว|อัตราเข้าพัก|เข้าพัก|ฝน|ฝุ่น|อากาศ|pm\s*2\.5|มลพิษ|สารพิษ|น้ำท่วม|ข่าว|economic|(?:provincial|tourism|local|average)\s+revenue|tourism|occupancy|rain|weather|air quality|pollution|news|flood",
             payload.question,
             flags=re.IGNORECASE,
         ))
@@ -853,6 +1013,32 @@ def post_chat(request: Request, payload: ChatRequestPayload) -> dict[str, Any]:
         "latency_ms": res["latency_ms"],
         "data_sources": data_sources,
     }
+
+
+@app.post("/api/chat/feedback")
+@limiter.limit("30/minute")
+def post_chat_feedback(request: Request, payload: ChatFeedbackPayload) -> dict[str, Any]:
+    """Store anonymous categorical RAG feedback only; never accept transcript or free text."""
+    from src.db.connection import bulk_execute
+
+    bulk_execute(
+        """
+        INSERT INTO gold.chat_feedback (
+            rating, reason_tag, language, model_used, top_vector_sim, was_refused
+        ) VALUES (
+            :rating, :reason_tag, :language, :model_used, :top_vector_sim, :was_refused
+        )
+        """,
+        [{
+            "rating": payload.rating,
+            "reason_tag": payload.reason_tag,
+            "language": payload.language,
+            "model_used": payload.model_used,
+            "top_vector_sim": payload.top_vector_sim,
+            "was_refused": payload.was_refused,
+        }],
+    )
+    return {"saved": True}
 
 
 def _build_chat_province_context(
@@ -1464,8 +1650,15 @@ def _get_doc_indexed_pages(doc_title: str, source_table: str) -> list[int]:
     if cached is not None:
         return cached
     table_name = "bronze.bot_docs_raw" if source_table == "bronze" else "silver.policy_chunks"
+    active_clause = (
+        " AND is_active = TRUE"
+        " AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)"
+        " AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)"
+        if source_table == "silver"
+        else ""
+    )
     rows = fetch_all(
-        f"SELECT DISTINCT page_num FROM {table_name} WHERE doc_title = :title ORDER BY page_num ASC",
+        f"SELECT DISTINCT page_num FROM {table_name} WHERE doc_title = :title{active_clause} ORDER BY page_num ASC",
         {"title": doc_title},
     )
     pages = sorted({int(r["page_num"]) for r in rows if r.get("page_num") is not None})
@@ -1493,7 +1686,8 @@ def get_policy_page(
             page_num,
             raw_text
         FROM bronze.bot_docs_raw
-        WHERE doc_title = :title AND page_num = :pnum
+        WHERE is_active = TRUE
+          AND doc_title = :title AND page_num = :pnum
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -1529,7 +1723,10 @@ def get_policy_page(
             page_num,
             chunk_text
         FROM silver.policy_chunks
-        WHERE doc_title = :title AND page_num = :pnum
+        WHERE is_active = TRUE
+          AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+          AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+          AND doc_title = :title AND page_num = :pnum
         ORDER BY chunk_id ASC
         """,
         {"title": clean_title, "pnum": int(page_num)},
@@ -1570,7 +1767,7 @@ def get_policy_page(
 @app.get("/api/policy-monitor")
 def get_policy_monitor(
     fresh: bool = Query(default=False),
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("view_overview")),
 ) -> dict[str, Any]:
     """Serve staff policy monitor with 4 quadrant clustering, screening stats, news, and anonymized demand."""
     t0 = time.perf_counter()
@@ -1580,6 +1777,7 @@ def get_policy_monitor(
             return {
                 **cached,
                 "authenticated_staff": staff["sub"],
+                "staff_role": staff.get("role"),
                 "cache_status": "HIT",
                 "server_query_ms": round((time.perf_counter() - t0) * 1000.0, 1),
             }
@@ -1742,13 +1940,32 @@ def get_policy_monitor(
     panel_start = str(quad_rows[0]["min_month"]) if quad_rows and quad_rows[0].get("min_month") else ""
     panel_end = str(quad_rows[0]["max_month"]) if quad_rows and quad_rows[0].get("max_month") else ""
 
+    dq_row = fetch_all(
+        """
+        SELECT
+            (SELECT metrics_json->>'status' FROM gold.pipeline_eval_runs WHERE run_type = 'layer2_data_quality' ORDER BY ran_at DESC LIMIT 1) AS latest_dq_status,
+            (SELECT ran_at FROM gold.pipeline_eval_runs WHERE run_type = 'layer2_data_quality' ORDER BY ran_at DESC LIMIT 1) AS latest_dq_checked_at,
+            (SELECT max(obs_date) FROM silver.air_daily) AS air_latest_date,
+            (SELECT max(event_date) FROM silver.news_events) AS news_latest_date,
+            (SELECT count(*) FROM silver.quarantine) AS quarantine_rows
+        """
+    )[0]
+
     payload = {
         "authenticated_staff": staff["sub"],
+        "staff_role": staff.get("role"),
         "model_used": str(quad_rows[0]["model_used"]) if quad_rows else None,
         "silhouette_score": float(quad_rows[0]["silhouette_score"]) if quad_rows and quad_rows[0]["silhouette_score"] is not None else None,
         "panel_months": panel_months,
         "panel_start_month": panel_start,
         "panel_end_month": panel_end,
+        "data_quality_summary": {
+            "latest_dq_status": str(dq_row["latest_dq_status"]) if dq_row.get("latest_dq_status") else None,
+            "latest_dq_checked_at": dq_row["latest_dq_checked_at"].isoformat() if dq_row.get("latest_dq_checked_at") else None,
+            "air_latest_date": str(dq_row["air_latest_date"]) if dq_row.get("air_latest_date") else None,
+            "news_latest_date": str(dq_row["news_latest_date"]) if dq_row.get("news_latest_date") else None,
+            "quarantine_rows": int(dq_row.get("quarantine_rows") or 0),
+        },
         "quadrant_provinces": quadrant_points,
         "feature_screening": screening_rows,
         "public_demand_signals": {
@@ -1781,7 +1998,7 @@ def get_policy_monitor(
 @app.get("/api/data-health")
 def get_data_health(
     fresh: bool = Query(default=False),
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("view_health")),
 ) -> dict[str, Any]:
     """Serve live medallion layer row counts, quarantine diagnostics, RAG storage, and eval runs."""
     t0 = time.perf_counter()
@@ -1807,8 +2024,12 @@ def get_data_health(
                 (SELECT count(*) FROM silver.air_daily) AS silver_air_daily,
                 (SELECT count(*) FROM silver.news_events) AS silver_news_events,
                 (SELECT count(*) FROM silver.quarantine) AS silver_quarantine,
-                (SELECT count(*) FROM silver.policy_chunks) AS silver_policy_chunks,
-                (SELECT count(DISTINCT doc_title) FROM silver.policy_chunks) AS silver_policy_docs,
+                (SELECT count(*) FROM silver.policy_chunks WHERE is_active = TRUE
+                    AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+                    AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS silver_policy_chunks,
+                (SELECT count(DISTINCT doc_id) FROM silver.policy_chunks WHERE is_active = TRUE
+                    AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+                    AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS silver_policy_docs,
                 round((pg_total_relation_size('silver.policy_chunks') / 1048576.0)::numeric, 2) AS rag_storage_mb,
                 (SELECT count(*) FROM gold.feature_screening_results) AS gold_screening,
                 (SELECT count(*) FROM gold.province_monthly_panel) AS gold_monthly_panel,
@@ -1855,9 +2076,12 @@ def get_data_health(
             ORDER BY run_type, ran_at DESC
         ),
         docs_cte AS (
-            SELECT doc_title, doc_url, count(*) AS chunk_count, count(DISTINCT page_num) AS page_count
+            SELECT doc_id, doc_title, doc_url, count(*) AS chunk_count, count(DISTINCT page_num) AS page_count
             FROM silver.policy_chunks
-            GROUP BY doc_title, doc_url
+            WHERE is_active = TRUE
+              AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+              AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+            GROUP BY doc_id, doc_title, doc_url
             ORDER BY doc_title
         )
         SELECT
@@ -1904,6 +2128,7 @@ def get_data_health(
         "indexed_official_documents": [
             {
                 "doc_title": str(d["doc_title"]),
+                "doc_id": str(d["doc_id"] or ""),
                 "doc_url": str(d.get("doc_url") or ""),
                 "page_count": int(d["page_count"]),
                 "chunk_count": int(d["chunk_count"]),
@@ -1912,6 +2137,7 @@ def get_data_health(
         ],
         "latest_eval_runs": trimmed_evals,
         "layered_evaluation": layered_evaluation,
+        "cluster_run_diff": compute_cluster_run_diff(),
     }
     _cache_set("data_health", payload)
     return {
@@ -1925,7 +2151,7 @@ def get_data_health(
 def export_executive_brief(
     format: Literal["json", "markdown", "html"] = Query(default="json"),
     lang: Literal["th", "en"] = Query(default="th"),
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("export_brief")),
 ) -> Any:
     """Export one page printable executive policy brief in JSON, Markdown, or HTML format."""
     brief = build_executive_brief_data(language=lang)
@@ -1943,7 +2169,7 @@ def export_executive_brief(
 @limiter.limit(LIMIT_REFRESH)
 def trigger_incremental_refresh(
     request: Request,
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("trigger_refresh")),
 ) -> dict[str, Any]:
     """Run live Air4Thai sensor sync, 17 province RSS news fetch, and immediate Silver extraction."""
     import logging
@@ -2006,9 +2232,14 @@ class StaffMonteCarloRequest(BaseModel):
 @app.post("/api/staff/recluster")
 def staff_recluster(
     payload: StaffReclusterRequest,
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("run_modeling")),
 ) -> dict[str, Any]:
     """Execute dynamic KMeans clustering with live VIF check and targeted policy prescriptions."""
+    if payload.persist and not _staff_has_permission(staff, "publish_clusters"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Publishing clusters to the primary production map requires data_steward or admin role.",
+        )
     res = run_interactive_clustering(
         k=payload.k,
         feature_keys=payload.feature_keys,
@@ -2017,13 +2248,14 @@ def staff_recluster(
     if payload.persist:
         _invalidate_read_cache()
     res["triggered_by"] = staff["sub"]
+    res["triggered_role"] = staff.get("role")
     return res
 
 
 @app.post("/api/staff/monte-carlo")
 def staff_monte_carlo(
     payload: StaffMonteCarloRequest,
-    staff: dict[str, Any] = Depends(require_staff_token),
+    staff: dict[str, Any] = Depends(require_staff_permission("run_modeling")),
 ) -> dict[str, Any]:
     """Execute Empirical Bootstrap Monte Carlo cashflow stress test."""
     res = run_empirical_monte_carlo(
@@ -2033,6 +2265,7 @@ def staff_monte_carlo(
         n_simulations=payload.n_simulations,
     )
     res["triggered_by"] = staff["sub"]
+    res["triggered_role"] = staff.get("role")
     return res
 
 

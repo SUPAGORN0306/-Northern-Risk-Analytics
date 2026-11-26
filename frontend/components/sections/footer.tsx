@@ -3,6 +3,7 @@
 import { motion, useInView } from "motion/react"
 import { Activity } from "lucide-react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { useRef } from "react"
 import { StaffLoginButton } from "@/components/staff-login-dialog"
 import { useAppState } from "@/lib/i18n"
@@ -11,18 +12,24 @@ export function Footer() {
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: "-50px" })
   const { lang } = useAppState()
+  const pathname = usePathname()
+  const homePath = pathname === "/" ? "" : "/"
 
   const footerLinks =
     lang === "th"
       ? [
-          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: "#relief-assistant" },
-          { label: "สถานการณ์รายจังหวัด", href: "#risk-outlook" },
-          { label: "เอกสารและสายด่วน", href: "#official-resources" },
+          { label: "เช็กหนี้และสิทธิช่วยเหลือ", href: `${homePath}#relief-assistant` },
+          { label: "สถานการณ์รายจังหวัด", href: `${homePath}#risk-outlook` },
+          { label: "เอกสารและสายด่วน", href: `${homePath}#official-resources` },
+          { label: "คุยกับผู้ช่วย", href: "/chat" },
+          { label: "ความเป็นส่วนตัว", href: "/privacy" },
         ]
       : [
-          { label: "Check Debt & Relief", href: "#relief-assistant" },
-          { label: "Provincial Outlook", href: "#risk-outlook" },
-          { label: "Documents & Hotlines", href: "#official-resources" },
+          { label: "Check Debt & Relief", href: `${homePath}#relief-assistant` },
+          { label: "Provincial Outlook", href: `${homePath}#risk-outlook` },
+          { label: "Documents & Hotlines", href: `${homePath}#official-resources` },
+          { label: "Chat with us", href: "/chat" },
+          { label: "Privacy", href: "/privacy" },
         ]
 
   return (
@@ -38,7 +45,7 @@ export function Footer() {
           <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
             <Activity aria-hidden="true" className="size-5" />
             <span className="font-display text-base font-semibold tracking-tight">
-              {lang === "th" ? "ระบบวิเคราะห์ความเสี่ยงเศรษฐกิจภาคเหนือ" : "NorthRisk Analytics"}
+              {lang === "th" ? "วางแผนแก้หนี้และเศรษฐกิจภาคเหนือ" : "NorthRisk Analytics"}
             </span>
           </Link>
           <p className="mt-2 max-w-md text-xs leading-5 text-muted-foreground">
@@ -61,10 +68,15 @@ export function Footer() {
         </nav>
       </div>
       <div className="border-t border-border px-5 pb-24 pt-4 text-center sm:px-8">
-        <p className="text-sm leading-6 text-[#4B5563]">
+        <p className="text-xs leading-5 text-muted-foreground">
           {lang === "th"
-            ? "เครื่องมืออิสระสำหรับจำลองแผนและรวบรวมข้อมูลเปิดภาครัฐเพื่อการวางแผนทางการเงินเบื้องต้น ไม่ใช่บริการทางการของธนาคารหรือธนาคารแห่งประเทศไทย เงื่อนไขจริงเป็นไปตามประกาศของแต่ละสถาบันการเงิน"
-            : "Independent decision support tool built from open official datasets. Not an official bank or Bank of Thailand service; final eligibility rests with financial institutions."}
+            ? "แหล่งข้อมูลสาธารณะ (Open Data Sources): ธนาคารแห่งประเทศไทย (ธปท.), กระทรวงการท่องเที่ยวและกีฬา (กทก.), สำนักงานสถิติแห่งชาติ (สสช. SFD_SPB0801), กรมควบคุมมลพิษ (Air4Thai), Open-Meteo, BIS และ FRED"
+            : "Public Open Data Sources: Bank of Thailand (BOT), Ministry of Tourism & Sports (MOTS), National Statistical Office (NSO SFD_SPB0801), PCD Air4Thai, Open-Meteo, BIS, and FRED."}
+        </p>
+        <p className="mt-2 text-sm leading-6 text-[#4B5563]">
+          {lang === "th"
+            ? "เครื่องมืออิสระสำหรับจำลองแผนและรวบรวมข้อมูลเปิดภาครัฐเพื่อการวางแผนทางการเงินเบื้องต้น ไม่ใช่บริการ การรับรอง หรือความร่วมมืออย่างเป็นทางการของธนาคารหรือธนาคารแห่งประเทศไทย เงื่อนไขจริงเป็นไปตามประกาศของแต่ละสถาบันการเงิน"
+            : "Independent decision-support prototype built from public open datasets. Not an official service, endorsement, or partnership of any bank or the Bank of Thailand; final eligibility rests with financial institutions."}
         </p>
         <StaffLoginButton
           label={lang === "th" ? "เข้าสู่ระบบเจ้าหน้าที่" : "Staff sign in"}

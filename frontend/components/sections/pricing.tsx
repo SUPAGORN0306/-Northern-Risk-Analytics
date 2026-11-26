@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion, useInView } from "motion/react"
 import {
   AlertTriangle,
@@ -49,6 +49,7 @@ import {
   buildPlainTextNegotiationSummary,
   buildScenarioComparison,
   computeFinancialDiagnostic,
+  formatRatePct,
   type DebtStatusKey,
 } from "@/lib/financial-dossier"
 import { fullCalendarMonth, joinNaturalList, useAppState } from "@/lib/i18n"
@@ -125,7 +126,7 @@ const DEBT_STATUS_OPTIONS: {
   },
 ]
 
-type ProgramMatch = {
+export type ProgramMatch = {
   id: string
   badge_th: string
   badge_en: string
@@ -142,7 +143,7 @@ type ProgramMatch = {
   source_en: string
 }
 
-function matchOfficialPrograms(params: {
+export function matchOfficialPrograms(params: {
   status: DebtStatusKey
   isSme: boolean
   dscr: number | null
@@ -274,6 +275,24 @@ function matchOfficialPrograms(params: {
   }
 
   // Only show pre NPL Responsible Lending or SME Working Capital options when borrower is not already overdue or persistent
+  if (isSme && (status === "current" || status === "disaster") && hasPolicy("smes_secure_plus")) {
+    list.push({
+      id: "smes_secure_plus",
+      badge_th: "ขึ้นกับผลิตภัณฑ์ที่ผู้ให้กู้เปิดใช้",
+      badge_en: "Subject to lender's active product",
+      title_th: "กรอบ SMEs Secure+ (มีทรัพย์เพิ่ม เติมสภาพคล่อง)",
+      title_en: "SMEs Secure+ Liquidity & Asset-Backed Framework",
+      benefit_th: "กรอบของ ธปท. ที่เปิดให้ผู้ให้กู้จัดทำผลิตภัณฑ์สินเชื่อโดยสมัครใจ ไม่ใช่เงินช่วยเหลือหรือสิทธิอนุมัติอัตโนมัติ วงเงิน ดอกเบี้ย และหลักประกันขึ้นกับผู้ให้กู้",
+      benefit_en: "A BOT framework for lenders to offer credit products voluntarily, not a grant or automatic approval. Limits, rates, and collateral depend on the lender.",
+      criteria_th: "กรอบกำหนดคุณสมบัติ เช่น SME สัญชาติไทย ประวัติค้างชำระไม่เกิน 90 วัน ณ 31 มี.ค. 2569 ไม่เป็น Stage 3 ตอนยื่น และมีหลักประกันตามผลิตภัณฑ์ ต้องถามผู้ให้กู้ว่ามีผลิตภัณฑ์เปิดรับอยู่หรือไม่",
+      criteria_en: "Framework criteria include Thai SME status, no more than 90 days past due as of 31 Mar 2026, not Stage 3 when applying, and lender-approved collateral. Confirm whether a lender product is currently open.",
+      action_label_th: "เปิดอ่านหนังสือเวียนกรอบ SMEs Secure+",
+      action_label_en: "Open SMEs Secure+ Circular (PDF)",
+      action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2569/ThaiPDF/25690074.pdf",
+      source_th: "หนังสือเวียน ธปท. กรอบหลักการ SMEs Secure+ 2569 (ตรวจสอบกับผู้ให้กู้)",
+      source_en: "BOT Circular SMEs Secure+ 2569 (Verify with Lender)",
+    })
+  }
   if (isSme && (status === "current" || status === "disaster") && hasPolicy("sme_credit_guarantee") && (dscr == null || dscr >= 1.0)) {
     list.push({
       id: "credit_boost_tcg",
@@ -281,7 +300,7 @@ function matchOfficialPrograms(params: {
       badge_en: "Subject to active TCG programs",
       title_th: "ช่องทางสินเชื่อและค้ำประกันสำหรับกิจการ (บสย.)",
       title_en: "SME Credit and Guarantee Channels (TCG)",
-      benefit_th: "สอบถามช่องทางค้ำประกันสินเชื่อที่เปิดรับในปัจจุบัน ผลอนุมัติขึ้นอยู่กับการพิจารณาของ บสย. และผู้ให้กู้",
+      benefit_th: "เป็นช่องทางสอบถามโครงการค้ำประกันสินเชื่อของ บสย. ที่อาจเปิดรับในช่วงนั้น ไม่ใช่การรับรองว่าจะมีโครงการหรือได้รับอนุมัติ",
       benefit_en: "Ask about currently available credit guarantee channels; approval depends on TCG and lender underwriting.",
       criteria_th: "ตรวจสอบโครงการที่ยังเปิดอยู่ คุณสมบัติ และเงื่อนไขกับ บสย. และสถาบันการเงินก่อนสมัคร",
       criteria_en: "Verify currently open programs, eligibility, and terms with TCG and the financial institution before applying.",
@@ -307,6 +326,24 @@ function matchOfficialPrograms(params: {
       action_href: "https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2568/ThaiPDF/25680030.pdf",
       source_th: "ประกาศหลักเกณฑ์การให้สินเชื่ออย่างรับผิดชอบและเป็นธรรม 2568",
       source_en: "Responsible Lending Guideline 2568",
+    })
+  }
+  if ((status === "current" || status === "overdue_31_120") && hasPolicy("debt_relief_energy")) {
+    list.push({
+      id: "debt_relief_energy",
+      badge_th: "สำหรับผู้ได้รับผลกระทบค่าครองชีพ/ราคาพลังงาน",
+      badge_en: "For cost-of-living & energy price impacts",
+      title_th: "แนวทางช่วยเหลือลูกหนี้ที่ได้รับผลกระทบจากภาวะเศรษฐกิจและราคาพลังงาน",
+      title_en: "Relief Guideline for Economic and Energy Cost Impacts",
+      benefit_th: "ขอให้สถาบันการเงินพิจารณาปรับลดค่างวด ขยายเวลาผ่อนชำระ หรือปรับเงื่อนไขให้สอดคล้องกับรายได้ที่ลดลงหรือต้นทุนพลังงานที่สูงขึ้น",
+      benefit_en: "Ask your lender to review installment reductions or term extensions aligned with lower income or elevated energy costs.",
+      criteria_th: "ลูกหนี้รายย่อยหรือ SME ที่ได้รับผลกระทบจากภาวะเศรษฐกิจและราคาพลังงานในปี 2569 (ขึ้นอยู่กับการพิจารณาของสถาบันการเงินเจ้าหนี้)",
+      criteria_en: "Retail or SME borrowers impacted by economic and energy cost pressures in 2026 (subject to lender assessment).",
+      action_label_th: "เปิดอ่านแนวทางช่วยเหลือ ธปท. (2569)",
+      action_label_en: "Open BOT 2026 Relief Notice (PDF)",
+      action_href: "https://www.bot.or.th/content/dam/bot/documents/th/news-and-media/news/2026/news-20260408.pdf",
+      source_th: "หนังสือเวียนช่วยเหลือลูกหนี้จากภาวะเศรษฐกิจและราคาพลังงาน 2569",
+      source_en: "BOT Economic & Energy Impact Relief Circular 2026",
     })
   }
 
@@ -398,7 +435,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const [cashReserve, setCashReserve] = useState("")
   const [totalPrincipal, setTotalPrincipal] = useState("")
   const [annualRateInput, setAnnualRateInput] = useState("")
-  const [horizonYears, setHorizonYears] = useState(5)
+  const [rawHorizonYears, setHorizonYears] = useState(5)
   const [extraLoans, setExtraLoans] = useState<ExtraLoanItem[]>([])
   const [deferMonths, setDeferMonths] = useState(6)
   const [stressDropPct, setStressDropPct] = useState(30)
@@ -406,7 +443,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [stepValidationError, setStepValidationError] = useState<string | null>(null)
-  const [result, setResult] = useState<ReliefCheckResponse | null>(null)
+  const [rawResult, setResult] = useState<ReliefCheckResponse | null>(null)
 
   function goToStep(next: 1 | 2 | 3) {
     if (next > formStep && next === 3 && (!hasEnteredRevenue || numDebt <= 0)) {
@@ -471,10 +508,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   const extraPrincipalSum = extraLoans.reduce((acc, item) => acc + parseMoney(item.principal), 0)
   const numPrincipal = basePrincipal > 0 ? basePrincipal : extraPrincipalSum
   const maxHorizonYears = debtStatus === "persistent" ? 7 : 30
-
-  useEffect(() => {
-    setHorizonYears((years) => Math.min(years, maxHorizonYears))
-  }, [maxHorizonYears])
+  const horizonYears = Math.min(rawHorizonYears, maxHorizonYears)
 
   useEffect(() => {
     setActiveDebtStatus(debtStatus)
@@ -493,12 +527,50 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
   )
 
   const hasEnteredRevenue = revenue.trim().length > 0
+  const hasValidBackendInputs = numDebt > 0 && (hasEnteredRevenue || numRevenue > 0)
+  const result = hasValidBackendInputs ? rawResult : null
+  const hasActiveWaterPollution = Boolean(selectedProvData?.has_active_water_pollution)
+
+  const runBackendAssessment = useCallback(
+    async (params: {
+      prov: string
+      biz: string
+      statusKey: DebtStatusKey
+      revVal: number
+      debtVal: number
+    }) => {
+      setSubmitting(true)
+      setApiError(null)
+      try {
+        const tags: string[] = []
+        if (params.statusKey === "overdue_31_120" || params.statusKey === "overdue_120_plus") tags.push("overdue_debt")
+        if (params.statusKey === "persistent") tags.push("persistent_debt")
+        if (params.statusKey === "disaster") tags.push("disaster")
+        if (hasActiveWaterPollution) tags.push("water_pollution")
+        const res = await submitReliefCheck({
+          province: params.prov,
+          business_type: params.biz,
+          monthly_revenue_thb: params.revVal,
+          monthly_debt_thb: params.debtVal,
+          impact_tags: tags,
+          language: lang,
+        })
+        setResult(res)
+      } catch {
+        setApiError(
+          lang === "th"
+            ? "การคำนวณสภาพคล่องและค่างวดเบื้องต้นยังแสดงผลได้ตามปกติ แต่ระบบค้นคำแนะนำจากเอกสารทางการขัดข้องชั่วคราว"
+            : "Local liquidity and payment calculations remain available, but the official document guidance service is temporarily unavailable.",
+        )
+      } finally {
+        setSubmitting(false)
+      }
+    },
+    [lang, hasActiveWaterPollution],
+  )
 
   useEffect(() => {
-    if (numDebt <= 0 || (!hasEnteredRevenue && numRevenue <= 0)) {
-      setResult(null)
-      return
-    }
+    if (!hasValidBackendInputs) return
     const timer = setTimeout(() => {
       void runBackendAssessment({
         prov: selectedProvinceCode,
@@ -509,7 +581,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       })
     }, 350)
     return () => clearTimeout(timer)
-  }, [hasEnteredRevenue, numRevenue, numDebt, selectedProvinceCode, business, debtStatus])
+  }, [hasValidBackendInputs, numRevenue, numDebt, selectedProvinceCode, business, debtStatus, runBackendAssessment])
 
   function resetAllInputs() {
     setActivePreset(null)
@@ -640,7 +712,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       dscr: diagnostic.dscr,
       dsrPct: diagnostic.dsrPct,
     })
-  }, [diagnostic, debtStatus, isSme, selectedProvData])
+  }, [diagnostic, debtStatus, isSme])
 
   // Bridge real provincial seasonality and active alerts into personal payment guidance
   const provincialAdvisory = useMemo(() => {
@@ -815,41 +887,6 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
       document.body.removeChild(area)
       setCopiedSummary(true)
       setTimeout(() => setCopiedSummary(false), 2600)
-    }
-  }
-
-  async function runBackendAssessment(params: {
-    prov: string
-    biz: string
-    statusKey: DebtStatusKey
-    revVal: number
-    debtVal: number
-  }) {
-    setSubmitting(true)
-    setApiError(null)
-    try {
-      const tags: string[] = []
-      if (params.statusKey === "overdue_31_120" || params.statusKey === "overdue_120_plus") tags.push("overdue_debt")
-      if (params.statusKey === "persistent") tags.push("persistent_debt")
-      if (params.statusKey === "disaster") tags.push("disaster")
-      if (selectedProvData?.has_active_water_pollution) tags.push("water_pollution")
-      const res = await submitReliefCheck({
-        province: params.prov,
-        business_type: params.biz,
-        monthly_revenue_thb: params.revVal,
-        monthly_debt_thb: params.debtVal,
-        impact_tags: tags,
-        language: lang,
-      })
-      setResult(res)
-    } catch {
-      setApiError(
-        lang === "th"
-          ? "การคำนวณสภาพคล่องและค่างวดเบื้องต้นยังแสดงผลได้ตามปกติ แต่ระบบค้นคำแนะนำจากเอกสารทางการขัดข้องชั่วคราว"
-          : "Local liquidity and payment calculations remain available, but the official document guidance service is temporarily unavailable.",
-      )
-    } finally {
-      setSubmitting(false)
     }
   }
 
@@ -1150,8 +1187,8 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                 </h3>
                 <p className="mt-0.5 text-xs leading-5 text-muted-foreground sm:text-sm">
                   {lang === "th"
-                    ? "ไม่เก็บข้อมูลส่วนบุคคล ประมวลผลเพื่อจำลองแผนเจรจาเท่านั้น"
-                    : "No personal data stored. Processed strictly for planning."}
+                    ? "ต้นแบบสำหรับวางแผนเบื้องต้น · โปรดใช้ข้อมูลสมมติ"
+                    : "Prototype for early planning · Please use sample data"}
                 </p>
               </div>
               {hasAnyInput && (
@@ -1665,6 +1702,24 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                               %
                             </span>
                           </div>
+                          {numAnnualRate != null && numAnnualRate > 0 && numAnnualRate < 1 && (
+                            <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-lg border border-amber-600/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-950">
+                              <span>
+                                {lang === "th"
+                                  ? `กรอก ${formatRatePct(numAnnualRate)}% ต่อปี (ต่ำกว่า 1%) — หากหมายถึง ${formatRatePct(numAnnualRate * 100)}% ต่อปี`
+                                  : `Entered ${formatRatePct(numAnnualRate)}% p.a. (< 1%) — did you mean ${formatRatePct(numAnnualRate * 100)}% p.a.?`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setAnnualRateInput(String(Number((numAnnualRate * 100).toFixed(2))))}
+                                className="rounded-full bg-foreground px-2.5 py-0.5 text-[10px] font-semibold text-background hover:opacity-90"
+                              >
+                                {lang === "th"
+                                  ? `ใช้ ${formatRatePct(numAnnualRate * 100)}%`
+                                  : `Use ${formatRatePct(numAnnualRate * 100)}%`}
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <div className="sm:col-span-2">
@@ -1815,11 +1870,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
                     <p className="rounded-xl border border-border/70 bg-secondary/20 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
                       <strong className="font-medium text-foreground">
-                        {lang === "th" ? "ความเป็นส่วนตัวของข้อมูล:" : "Data privacy notice:"}
+                        {lang === "th" ? "ประกาศความเป็นส่วนตัวและเส้นทางข้อมูล:" : "Data privacy & processing notice:"}
                       </strong>{" "}
                       {lang === "th"
-                        ? "เมื่อระบบเชื่อมต่อเพื่อค้นเอกสารอ้างอิง จะบันทึกเฉพาะสถิติไม่ระบุตัวตน (จังหวัด ประเภทกิจการ และช่วงภาระหนี้) โดยไม่บันทึกชื่อ ยอดรายได้ หรือยอดหนี้ของคุณ"
-                        : "When querying official document guidance, only anonymized aggregate signals (province, business type, and DSR band) are logged, never your name, income, or debt figures."}
+                        ? "เครื่องมือจำลองค่างวดทำงานบนอุปกรณ์ แต่เมื่อส่งแบบประเมิน ระบบจะส่งรายรับ ค่างวด และข้อมูลที่จำเป็นไปยัง backend เพื่อคำนวณ DSR โดยไม่บันทึกยอดเงินเหล่านี้ลงฐานข้อมูลแบบประเมิน ระบบบันทึกเฉพาะสัญญาณสรุป เช่น จังหวัด ประเภทกิจการ และช่วงภาระหนี้ ข้อความแชตผ่าน backend และอาจส่งข้อความหรือบริบทบางส่วนให้ Google Gemini หลังตรวจจับและลบรูปแบบข้อมูลระบุตัวตน โปรดใช้ข้อมูลสมมติ"
+                        : "The payment simulator runs in your browser. Submitting an assessment sends income, payment, and required fields to our backend to calculate DSR; those amounts are not written to the assessment database. We store summary signals such as province, business type, and DSR band. Chat messages pass through our backend and may be sent to Google Gemini after patterns resembling personal identifiers are detected and redacted. Please use sample data."}
                     </p>
 
                     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
@@ -2106,11 +2161,11 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                         </strong>
                         {provincialAdvisory.safeSeasonalCap > 0
                           ? lang === "th"
-                            ? `หากรายได้ลดลง -${provincialAdvisory.suggestedDropPct}% ตามฤดูกาล จะเหลือเงินจ่ายหนี้ได้ราวเดือนละ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท (ควรกันเงินสำรองเพิ่มหรือขอลดค่างวดให้ใกล้ระดับนี้)`
-                            : `If income drops -${provincialAdvisory.suggestedDropPct}% seasonally, ~${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo remains for debt (build reserve or target near this level).`
+                            ? `ตัวอย่างสมมติ: หากรายรับลดลง ${provincialAdvisory.suggestedDropPct}% จะเหลือเงินหลังหักค่าใช้จ่ายก่อนจ่ายหนี้ประมาณ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท/เดือน ยังไม่หักค่างวดหรือเงินสำรอง ตัวเลขนี้อิงสัญญาณฤดูกาลของจังหวัด ไม่ใช่การพยากรณ์รายได้จริง`
+                            : `Illustrative scenario: if revenue fell ${provincialAdvisory.suggestedDropPct}%, about ${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo would remain after expenses, before debt payments and reserves. This uses a provincial seasonal signal, not an income forecast.`
                           : lang === "th"
-                            ? "หากรายได้ลดลงตามฤดูกาล เงินจะไม่พอจ่าย ควรรีบติดต่อเจ้าหนี้เพื่อขอพักเงินต้นหรือลดค่างวด"
-                            : "If income dips seasonally, contact your lender early for payment relief."}
+                            ? "ในตัวอย่างนี้รายรับหลังหักค่าใช้จ่ายไม่เหลือก่อนจ่ายหนี้ ควรทบทวนตัวเลขจริงและสอบถามเจ้าหนี้ถึงทางเลือกที่มี โดยตรวจสอบเงื่อนไขเป็นรายกรณี"
+                            : "In this scenario, no cash remains after expenses and before debt payments. Review actual figures and ask the lender which options are available; terms vary by case."}
                       </li>
                     )}
                     {matchedPrograms[0] && (
@@ -2379,15 +2434,15 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                     </div>
                   </div>
 
-                  {/* Provincial Risk Context & Safe Seasonal Payment Cap */}
+                  {/* Provincial Context & Income-Drop Scenario */}
                   <div className="mt-3.5 rounded-xl border border-sky-700/20 bg-sky-500/5 p-3.5">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
                           <MapPin aria-hidden="true" className="size-3.5 shrink-0 text-sky-700" />
                           {lang === "th"
-                            ? `บริบทความเสี่ยงจังหวัด${selectedProvName}และเพดานค่างวดที่ปลอดภัย`
-                            : `${selectedProvName} Local Risk Context & Safe Payment Cap`}
+                            ? `ข้อมูลจังหวัด${selectedProvName}ประกอบตัวอย่างรายได้ลด`
+                            : `${selectedProvName} Context for the Income-Drop Example`}
                         </p>
                         <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
                           {lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn}
@@ -2397,28 +2452,28 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                             {provincialAdvisory.safeSeasonalCap > 0 ? (
                               lang === "th" ? (
                                 <>
-                                  หากรายได้ลดลงตามจังหวะพื้นที่ราว -{provincialAdvisory.suggestedDropPct}% แนะนำเจรจาตั้งค่างวดใหม่{" "}
+                                  ในตัวอย่างสมมติ หากรายรับลดลงราว {provincialAdvisory.suggestedDropPct}% จะเหลือเงินจากรายรับหลังหักค่าใช้จ่ายกิจการก่อนจ่ายหนี้ประมาณ{" "}
                                   <strong className="font-semibold text-teal-800">
-                                    ไม่เกินประมาณ {provincialAdvisory.safeSeasonalCap.toLocaleString()} บาทต่อเดือน
+                                    {provincialAdvisory.safeSeasonalCap.toLocaleString()} บาทต่อเดือน
                                   </strong>{" "}
-                                  เพื่อให้ยังพอจ่ายได้โดยไม่ดึงเงินเก็บสำรองจนหมด
+                                  ตัวเลขนี้ยังไม่หักค่างวดหนี้และเงินสำรอง จึงไม่ใช่ยอดค่างวดที่แนะนำ
                                 </>
                               ) : (
                                 <>
-                                  If income dips ~-{provincialAdvisory.suggestedDropPct}% with local seasonality, aim for a restructured payment{" "}
+                                  In this illustrative scenario, if revenue falls ~{provincialAdvisory.suggestedDropPct}%, estimated cash after operating expenses but before debt payments is{" "}
                                   <strong className="font-semibold text-teal-800">
-                                    at or below ~{provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo
+                                    ~{provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo
                                   </strong>{" "}
-                                  to protect your cash reserve.
+                                  This does not account for debt payments or reserves and is not a recommended payment amount.
                                 </>
                               )
                             ) : lang === "th" ? (
                               <>
-                                หากรายได้ลดลงราว -{provincialAdvisory.suggestedDropPct}% เงินเหลือหลังหักค่าใช้จ่ายจำเป็นจะไม่เพียงพอต่อค่างวด ควรเร่งติดต่อเจ้าหนี้เพื่อขอพักชำระเงินต้นหรือปรับลดค่างวดล่วงหน้า
+                                ในตัวอย่างสมมติ รายรับหลังหักค่าใช้จ่ายกิจการจะไม่เหลือก่อนนำไปจ่ายหนี้ ควรทบทวนตัวเลขจริงและสอบถามเจ้าหนี้ถึงทางเลือกที่มี โดยตรวจสอบเงื่อนไขเป็นรายกรณี
                               </>
                             ) : (
                               <>
-                                A -{provincialAdvisory.suggestedDropPct}% local dip would leave zero post-expense surplus. Contact your lender early for principal deferral or step-down relief.
+                                In this illustrative scenario, revenue after operating expenses would leave no cash before debt payments. Review actual figures and ask your lender which options are available; terms are case-specific.
                               </>
                             )}
                           </p>
@@ -2651,13 +2706,13 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                                   ? loanComparison.totalInterestSaved <= 0
                                     ? "วัตถุประสงค์หลักของแผนจำลอง"
                                     : loanComparison.usesAssumedRate
-                                      ? `ประมาณการส่วนต่างดอกเบี้ย (สมมติฐาน ${loanComparison.originalRatePct.toFixed(1)}%/ปี)`
-                                      : `ประมาณการส่วนต่างดอกเบี้ย (ดอกเบี้ยที่กรอก ${loanComparison.originalRatePct.toFixed(1)}%/ปี)`
+                                      ? `ประมาณการส่วนต่างดอกเบี้ย (สมมติฐาน ${formatRatePct(loanComparison.originalRatePct)}%/ปี)`
+                                      : `ประมาณการส่วนต่างดอกเบี้ย (ดอกเบี้ยที่กรอก ${formatRatePct(loanComparison.originalRatePct)}%/ปี)`
                                   : loanComparison.totalInterestSaved <= 0
                                     ? "Primary Scenario Purpose"
                                     : loanComparison.usesAssumedRate
-                                      ? `Est. Interest Diff (Assumed ${loanComparison.originalRatePct.toFixed(1)}%)`
-                                      : `Est. Interest Diff (Entered ${loanComparison.originalRatePct.toFixed(1)}%)`
+                                      ? `Est. Interest Diff (Assumed ${formatRatePct(loanComparison.originalRatePct)}%)`
+                                      : `Est. Interest Diff (Entered ${formatRatePct(loanComparison.originalRatePct)}%)`
                               }
                               value={
                                 loanComparison.totalInterestSaved <= 0
@@ -2846,7 +2901,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
                           <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             <Scale aria-hidden="true" className="size-3.5" />
                             {lang === "th"
-                              ? "เปรียบเทียบทางเลือกการแก้หนี้ 4 แนวทาง"
+                              ? "ตัวอย่างเปรียบเทียบทางเลือกแก้หนี้ 4 แบบ"
                               : "Compare 4 Debt Relief Paths & Trade Offs"}
                           </p>
                           <h4 className="mt-0.5 font-display text-sm font-semibold text-foreground sm:text-base">
@@ -2863,6 +2918,14 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
                       {showScenarioTable && (
                         <div className="mt-3 space-y-2.5 border-t border-border pt-3">
+                          <div className="rounded-lg border border-amber-600/25 bg-amber-500/5 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                            <p>{lang === "th" ? scenarioRows[0]?.principalBasisTh : scenarioRows[0]?.principalBasisEn}</p>
+                            <p className="mt-1">
+                              {lang === "th"
+                                ? "แต่ละแบบใช้เงื่อนไขต่างกัน บางทางเลือกใช้เฉพาะหนี้บุคคลหรือผู้มีคุณสมบัติเฉพาะ ตัวเลขไม่ใช่ข้อเสนอจากเจ้าหนี้ และควรถามเรื่องค่างวดหลังพักกับผลต่อข้อมูลเครดิตก่อนตกลง"
+                                : "The options use different terms. Some apply only to personal debt or specific eligible borrowers. These are not lender offers; confirm post-pause payments and credit reporting before agreeing."}
+                            </p>
+                          </div>
                           {scenarioRows.map((row) => (
                             <div
                               key={row.id}
@@ -3168,14 +3231,14 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
 
               <div className="mt-3.5 rounded-2xl border border-sky-700/20 bg-sky-500/5 px-4 py-3 text-xs leading-6 text-muted-foreground">
                 <strong className="font-semibold text-foreground">
-                  {lang === "th" ? `บริบทความเสี่ยงจังหวัด${selectedProvName}: ` : `${selectedProvName} Context: `}
+                  {lang === "th" ? `ข้อมูลประกอบระดับจังหวัด${selectedProvName}: ` : `${selectedProvName} provincial context: `}
                 </strong>
                 {lang === "th" ? provincialAdvisory.summaryTh : provincialAdvisory.summaryEn}
                 {provincialAdvisory.safeSeasonalCap != null && provincialAdvisory.safeSeasonalCap > 0 && (
                   <span className="font-semibold text-teal-800">
                     {lang === "th"
-                      ? ` · เพดานค่างวดปลอดภัยช่วงรายได้ชะลอตัว: ไม่เกินประมาณ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท/เดือน`
-                      : ` · Suggested low-season cap: <= ${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo`}
+                      ? ` · ตัวอย่างเงินจากรายรับหลังหักค่าใช้จ่ายก่อนจ่ายหนี้: ประมาณ ${provincialAdvisory.safeSeasonalCap.toLocaleString()} บาท/เดือน (ยังไม่หักค่างวดและเงินสำรอง ไม่ใช่ยอดที่แนะนำให้จ่าย)`
+                      : ` · Illustrative cash after expenses before debt payments: about ${provincialAdvisory.safeSeasonalCap.toLocaleString()} THB/mo (debt payments and reserves not deducted; not a recommended payment)`}
                   </span>
                 )}
               </div>
@@ -3337,7 +3400,7 @@ export function Pricing({ provinces }: { provinces: ProvinceOutlookItem[] }) {
               <BookOpenCheck aria-hidden="true" className="size-4" />
               {lang === "th"
                 ? "เนื้อหาต้นฉบับจากคลังเอกสารทางการ"
-                : "Verified Official Policy Document Excerpt"}
+                : "Excerpt from a policy document in the reference library"}
             </span>
             <button
               type="button"

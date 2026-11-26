@@ -219,9 +219,9 @@ def run_silver_news_extraction(
     llm_cfg, lookback_months = _load_extractor_configs()
     min_conf = float(llm_cfg["min_extraction_confidence"])
     temperature = float(llm_cfg["temperature"])
-    primary_model = os.getenv("GEMINI_EXTRACTION_MODEL", "gemini-3.1-flash-lite")
+    primary_model = os.getenv("GEMINI_EXTRACTION_MODEL", "gemini-3.5-flash-lite")
     model_candidates = [primary_model]
-    for fallback in ("gemma-4-26b-a4b-it", "gemini-3.5-flash-lite"):
+    for fallback in ("gemini-3.1-flash-lite", "gemma-4-26b-a4b-it"):
         if fallback not in model_candidates:
             model_candidates.append(fallback)
 

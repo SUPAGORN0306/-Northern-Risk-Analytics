@@ -16,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.analytics.eda_feature_selection import STRUCTURAL_CANDIDATES, _compute_vif_map
+from src.config.feature_registry import get_clustering_core_features, get_validation_policy
 from src.db.connection import bulk_execute, fetch_all
 from src.guardrails.schemas import get_province_metadata, resolve_northern_province
 from src.transform.panel_builder import (
@@ -151,11 +152,11 @@ def analyze_upper_vs_lower_north(
     panel: pd.DataFrame,
     struct_df: pd.DataFrame,
 ) -> dict[str, Any]:
-    """Compare Upper North 9 provinces against Lower North 8 provinces with Mann Whitney U tests."""
+    """Compare Upper North 9 provinces against Lower North 8 provinces with BH FDR adjusted Mann Whitney U tests."""
     test_cols = [
         "avg_occupancy_rate",
         "occupancy_volatility",
-        "foreign_visitor_share",
+        "log_foreign_visitor_share",
         "avg_monthly_revenue_mthb",
         "annual_pm25_days_over_37_5",
         "annual_pm25_days_over_75_0",
@@ -175,7 +176,7 @@ def analyze_upper_vs_lower_north(
             continue
         u_vals = upper[col].dropna().to_numpy(dtype=float)
         l_vals = lower[col].dropna().to_numpy(dtype=float)
-        stat, pval = stats.mannwhitneyu(u_vals, l_vals, alternative="two-sided")
+        _, pval = stats.mannwhitneyu(u_vals, l_vals, alternative="two-sided")
         delta = _cliffs_delta(u_vals, l_vals)
         comparisons.append(
             {
@@ -186,9 +187,23 @@ def analyze_upper_vs_lower_north(
                 "lower_mean": round(float(np.mean(l_vals)), 2),
                 "mann_whitney_p": round(float(pval), 5),
                 "cliffs_delta": round(float(delta), 3),
-                "significant_005": bool(pval < 0.05),
             }
         )
+
+    # Apply Benjamini Hochberg FDR across all 12 subregion hypothesis tests
+    if comparisons:
+        raw_p = np.array([c["mann_whitney_p"] for c in comparisons], dtype=float)
+        m_cnt = len(raw_p)
+        order = np.argsort(raw_p)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(1, m_cnt + 1)
+        fdr = np.minimum(1.0, raw_p * (float(m_cnt) / ranks))
+        fdr_sorted = np.minimum.accumulate(fdr[order][::-1])[::-1]
+        q_vals = np.empty_like(fdr)
+        q_vals[order] = np.round(fdr_sorted, 5)
+        for item, qv in zip(comparisons, q_vals):
+            item["mann_whitney_q_fdr"] = float(qv)
+            item["significant_005"] = bool(qv < 0.05)
 
     # Compute regional monthly seasonal peaks for occupancy, PM2.5, and rainfall
     meta_map = get_province_metadata()
@@ -211,26 +226,30 @@ def analyze_upper_vs_lower_north(
 
 
 def analyze_threshold_effects_and_crises(panel: pd.DataFrame) -> dict[str, Any]:
-    """Quantify nonlinear hazard threshold effects, AR1 persistence, and 17 province crisis impacts."""
+    """Quantify same metric regime impacts using train fitted thresholds, AR1 persistence, and crisis audits."""
     df = panel.sort_values(["province_code", "period_date"]).copy()
     meta_map = get_province_metadata()
     df["subregion"] = df["province_code"].map(lambda c: meta_map[c]["subregion"])
 
-    # Regime 1 rainfall excess buckets across all 578 province months
-    p75_rain = float(np.nanpercentile(df["rainfall_excess_mm"], 75))
-    p95_rain = float(np.nanpercentile(df["rainfall_excess_mm"], 95))
+    # Fit rainfall excess thresholds strictly on chronological 75 percent train window to avoid full sample leakage
+    policy = get_validation_policy()
+    unique_months = np.sort(df["period_date"].unique())
+    split_idx = max(12, int(len(unique_months) * float(policy["time_split_train_ratio"])))
+    train_cutoff = unique_months[min(split_idx, len(unique_months) - 1)]
+    train_df = df[df["period_date"] <= train_cutoff]
+    if train_df.empty:
+        train_df = df
+
+    p75_rain = float(np.nanpercentile(train_df["rainfall_excess_mm"], 75))
+    p95_rain = float(np.nanpercentile(train_df["rainfall_excess_mm"], 95))
     df["rain_regime"] = np.where(
         df["rainfall_excess_mm"] >= p95_rain,
-        "Extreme (>=P95)",
+        "Extreme (>=P95 Train)",
         np.where(df["rainfall_excess_mm"] >= p75_rain, "Elevated (P75 to P95)", "Normal (<P75)"),
     )
     rain_regimes: list[dict[str, Any]] = []
-    rain_groups_occ: list[np.ndarray] = []
-    rain_groups_rev: list[np.ndarray] = []
-    for label in ["Normal (<P75)", "Elevated (P75 to P95)", "Extreme (>=P95)"]:
+    for label in ["Normal (<P75)", "Elevated (P75 to P95)", "Extreme (>=P95 Train)"]:
         sub = df[df["rain_regime"] == label]
-        rain_groups_occ.append(sub["occupancy_deseason"].dropna().to_numpy())
-        rain_groups_rev.append(sub["revenue_deseason_pct"].dropna().to_numpy())
         rain_regimes.append(
             {
                 "regime": label,
@@ -242,38 +261,29 @@ def analyze_threshold_effects_and_crises(panel: pd.DataFrame) -> dict[str, Any]:
                 "occ_yoy_mean": round(float(sub["occupancy_yoy_diff"].mean()), 2),
             }
         )
-    kw_rain_occ_p = float(stats.kruskal(*rain_groups_occ).pvalue)
-    kw_rain_rev_p = float(stats.kruskal(*rain_groups_rev).pvalue)
 
-    # Regime 2 PM2.5 PCD operational buckets on zero look ahead YoY occupancy and deseasonalized revenue
+    # Regime 2 PM2.5 PCD operational buckets evaluated on the EXACT SAME occupancy_deseason metric
     df["pm25_regime"] = np.where(
         (df["pm25_days_over_75_0"] >= 1) | (df["pm25_mean"] > 50.0),
         "Severe Red (Days>75 or >50)",
         np.where(df["pm25_days_over_37_5"] >= 5, "Elevated Orange (>=5d >37.5)", "Normal (<5d >37.5)"),
     )
     pm_regimes: list[dict[str, Any]] = []
-    pm_groups_yoy: list[np.ndarray] = []
-    pm_groups_rev_yoy: list[np.ndarray] = []
     for label in ["Normal (<5d >37.5)", "Elevated Orange (>=5d >37.5)", "Severe Red (Days>75 or >50)"]:
         sub = df[df["pm25_regime"] == label]
-        pm_groups_yoy.append(sub["occupancy_yoy_diff"].dropna().to_numpy())
-        pm_groups_rev_yoy.append(sub["revenue_yoy_pct"].dropna().to_numpy())
         pm_regimes.append(
             {
                 "regime": label,
                 "n_obs": int(len(sub)),
                 "n_yoy_obs": int(sub["occupancy_yoy_diff"].notna().sum()),
-                "occ_yoy_mean": round(float(sub["occupancy_yoy_diff"].mean()), 2),
-                "occ_yoy_median": round(float(sub["occupancy_yoy_diff"].median()), 2),
-                "rev_yoy_mean": round(float(sub["revenue_yoy_pct"].mean()), 2),
-                "rev_yoy_median": round(float(sub["revenue_yoy_pct"].median()), 2),
                 "occ_deseason_mean": round(float(sub["occupancy_deseason"].mean()), 2),
+                "occ_deseason_median": round(float(sub["occupancy_deseason"].median()), 2),
+                "occ_yoy_mean": round(float(sub["occupancy_yoy_diff"].mean()), 2),
+                "rev_deseason_mean": round(float(sub["revenue_deseason_pct"].mean()), 2),
             }
         )
-    kw_pm_yoy_p = float(stats.kruskal(*pm_groups_yoy).pvalue)
-    kw_pm_rev_yoy_p = float(stats.kruskal(*pm_groups_rev_yoy).pvalue)
 
-    # Exact 17 province impact during Sept 2024 flood and Mar Apr 2026 haze
+    # Exact 17 province impact during Sept 2024 flood and Mar Apr 2026 haze using unified occupancy_deseason
     flood_df = df[df["period_date"] == pd.Timestamp("2024-09-01")][
         [
             "province_code",
@@ -298,7 +308,7 @@ def analyze_threshold_effects_and_crises(panel: pd.DataFrame) -> dict[str, Any]:
             pm25_days_over_37_5=("pm25_days_over_37_5", "sum"),
             pm25_days_over_75_0=("pm25_days_over_75_0", "sum"),
         )
-        .sort_values("occupancy_yoy_diff")
+        .sort_values("occupancy_deseason")
     )
 
     # Within province AR1 autocorrelation justifies Liang Zeger province clustered standard errors
@@ -310,14 +320,12 @@ def analyze_threshold_effects_and_crises(panel: pd.DataFrame) -> dict[str, Any]:
             ar1_stats[col] = round(float(stats.pearsonr(pair["x"], pair["y"])[0]), 3)
 
     return {
+        "train_threshold_cutoff": str(pd.Timestamp(train_cutoff).date()),
         "rain_p75_mm": round(p75_rain, 1),
         "rain_p95_mm": round(p95_rain, 1),
         "rain_regimes": rain_regimes,
-        "rain_kruskal_occ_p": round(kw_rain_occ_p, 5),
-        "rain_kruskal_rev_p": round(kw_rain_rev_p, 5),
         "pm25_regimes": pm_regimes,
-        "pm25_kruskal_occ_yoy_p": round(kw_pm_yoy_p, 5),
-        "pm25_kruskal_rev_yoy_p": round(kw_pm_rev_yoy_p, 5),
+        "regime_methodology_note": "Descriptive same metric regime means using train fitted thresholds; panel AR1 precludes iid Kruskal Wallis p value inference",
         "sept_2024_flood_17p": flood_df.round(2).to_dict(orient="records"),
         "mar_apr_2026_haze_17p": haze_df.round(2).to_dict(orient="records"),
         "within_province_ar1": ar1_stats,
@@ -375,32 +383,12 @@ def analyze_nso_vulnerability_shift() -> pd.DataFrame:
 
 def compare_clustering_feature_sets(struct_df: pd.DataFrame) -> dict[str, Any]:
     """Compare candidate 17 province clustering feature sets on VIF, condition number, and PCA variance."""
+    core_6 = list(get_clustering_core_features())
     sets = {
-        "core_6_all_debt": [
-            "avg_occupancy_rate",
-            "occupancy_volatility",
-            "foreign_visitor_share",
-            "annual_pm25_days_over_37_5",
-            "max_monthly_rainfall_mm",
-            "debt_to_annual_income_all",
-        ],
-        "core_6_sme_debt": [
-            "avg_occupancy_rate",
-            "occupancy_volatility",
-            "foreign_visitor_share",
-            "annual_pm25_days_over_37_5",
-            "max_monthly_rainfall_mm",
-            "debt_to_annual_income_sme",
-        ],
-        "auto_8_vif5": [
-            "avg_occupancy_rate",
-            "occupancy_volatility",
-            "avg_monthly_revenue_mthb",
-            "annual_pm25_days_over_37_5",
-            "max_monthly_rainfall_mm",
-            "debt_to_annual_income_all",
-            "expense_to_income_pct_all",
-            "expense_to_income_pct_sme",
+        "core_6_canonical": core_6,
+        "core_7_with_sme_exp": [*core_6, "expense_to_income_pct_sme"],
+        "core_6_sme_debt_alt": [
+            "debt_to_annual_income_sme" if c == "debt_to_annual_income_all" else c for c in core_6
         ],
     }
     report: dict[str, Any] = {}
@@ -454,8 +442,9 @@ def plot_deep_eda_figures(
     struct_df: pd.DataFrame,
     nso_shift: pd.DataFrame,
     threshold_res: dict[str, Any],
+    subregion_res: dict[str, Any] | None = None,
 ) -> list[Path]:
-    """Generate four 300 DPI institutional deep EDA figures with clean non overlapping layouts."""
+    """Generate four 300 DPI methodologically sound deep EDA figures with clean non overlapping layouts."""
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     sns.set_theme(style="whitegrid", context="notebook")
     saved: list[Path] = []
@@ -465,8 +454,15 @@ def plot_deep_eda_figures(
     crimson = "#DC2626"
     slate = "#64748B"
 
-    # Figure 02a distributions and outliers across monthly panel and 17 province structure
-    fig, axes = plt.subplots(2, 4, figsize=(17.5, 8.2), dpi=300)
+    sub_q_map = {
+        r["feature"]: (r.get("mann_whitney_q_fdr"), r.get("cliffs_delta"))
+        for r in (subregion_res or {}).get("upper_vs_lower_tests", [])
+    }
+
+    # Figure 02a monthly distributions, stacked before vs after log1p proof, and FDR subregion boxplots
+    fig = plt.figure(figsize=(18.4, 8.8), dpi=300)
+    gs = fig.add_gridspec(2, 4, hspace=0.38, wspace=0.26)
+    top_axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
 
     # Row 1 monthly panel distributions
     m_specs = [
@@ -475,7 +471,7 @@ def plot_deep_eda_figures(
         ("pm25_mean", "Monthly Mean PM2.5 (ug/m3)", amber, 37.5, "PCD 37.5 Orange"),
         ("rainfall_sum_mm", "Monthly Rainfall Sum (mm)", "#2563EB", None, None),
     ]
-    for ax, (col, title, color, vline, vlabel) in zip(axes[0], m_specs):
+    for ax, (col, title, color, vline, vlabel) in zip(top_axes, m_specs):
         s = panel[col].dropna()
         sns.histplot(s, bins=24, kde=True, color=color, alpha=0.55, edgecolor="white", ax=ax)
         med = float(s.median())
@@ -483,19 +479,36 @@ def plot_deep_eda_figures(
         ax.axvline(med, color=navy, linestyle="-", linewidth=1.3, label=f"Median {med:.1f}")
         if vline is not None:
             ax.axvline(vline, color=crimson, linestyle="--", linewidth=1.3, label=vlabel)
-        ax.set_title(f"{title}\n(Skew = {sk:+.2f}, n = {len(s)})", fontsize=9.8, fontweight="bold", color=navy)
+        ax.set_title(f"{title}\n(Skew = {sk:+.2f}, n = {len(s)})", fontsize=9.6, fontweight="bold", color=navy)
         ax.set_xlabel("")
-        ax.legend(fontsize=7.8, loc="upper right", frameon=True)
+        ax.legend(fontsize=7.6, loc="upper right", frameon=True)
 
-    # Row 2 17 province structural distributions split by Upper vs Lower North with outlier tags
+    # Row 2 panel 0 stacked before vs after log1p histograms with separate honest X axes
+    raw_f = struct_df["foreign_visitor_share"].dropna()
+    log_f = struct_df["log_foreign_visitor_share"].dropna()
+    raw_sk = float(stats.skew(raw_f))
+    log_sk = float(stats.skew(log_f))
+    sub_gs = gs[1, 0].subgridspec(2, 1, hspace=0.62)
+    ax_raw = fig.add_subplot(sub_gs[0, 0])
+    ax_log = fig.add_subplot(sub_gs[1, 0])
+    sns.histplot(raw_f, bins=9, kde=True, color=crimson, alpha=0.55, edgecolor="white", ax=ax_raw)
+    ax_raw.set_title(f"Before: Raw Foreign Share % (Skew {raw_sk:+.2f})", fontsize=8.8, fontweight="bold", color=crimson)
+    ax_raw.set_xlabel("")
+    ax_raw.set_ylabel("Prov", fontsize=8.0)
+    sns.histplot(log_f, bins=9, kde=True, color=teal, alpha=0.55, edgecolor="white", ax=ax_log)
+    ax_log.set_title(f"After: log1p Foreign Share (Skew {log_sk:+.2f})", fontsize=8.8, fontweight="bold", color=teal)
+    ax_log.set_xlabel("log1p(Foreign Share %)", fontsize=8.2)
+    ax_log.set_ylabel("Prov", fontsize=8.0)
+
+    # Row 2 panels 1..3 Upper vs Lower North boxplots annotated with BH FDR q and Cliffs delta
+    bot_axes = [fig.add_subplot(gs[1, i]) for i in range(1, 4)]
     s_specs = [
-        ("avg_monthly_revenue_mthb", "Avg Monthly Revenue (M THB)"),
-        ("foreign_visitor_share", "Foreign Visitor Share (%)"),
+        ("log_foreign_visitor_share", "log1p Foreign Visitor Share"),
         ("annual_pm25_days_over_37_5", "Annual PM2.5 Days > 37.5"),
-        ("debt_to_annual_income_sme", "SME Debt to Annual Income (2025)"),
+        ("debt_to_annual_income_all", "Household Debt/Annual Income (2025)"),
     ]
     palette = {"Upper North": navy, "Lower North": teal}
-    for ax, (col, title) in zip(axes[1], s_specs):
+    for ax, (col, title) in zip(bot_axes, s_specs):
         sns.boxplot(
             data=struct_df,
             x="subregion",
@@ -511,7 +524,7 @@ def plot_deep_eda_figures(
         rng = np.random.default_rng(42)
         for idx_sub, sub_name in enumerate(["Upper North", "Lower North"]):
             sub = struct_df[struct_df["subregion"] == sub_name].sort_values(col, ascending=False)
-            jitter = rng.uniform(-0.12, 0.12, size=len(sub))
+            jitter = rng.uniform(-0.10, 0.10, size=len(sub))
             ax.scatter(
                 np.full(len(sub), idx_sub) + jitter,
                 sub[col],
@@ -521,9 +534,8 @@ def plot_deep_eda_figures(
                 edgecolor="white",
                 linewidth=0.6,
             )
-            # Annotate top 2 and bottom 1 provinces per subregion with staggered non overlapping offsets
             to_tag = pd.concat([sub.head(2), sub.tail(1)]).drop_duplicates(subset=["province_code"])
-            offsets = [(7, 3), (7, -9), (-22, 3)]
+            offsets = [(8, 2), (8, -8), (8, 1)]
             for row_i, (_, r) in enumerate(to_tag.iterrows()):
                 pos_idx = sub.index.get_loc(r.name)
                 x_pt = idx_sub + jitter[pos_idx]
@@ -537,37 +549,38 @@ def plot_deep_eda_figures(
                     fontweight="bold",
                     color=navy,
                 )
-        sk = float(stats.skew(struct_df[col].dropna()))
-        ax.set_title(f"{title}\n(17 Provinces, Skew = {sk:+.2f})", fontsize=9.8, fontweight="bold", color=navy)
+        ax.set_xlim(-0.52, 1.55)
+        qv, dv = sub_q_map.get(col, (None, None))
+        stat_tag = f"FDR q={qv:.3f}, delta={dv:+.2f}" if qv is not None else f"Skew={float(stats.skew(struct_df[col].dropna())):+.2f}"
+        ax.set_title(f"{title}\n({stat_tag})", fontsize=9.4, fontweight="bold", color=navy)
         ax.set_xlabel("")
         ax.set_ylabel("")
 
     fig.suptitle(
-        "Deep EDA Part 1 Distributions, Skewness, and Upper vs Lower North Outliers",
+        "Deep EDA Part 1 Distributions, log1p Skewness Reduction, and FDR Adjusted Subregion Audit",
         fontsize=13,
         fontweight="bold",
         color=navy,
-        y=1.01,
+        y=0.98,
     )
-    plt.tight_layout()
     p1 = FIGURES_DIR / "02a_distributions_and_outliers.png"
     fig.savefig(p1, dpi=300, bbox_inches="tight")
     plt.close(fig)
     saved.append(p1)
 
-    # Figure 02b 12 month seasonality heatmaps across 17 provinces ordered Upper North then Lower North
+    # Figure 02b 12 month seasonality heatmaps plus AR(1) autocorrelation justification for Clustered SE
     meta_map = get_province_metadata()
     upper_codes = sorted([c for c, m in meta_map.items() if m["subregion"] == "Upper North"])
     lower_codes = sorted([c for c, m in meta_map.items() if m["subregion"] == "Lower North"])
     prov_order = upper_codes + lower_codes
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6.8), dpi=300)
+    fig, axes = plt.subplots(1, 4, figsize=(21.5, 6.8), dpi=300, gridspec_kw={"width_ratios": [1.0, 1.0, 1.0, 0.85]})
     heat_specs = [
-        ("occupancy_rate", "Occupancy Rate (%)", "YlGnBu", 30, 95),
-        ("pm25_mean", "Monthly Mean PM2.5 (ug/m3)", "YlOrRd", 5, 75),
-        ("rainfall_sum_mm", "Monthly Rainfall (mm)", "Blues", 0, 380),
+        ("occupancy_rate", "A. Occupancy Rate (%)", "YlGnBu", 30, 95),
+        ("pm25_mean", "B. Monthly Mean PM2.5 (ug/m3)", "YlOrRd", 5, 75),
+        ("rainfall_sum_mm", "C. Monthly Rainfall (mm)", "Blues", 0, 380),
     ]
-    for ax, (col, title, cmap, vmin, vmax) in zip(axes, heat_specs):
+    for ax, (col, title, cmap, vmin, vmax) in zip(axes[:3], heat_specs):
         piv = (
             panel.pivot_table(index="province_code", columns="cal_month", values=col, aggfunc="mean")
             .reindex(index=prov_order, columns=range(1, 13))
@@ -584,15 +597,31 @@ def plot_deep_eda_figures(
             cbar_kws={"shrink": 0.82},
             ax=ax,
         )
-        # Draw horizontal separator between Upper North and Lower North groups
         ax.axhline(len(upper_codes), color=navy, linewidth=2.2)
-        ax.set_title(title, fontsize=11, fontweight="bold", color=navy, pad=10)
+        ax.set_title(title, fontsize=10.6, fontweight="bold", color=navy, pad=10)
         y_title = f"Upper North (Top {len(upper_codes)}) | Lower North (Bottom {len(lower_codes)})"
         ax.set_ylabel(y_title if ax is axes[0] else "")
         ax.set_xlabel("Calendar Month")
 
+    # Panel D within province AR(1) persistence proving why clustered SE is mandatory
+    ar1_map = threshold_res.get("within_province_ar1", {})
+    if ar1_map:
+        ar_items = sorted(ar1_map.items(), key=lambda kv: kv[1])
+        ar_labels = [k for k, _ in ar_items]
+        ar_vals = [v for _, v in ar_items]
+        ar_colors = [crimson if abs(v) >= 0.30 else teal for v in ar_vals]
+        axes[3].barh(ar_labels, ar_vals, color=ar_colors, height=0.52)
+        axes[3].axvline(0.0, color=navy, linewidth=1.0)
+        axes[3].axvline(0.30, color=amber, linestyle="--", linewidth=1.2, label="AR(1) >= 0.30")
+        for idx, val in enumerate(ar_vals):
+            axes[3].text(val + (0.02 if val >= 0 else -0.02), idx, f"{val:+.2f}", va="center", ha="left" if val >= 0 else "right", fontsize=8.5, fontweight="bold")
+        axes[3].set_xlim(-0.25, 0.85)
+        axes[3].set_xlabel("Lag-1 Within-Province Autocorrelation")
+        axes[3].set_title("D. Panel AR(1) Persistence\n(Proves Need for Clustered SE)", fontsize=10.4, fontweight="bold", color=navy, pad=10)
+        axes[3].legend(loc="lower right", fontsize=8.0, frameon=True)
+
     fig.suptitle(
-        "Deep EDA Part 2 Seasonality Calendar and Hazard Tourism Timing Across 17 Provinces",
+        "Deep EDA Part 2 Seasonality Calendar and Panel Autocorrelation Audit Across 17 Provinces",
         fontsize=13,
         fontweight="bold",
         color=navy,
@@ -604,10 +633,10 @@ def plot_deep_eda_figures(
     plt.close(fig)
     saved.append(p2)
 
-    # Figure 02c nonlinear threshold effects, 17 province crisis impacts, NSO 2023 to 2025 shift, double whammy
+    # Figure 02c same metric regime means, same metric crisis comparison, NSO 2023 to 2025 shift, compound risk
     fig, axes = plt.subplots(2, 2, figsize=(16.5, 11.2), dpi=300)
 
-    # Panel A nonlinear threshold effects for rainfall and PM2.5
+    # Panel A same metric descriptive regime means using train fitted rainfall thresholds and PCD PM2.5 rules
     rain_df = pd.DataFrame(threshold_res["rain_regimes"])
     pm_df = pd.DataFrame(threshold_res["pm25_regimes"])
     x_pos = np.arange(3)
@@ -617,46 +646,48 @@ def plot_deep_eda_figures(
         rain_df["occ_deseason_mean"],
         width=width,
         color="#2563EB",
-        label=f"Rain Excess vs Deseason Occ (KW p={threshold_res['rain_kruskal_occ_p']:.4f})",
+        label=f"Rain Excess Regimes (Train P75/P95 <= {threshold_res.get('train_threshold_cutoff', '')})",
     )
     b2 = axes[0, 0].bar(
         x_pos + width / 2,
-        pm_df["occ_yoy_mean"],
+        pm_df["occ_deseason_mean"],
         width=width,
         color=amber,
-        label=f"PM2.5 PCD Regime vs YoY Occ (KW p={threshold_res['pm25_kruskal_occ_yoy_p']:.4f})",
+        label="PM2.5 PCD Regimes (Same Deseasonalized Occ Metric)",
     )
     axes[0, 0].axhline(0.0, color=navy, linewidth=1.0)
-    for bars in (b1, b2):
-        for bar in bars:
+    for bars, n_list in ((b1, rain_df["n_obs"].tolist()), (b2, pm_df["n_obs"].tolist())):
+        for bar, n_val in zip(bars, n_list):
             h = bar.get_height()
             va = "bottom" if h >= 0 else "top"
-            offset = 0.12 if h >= 0 else -0.15
+            offset = 0.08 if h >= 0 else -0.10
             axes[0, 0].text(
                 bar.get_x() + bar.get_width() / 2.0,
                 h + offset,
-                f"{h:+.2f}",
+                f"{h:+.2f}\n(n={int(n_val)})",
                 ha="center",
                 va=va,
-                fontsize=8.5,
+                fontsize=7.9,
                 fontweight="bold",
                 color=navy,
             )
     axes[0, 0].set_xticks(x_pos)
     axes[0, 0].set_xticklabels(["Normal Regime", "Elevated Regime", "Extreme / Red Regime"], fontsize=9.5)
-    axes[0, 0].set_ylabel("Mean Occupancy Impact (percentage points)")
+    axes[0, 0].set_ylabel("Mean Deseasonalized Occupancy Impact (pp)")
     axes[0, 0].set_title(
-        "A. Nonlinear Threshold Effect on Tourism Occupancy\n(Damage Concentrates in Extreme Tail Regimes)",
-        fontsize=10.8,
+        "A. Descriptive Regime Comparison on Unified Deseasonalized Metric\n(Train-Fitted Rain Cutoffs · No Cross-Metric Mixing)",
+        fontsize=10.4,
         fontweight="bold",
         color=navy,
     )
-    axes[0, 0].set_ylim(min(rain_df["occ_deseason_mean"].min(), pm_df["occ_yoy_mean"].min()) - 1.5, 2.2)
-    axes[0, 0].legend(loc="lower left", fontsize=8.2, frameon=True)
+    min_y = min(float(rain_df["occ_deseason_mean"].min()), float(pm_df["occ_deseason_mean"].min()))
+    max_y = max(float(rain_df["occ_deseason_mean"].max()), float(pm_df["occ_deseason_mean"].max()))
+    axes[0, 0].set_ylim(min_y - 1.4, max(max_y + 1.4, 2.0))
+    axes[0, 0].legend(loc="lower left", fontsize=7.9, frameon=True)
 
-    # Panel B all 17 provinces real crisis impact Sept 2024 flood vs Mar Apr 2026 haze
+    # Panel B all 17 provinces real crisis impact Sept 2024 flood vs Mar Apr 2026 haze on UNIFIED occupancy_deseason
     f_map = {r["province_code"]: r["occupancy_deseason"] for r in threshold_res["sept_2024_flood_17p"]}
-    h_map = {r["province_code"]: r["occupancy_yoy_diff"] for r in threshold_res["mar_apr_2026_haze_17p"]}
+    h_map = {r["province_code"]: r["occupancy_deseason"] for r in threshold_res["mar_apr_2026_haze_17p"]}
     crisis_df = pd.DataFrame(
         {
             "province_code": prov_order,
@@ -669,14 +700,14 @@ def plot_deep_eda_figures(
     y_pos = np.arange(len(crisis_df))
     h_bar = 0.38
     axes[0, 1].barh(y_pos - h_bar / 2, crisis_df["flood_2024"], height=h_bar, color=crimson, alpha=0.85, label="Sept 2024 Flood (Deseason Occ pp)")
-    axes[0, 1].barh(y_pos + h_bar / 2, crisis_df["haze_2026"], height=h_bar, color=amber, alpha=0.88, label="Mar Apr 2026 Haze (YoY Occ pp)")
+    axes[0, 1].barh(y_pos + h_bar / 2, crisis_df["haze_2026"], height=h_bar, color=amber, alpha=0.88, label="Mar Apr 2026 Haze (Deseason Occ pp)")
     axes[0, 1].axvline(0.0, color=navy, linewidth=1.0)
     axes[0, 1].set_yticks(y_pos)
     axes[0, 1].set_yticklabels(crisis_df["province_code"], fontsize=8.8, fontweight="bold")
-    axes[0, 1].set_xlabel("Occupancy Deviation (percentage points)")
+    axes[0, 1].set_xlabel("Deseasonalized Occupancy Deviation (percentage points)")
     axes[0, 1].set_title(
-        "B. Heterogeneous Real Crisis Impact Across All 17 Provinces\n(Proves Need for Targeted Provincial Relief)",
-        fontsize=10.8,
+        "B. Heterogeneous Real Crisis Impact Across All 17 Provinces\n(Same Deseasonalized Metric -> Targeted Provincial Relief)",
+        fontsize=10.4,
         fontweight="bold",
         color=navy,
     )
@@ -696,7 +727,7 @@ def plot_deep_eda_figures(
     axes[1, 0].set_xlabel("Non Farm SME Debt to Annual Income Ratio (x)")
     axes[1, 0].set_title(
         "C. NSO Non Farm SME Leverage Shift 2023 to 2025\n(Red Line = Rising Leverage, Teal Line = Deleveraging)",
-        fontsize=10.8,
+        fontsize=10.6,
         fontweight="bold",
         color=navy,
     )
@@ -742,13 +773,13 @@ def plot_deep_eda_figures(
     axes[1, 1].set_ylabel("All Household Debt to Annual Income Ratio (2025)")
     axes[1, 1].set_title(
         "D. Compound Vulnerability Chronic Haze vs Debt and Cash Buffer\n(Bubble Size = Tourism Revenue, Color = Expense/Income)",
-        fontsize=10.8,
+        fontsize=10.6,
         fontweight="bold",
         color=navy,
     )
 
     fig.suptitle(
-        "Deep EDA Part 3 Nonlinear Crisis Impact and NSO Financial Vulnerability Across 17 Provinces",
+        "Deep EDA Part 3 Unified Crisis Impact and NSO Financial Vulnerability Across 17 Provinces",
         fontsize=13,
         fontweight="bold",
         color=navy,
@@ -760,15 +791,17 @@ def plot_deep_eda_figures(
     plt.close(fig)
     saved.append(p3)
 
-    # Figure 02d 14x14 structural Spearman correlation heatmap and 34 month macro control trends
-    fig, axes = plt.subplots(1, 2, figsize=(17.5, 6.8), dpi=300, gridspec_kw={"width_ratios": [1.15, 1.0]})
+    # Figure 02d structural Spearman correlation heatmap and 4 honest Small Multiples macro tracks (zero dual axis)
+    fig = plt.figure(figsize=(18.5, 7.6), dpi=300)
+    outer = fig.add_gridspec(1, 2, width_ratios=[1.18, 1.0], wspace=0.22)
+    ax_corr = fig.add_subplot(outer[0])
 
     s_cols = [c for c, _ in STRUCTURAL_CANDIDATES if c in struct_df.columns]
     corr_mat = struct_df[s_cols].corr(method="spearman")
     short_labels = {
         "avg_occupancy_rate": "Avg Occ %",
         "occupancy_volatility": "Occ Vol",
-        "foreign_visitor_share": "Foreign Vis %",
+        "log_foreign_visitor_share": "log1p Foreign",
         "foreign_revenue_share": "Foreign Rev %",
         "avg_monthly_revenue_mthb": "Monthly Rev",
         "pm25_mean_3y": "PM2.5 Mean",
@@ -794,17 +827,17 @@ def plot_deep_eda_figures(
         vmin=-1.0,
         vmax=1.0,
         linewidths=0.4,
-        ax=axes[0],
+        ax=ax_corr,
         cbar_kws={"shrink": 0.82, "label": "Spearman r"},
     )
-    axes[0].set_title(
-        "14x14 Structural Spearman Correlation Matrix (n = 17 Provinces)\n(Visual Proof for Feature Pruning and Core 6 Selection)",
-        fontsize=10.8,
+    ax_corr.set_title(
+        "A. 14x14 Structural Spearman Matrix (n = 17, log1p Foreign)\n(Visual Proof for |r|<0.85 Pruning & Canonical Core 6)",
+        fontsize=10.6,
         fontweight="bold",
         color=navy,
     )
 
-    # Right panel macro controls vs Northern 17 province average YoY occupancy
+    # Right half 4 vertically stacked Small Multiples sharing time axis with independent honest Y axes
     macro_ts = (
         panel.groupby("period_date", as_index=False)
         .agg(
@@ -815,64 +848,45 @@ def plot_deep_eda_figures(
         )
         .sort_values("period_date")
     )
-    ax_left = axes[1]
-    ax_right = ax_left.twinx()
-    l1 = ax_left.plot(
-        macro_ts["period_date"],
-        macro_ts["th_cpi_yoy"],
-        color=crimson,
-        linewidth=2.0,
-        marker="o",
-        markersize=3.2,
-        label="Thailand CPI YoY (%)",
-    )
-    l2 = ax_left.plot(
-        macro_ts["period_date"],
-        macro_ts["usdthb_yoy"],
-        color=teal,
-        linewidth=1.8,
-        linestyle="--",
-        label="USD/THB YoY (%)",
-    )
-    l3 = ax_left.plot(
-        macro_ts["period_date"],
-        macro_ts["north_occ_yoy"],
-        color=navy,
-        linewidth=2.3,
-        marker="s",
-        markersize=3.2,
-        label="North 17P Avg Occupancy YoY (pp)",
-    )
-    l4 = ax_right.plot(
-        macro_ts["period_date"],
-        macro_ts["oil_brent_yoy"],
-        color=amber,
-        linewidth=1.6,
-        alpha=0.85,
-        label="Brent Oil YoY (%) [Right Axis]",
-    )
-    ax_left.axhline(0.0, color=slate, linewidth=0.9, linestyle=":")
-    ax_left.set_ylabel("CPI YoY (%) / USDTHB YoY (%) / Occupancy YoY (pp)")
-    ax_right.set_ylabel("Brent Oil YoY (%)", color=amber)
-    ax_left.tick_params(axis="x", rotation=30)
-    lines = l1 + l2 + l3 + l4
-    labels = [ln.get_label() for ln in lines]
-    ax_left.legend(lines, labels, loc="lower left", fontsize=8.0, frameon=True, framealpha=0.95)
-    ax_left.set_title(
-        "Macro Control Co Movement vs 17 Province Occupancy YoY (2024 to 2026)",
-        fontsize=10.8,
-        fontweight="bold",
-        color=navy,
-    )
+    inner = outer[1].subgridspec(4, 1, hspace=0.28)
+    tracks = [
+        ("north_occ_yoy", "North 17P Avg Occupancy YoY (pp)", navy, "s"),
+        ("th_cpi_yoy", "Thailand Headline CPI YoY (%)", crimson, "o"),
+        ("oil_brent_yoy", "Brent Crude Oil YoY (%)", amber, "^"),
+        ("usdthb_yoy", "USD / THB Exchange Rate YoY (%)", teal, "d"),
+    ]
+    shared_ax = None
+    for idx_t, (col, label_t, color_t, mk) in enumerate(tracks):
+        ax_m = fig.add_subplot(inner[idx_t], sharex=shared_ax)
+        if shared_ax is None:
+            shared_ax = ax_m
+        ax_m.axhline(0.0, color=slate, linewidth=0.85, linestyle=":")
+        ax_m.plot(macro_ts["period_date"], macro_ts[col], color=color_t, linewidth=1.8, marker=mk, markersize=2.8)
+        ax_m.set_ylabel(label_t.split("(")[-1].rstrip(")"), fontsize=8.0, color=color_t, fontweight="bold")
+        ax_m.set_title(label_t, loc="left", fontsize=9.0, fontweight="bold", color=navy, pad=3)
+        if idx_t == 0:
+            ax_m.text(
+                1.0,
+                1.18,
+                "B. Macro Controls & Regional Occupancy (Small Multiples · No Dual-Axis Distortion)",
+                transform=ax_m.transAxes,
+                ha="right",
+                fontsize=9.6,
+                fontweight="bold",
+                color=navy,
+            )
+        if idx_t < len(tracks) - 1:
+            plt.setp(ax_m.get_xticklabels(), visible=False)
+        else:
+            ax_m.tick_params(axis="x", rotation=25, labelsize=8.3)
 
     fig.suptitle(
-        "Deep EDA Part 4 Structural Collinearity Audit and Macro Economic Context",
+        "Deep EDA Part 4 Structural Collinearity Audit and Honest Small Multiples Macro Context",
         fontsize=13,
         fontweight="bold",
         color=navy,
-        y=1.01,
+        y=0.99,
     )
-    plt.tight_layout()
     p4 = FIGURES_DIR / "02d_structural_corr_and_macro_trends.png"
     fig.savefig(p4, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -892,15 +906,14 @@ def run_deep_eda() -> dict[str, Any]:
     threshold_res = analyze_threshold_effects_and_crises(panel)
     cluster_set_res = compare_clustering_feature_sets(struct_df)
     macro_res = check_macro_collinearity(panel)
-    figures = plot_deep_eda_figures(panel, struct_df, nso_shift, threshold_res)
+    figures = plot_deep_eda_figures(panel, struct_df, nso_shift, threshold_res, subregion_res=subregion_res)
 
     summary_payload = {
         "revenue_concentration": dist_res["revenue_concentration"],
-        "upper_vs_lower_sig_features": [
-            r["feature"] for r in subregion_res["upper_vs_lower_tests"] if r["significant_005"]
+        "upper_vs_lower_sig_features_fdr": [
+            r["feature"] for r in subregion_res["upper_vs_lower_tests"] if r.get("significant_005")
         ],
-        "rain_kruskal_occ_p": threshold_res["rain_kruskal_occ_p"],
-        "pm25_kruskal_occ_yoy_p": threshold_res["pm25_kruskal_occ_yoy_p"],
+        "train_threshold_cutoff": threshold_res["train_threshold_cutoff"],
         "within_province_ar1": threshold_res["within_province_ar1"],
         "clustering_feature_sets": cluster_set_res,
         "macro_collinearity": macro_res["high_collinear_pairs"],

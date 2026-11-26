@@ -1,4 +1,4 @@
-import rawCatalog from "../../shared/policy_catalog.json"
+import rawCatalog from "./policy-catalog.json"
 
 export type PolicyCatalogProgram = {
   id: string

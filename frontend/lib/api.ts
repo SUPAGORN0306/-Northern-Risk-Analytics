@@ -239,12 +239,48 @@ export type ChatResponse = {
   }>
 }
 
+export type StaffPermission =
+  | "view_overview"
+  | "export_brief"
+  | "run_modeling"
+  | "publish_clusters"
+  | "view_health"
+  | "trigger_refresh"
+
 export type StaffAuthResponse = {
   access_token: string
   token_type: string
   expires_in_seconds: number
   role: string
+  permissions?: StaffPermission[]
   username: string
+}
+
+const ROLE_PERMISSIONS_FALLBACK: Record<string, StaffPermission[]> = {
+  policy_analyst: ["view_overview", "export_brief", "run_modeling"],
+  demo_policy_analyst: ["view_overview", "export_brief", "run_modeling"],
+  data_steward: ["view_health", "trigger_refresh", "publish_clusters", "view_overview", "run_modeling"],
+  demo_data_steward: ["view_health", "trigger_refresh", "publish_clusters", "view_overview", "run_modeling"],
+  admin: ["view_overview", "export_brief", "run_modeling", "publish_clusters", "view_health", "trigger_refresh"],
+}
+
+export function hasStaffPermission(auth: StaffAuthResponse, permission: StaffPermission): boolean {
+  if (Array.isArray(auth.permissions) && auth.permissions.length > 0) {
+    return auth.permissions.includes(permission)
+  }
+  const normalizedRole = (auth.role || "").trim().toLowerCase()
+  return (ROLE_PERMISSIONS_FALLBACK[normalizedRole] ?? []).includes(permission)
+}
+
+export function getStaffRoleLabel(role: string, lang: Lang): string {
+  const normalized = (role || "").trim().toLowerCase()
+  if (normalized === "data_steward" || normalized === "demo_data_steward") {
+    return lang === "th" ? "ผู้ดูแลคุณภาพข้อมูล" : "Data Quality Steward"
+  }
+  if (normalized === "admin") {
+    return lang === "th" ? "ผู้ดูแลระบบ (ทุกบทบาท)" : "Admin (Full Access)"
+  }
+  return lang === "th" ? "นักวิเคราะห์ข้อมูลและนโยบาย" : "Policy & Data Analyst"
 }
 
 export type QuadrantProvince = {
@@ -288,11 +324,19 @@ export type FeatureScreeningRow = {
 
 export type PolicyMonitorResponse = {
   authenticated_staff: string
+  staff_role?: string
   model_used: string | null
   silhouette_score: number | null
   panel_months?: number
   panel_start_month?: string
   panel_end_month?: string
+  data_quality_summary?: {
+    latest_dq_status: string | null
+    latest_dq_checked_at: string | null
+    air_latest_date: string | null
+    news_latest_date: string | null
+    quarantine_rows: number
+  }
   cache_status?: "HIT" | "MISS"
   server_query_ms?: number
   quadrant_provinces: QuadrantProvince[]
@@ -412,11 +456,21 @@ export type DataHealthResponse = {
     count: number
   }[]
   indexed_official_documents: {
+    doc_id?: string
     doc_title: string
     doc_url: string
     page_count: number
     chunk_count: number
   }[]
+  cluster_run_diff?: {
+    status: string
+    latest_run_id: string | null
+    previous_run_id: string | null
+    province_count: number
+    changed_province_count: number
+    changed_provinces: { province_code: string; from_cluster: string | null; to_cluster: string }[]
+    caveat: string
+  }
   latest_eval_runs: {
     run_type: string
     token_count: number
@@ -523,8 +577,8 @@ export function formatFetchError(err: unknown, lang: Lang): string {
     }
     if (err.status === 403) {
       return lang === "th"
-        ? "สิทธิ์การเข้าถึงถูกจำกัดในสภาพแวดล้อมนี้"
-        : "Access is restricted in this environment."
+        ? "บทบาทบัญชีของคุณไม่มีสิทธิ์ดำเนินการในส่วนนี้"
+        : "Your account role does not have permission for this action."
     }
     if (err.status === 429) {
       return lang === "th"
@@ -713,6 +767,20 @@ export function sendPolicyChat(
   })
 }
 
+export function submitChatFeedback(payload: {
+  rating: "helpful" | "inaccurate" | "incomplete"
+  reason_tag?: "wrong_fact" | "missing_source" | "unclear" | "other"
+  language: Lang
+  model_used?: string | null
+  top_vector_sim?: number
+  was_refused: boolean
+}): Promise<{ saved: boolean }> {
+  return apiRequest<{ saved: boolean }>("/api/chat/feedback", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })
+}
+
 export function staffLogin(username: string, password: string): Promise<StaffAuthResponse> {
   return apiRequest<StaffAuthResponse>("/api/auth/staff-login", {
     method: "POST",
@@ -720,12 +788,12 @@ export function staffLogin(username: string, password: string): Promise<StaffAut
   })
 }
 
-export function staffDemoAccess(): Promise<StaffAuthResponse> {
+export function staffDemoAccess(role: "policy_analyst" | "data_steward" = "policy_analyst"): Promise<StaffAuthResponse> {
   // Set NEXT_PUBLIC_DISABLE_DEMO_ACCESS=true in real production environments to block passwordless demo login
   if (process.env.NEXT_PUBLIC_DISABLE_DEMO_ACCESS === "true") {
     return Promise.reject(new ApiError("Demo access is disabled in this environment", 403))
   }
-  return apiRequest<StaffAuthResponse>("/api/auth/demo-access", {
+  return apiRequest<StaffAuthResponse>(`/api/auth/demo-access?role=${role}`, {
     method: "POST",
   })
 }

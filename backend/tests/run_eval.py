@@ -121,7 +121,7 @@ def eval_dim2_rag_qa() -> dict[str, Any]:
         "q04_north_q1_risks",
         "q05_rl_pre_emptive_dr",
         "q09_debt_clinic_criteria",
-        "q13_khunsoo_programs",
+        "q13_khunsoo_current_status",
         "q15_disaster_relief_2568",
     }
     in_scope = [q for q in items if q["id"] in in_scope_ids]
@@ -153,8 +153,10 @@ def eval_dim2_rag_qa() -> dict[str, Any]:
         total_tokens += int(res["token_count"])
         if res["was_refused"] and len(res["citations"]) == 0:
             traps_refused += 1
+        if int(res["token_count"]) > 0:
+            time.sleep(0.8)
 
-    cite_acc = round((citation_verified_ok / max(answered_ok, 1)) * 100.0, 2)
+    citation_provenance_pct = round((citation_verified_ok / max(answered_ok, 1)) * 100.0, 2)
     refusal_acc = round((traps_refused / float(len(traps))) * 100.0, 2)
     ans_rate = round((answered_ok / float(len(in_scope))) * 100.0, 2)
     all_lats = latencies + trap_latencies
@@ -162,13 +164,19 @@ def eval_dim2_rag_qa() -> dict[str, Any]:
     return {
         "in_scope_tested": len(in_scope),
         "in_scope_answer_rate_pct": ans_rate,
-        "citation_accuracy_pct": cite_acc,
+        "citation_provenance_pct": citation_provenance_pct,
+        "semantic_answer_accuracy_evaluated": False,
+        "semantic_review_status": "not_evaluated_human_review_required",
+        "evaluation_note": "Citation provenance checks that cited pages were retrieved; it does not verify that those pages entail the answer. Human review is still required.",
+        "provenance_and_refusal_gates_passed": bool(citation_provenance_pct == 100.0 and refusal_acc == 100.0),
         "traps_tested": len(traps),
         "refusal_accuracy_pct": refusal_acc,
         "median_latency_ms": round(float(np.median(all_lats)), 1),
         "mean_trap_latency_ms": round(float(np.mean(trap_latencies)), 1),
         "total_tokens": total_tokens,
-        "passed": bool(cite_acc == 100.0 and refusal_acc == 100.0),
+        # Semantic answer accuracy has not been evaluated, so this dimension must not
+        # count as a complete pass in the overall scorecard.
+        "passed": None,
     }
 
 
@@ -307,16 +315,18 @@ def eval_dim6_stability() -> dict[str, Any]:
     cite_matches = sum(1 for s in cite_sets if s == base_cites or len(s & base_cites) >= 1)
     llm_stability_pct = round((cite_matches / 3.0) * 100.0, 2)
 
-    # Compute cross scaler ARI between StandardScaler and RobustScaler for KMeans and Ward at k=4
+    # Compute cross scaler and cross algorithm ARI at k=4 on canonical Core 6 features
     df, _ = prepare_clustering_matrix()
     x_raw = df[list(CORE_6_FEATURES)].to_numpy(dtype=float)
     x_std = _scale_matrix(x_raw, "StandardScaler")
     x_rob = _scale_matrix(x_raw, "RobustScaler")
     lbl_km_std = _fit_labels("KMeans", x_std, 4, seed=42)
+    lbl_ward_std = _fit_labels("Hierarchical Ward", x_std, 4, seed=42)
     lbl_km_rob = _fit_labels("KMeans", x_rob, 4, seed=42)
     lbl_ward_rob = _fit_labels("Hierarchical Ward", x_rob, 4, seed=42)
 
     cross_scaler_ari = round(_adjusted_rand_exact(lbl_km_std, lbl_km_rob), 4)
+    km_vs_ward_std_ari = round(_adjusted_rand_exact(lbl_km_std, lbl_ward_std), 4)
     km_vs_ward_rob_ari = round(_adjusted_rand_exact(lbl_km_rob, lbl_ward_rob), 4)
     perturbation_ari = compute_clustering_perturbation_ari(
         x_scaled=x_std,
@@ -332,6 +342,7 @@ def eval_dim6_stability() -> dict[str, Any]:
     return {
         "llm_3run_consistency_pct": llm_stability_pct,
         "kmeans_k4_perturbation_ari": perturbation_ari,
+        "kmeans_vs_ward_standard_k4_ari": km_vs_ward_std_ari,
         "kmeans_vs_ward_robust_k4_ari": km_vs_ward_rob_ari,
         "kmeans_standard_vs_robust_k4_ari": cross_scaler_ari,
         "passed": bool(llm_stability_pct >= 95.0 and perturbation_ari >= 0.70),
@@ -346,7 +357,11 @@ def eval_dim7_cost_and_governance() -> dict[str, Any]:
             (SELECT count(*) FROM bronze.news_raw) AS raw_news,
             (SELECT count(*) FROM silver.news_events) AS valid_news,
             (SELECT count(*) FROM silver.quarantine) AS quarantined_total,
-            (SELECT count(*) FROM silver.air_daily) AS fresh_air_provinces,
+            (
+                SELECT count(DISTINCT province_code)
+                FROM silver.air_daily
+                WHERE obs_date >= CURRENT_DATE - INTERVAL '3 days'
+            ) AS fresh_air_provinces,
             round((pg_database_size(current_database()) / 1048576.0)::numeric, 2) AS total_neon_db_mb,
             round((pg_total_relation_size('silver.policy_chunks') / 1048576.0)::numeric, 2) AS rag_table_mb,
             coalesce((SELECT sum(token_count) FROM gold.pipeline_eval_runs), 0) AS cumulative_logged_tokens,
@@ -398,89 +413,160 @@ def plot_evaluation_scorecard(scorecard: dict[str, Any]) -> Path:
     axes[0, 0].set_title("A. Dimension 1 PDF Retrieval Before vs After (n = 15)", fontsize=10.8, fontweight="bold", color=navy)
     axes[0, 0].legend(loc="lower right", fontsize=8.3, frameon=True)
 
-    # Panel B Core contract percentage metrics across Dimensions 2, 3, 5, and 6
+    # Panel B Honest full scorecard across Dimensions 2, 3, 5, and 6 without omitting sub 100 metrics
     d2 = scorecard["dim2_rag_qa"]
     d3 = scorecard["dim3_news_extraction"]
     d5 = scorecard["dim5_security_guardrails"]
     d6 = scorecard["dim6_stability"]
     labels = [
-        "PII Redaction Recall (20)",
-        "Prompt Injection Block (10)",
-        "RAG Citation Provenance",
-        "RAG Trap Refusal Rate (10)",
-        "News Verbatim Quote Match",
+        f"RAG In-Scope Answer Rate ({d2.get('in_scope_tested', 6)})",
+        f"News Shock Type Macro F1 ({d3.get('n_evaluated_articles', 30)})",
+        "News Relevance Macro F1",
         "News Province Macro F1",
-        "LLM 3 Run Determinism",
+        "News Verbatim Quote Match",
+        "RAG Citation Provenance",
+        f"RAG Trap Refusal Rate ({d2.get('traps_tested', 10)})",
+        f"Prompt Injection Block ({d5.get('injection_cases_tested', 10)})",
+        f"PII Redaction Recall ({d5.get('pii_cases_tested', 20)})",
+        "LLM 3-Run Determinism",
     ]
     vals = [
-        d5["pii_redaction_recall_pct"],
-        d5["injection_block_rate_pct"],
-        d2["citation_accuracy_pct"],
-        d2["refusal_accuracy_pct"],
-        d3["verbatim_quote_match_pct"],
-        d3["province_macro_f1_pct"],
-        d6["llm_3run_consistency_pct"],
+        float(d2.get("in_scope_answer_rate_pct", 0.0)),
+        float(d3.get("shock_type_macro_f1_pct", 0.0)),
+        float(d3.get("relevance_macro_f1_pct", 0.0)),
+        float(d3.get("province_macro_f1_pct", 0.0)),
+        float(d3.get("verbatim_quote_match_pct", 0.0)),
+        float(d2.get("citation_provenance_pct", 0.0)),
+        float(d2.get("refusal_accuracy_pct", 0.0)),
+        float(d5.get("injection_block_rate_pct", 0.0)),
+        float(d5.get("pii_redaction_recall_pct", 0.0)),
+        float(d6.get("llm_3run_consistency_pct", 0.0)),
     ]
+    b_colors = [navy if v >= 95.0 else (teal if v >= 85.0 else amber) for v in vals]
     y_pos = np.arange(len(labels))
-    axes[0, 1].barh(y_pos, vals, color=navy, height=0.58)
-    axes[0, 1].axvline(95.0, color=amber, linestyle="--", linewidth=1.3, label="95% / 100% Benchmark Gate")
+    axes[0, 1].barh(y_pos, vals, color=b_colors, height=0.62)
+    axes[0, 1].axvline(85.0, color="#64748B", linestyle=":", linewidth=1.2, label="85% F1 Gate")
+    axes[0, 1].axvline(95.0, color=amber, linestyle="--", linewidth=1.3, label="95% / 100% Gate")
     for idx, v in enumerate(vals):
-        axes[0, 1].text(min(v + 1.2, 103.0), idx, f"{v:.1f}%", va="center", fontsize=8.8, fontweight="bold", color=navy)
+        axes[0, 1].text(min(v + 1.2, 102.5), idx, f"{v:.1f}%", va="center", fontsize=8.3, fontweight="bold", color=navy)
     axes[0, 1].set_yticks(y_pos)
-    axes[0, 1].set_yticklabels(labels, fontsize=9.0)
-    axes[0, 1].set_xlim(0, 114)
-    axes[0, 1].set_title("B. Dimensions 2, 3, 5, 6 Guardrail and Accuracy Scorecard", fontsize=10.8, fontweight="bold", color=navy)
-    axes[0, 1].legend(loc="lower right", fontsize=8.2, frameon=True)
+    axes[0, 1].set_yticklabels(labels, fontsize=8.4)
+    axes[0, 1].set_xlim(0, 115)
+    axes[0, 1].set_ylim(-1.65, len(labels) - 0.35)
+    axes[0, 1].set_xlabel("Percentage (%)")
+    axes[0, 1].set_title(
+        "B. Dimensions 2, 3, 5, 6 Honest Guardrail & Accuracy Scorecard\n(All Evaluated Metrics Shown · No Cherry-Picking)",
+        fontsize=10.2,
+        fontweight="bold",
+        color=navy,
+    )
+    axes[0, 1].legend(loc="lower right", ncol=2, fontsize=7.6, frameon=True)
 
-    # Panel C Dimension 4 and 6 Clustering stability and agreement metrics
+    # Panel C Dimension 4 and 6 ARI stability on unified 0 to 1 scale plus separate internal separation callout
+    d4 = scorecard["dim4_analytics"]
+    km_ward_ari = d6.get("kmeans_vs_ward_standard_k4_ari", d6.get("kmeans_vs_ward_robust_k4_ari", 0.0))
+    km_ward_lbl = (
+        "KMeans vs Ward\n(Std k=4) ARI"
+        if "kmeans_vs_ward_standard_k4_ari" in d6
+        else "KMeans vs Ward\n(Robust k=4) ARI"
+    )
     c_labels = [
-        "KMeans k=4 Perturbation ARI",
-        "KMeans vs Ward (Robust k=4) ARI",
-        "KMeans Std vs Robust (k=4) ARI",
-        "KMeans k=4 Silhouette Score",
+        "Perturbation\nStability ARI",
+        km_ward_lbl,
+        "Std vs Robust\nScaler ARI",
     ]
     c_vals = [
-        d6["kmeans_k4_perturbation_ari"],
-        d6["kmeans_vs_ward_robust_k4_ari"],
-        d6["kmeans_standard_vs_robust_k4_ari"],
-        scorecard["dim4_analytics"]["silhouette_score"],
+        float(d6["kmeans_k4_perturbation_ari"]),
+        float(km_ward_ari),
+        float(d6["kmeans_standard_vs_robust_k4_ari"]),
     ]
     cx = np.arange(len(c_labels))
-    bars_c = axes[1, 0].bar(cx, c_vals, color=[teal, teal, teal, navy], width=0.48)
+    bars_c = axes[1, 0].bar(cx, c_vals, color=[teal, navy, "#2563EB"], width=0.45)
+    axes[1, 0].axhline(0.70, color=amber, linestyle="--", linewidth=1.3, label="ARI >= 0.70 Stability Gate")
     for bar in bars_c:
         h = bar.get_height()
-        axes[1, 0].text(bar.get_x() + bar.get_width() / 2.0, h + 0.025, f"{h:.3f}", ha="center", fontsize=9, fontweight="bold", color=navy)
+        axes[1, 0].text(bar.get_x() + bar.get_width() / 2.0, h + 0.025, f"{h:.3f}", ha="center", fontsize=9.2, fontweight="bold", color=navy)
     axes[1, 0].set_xticks(cx)
-    axes[1, 0].set_xticklabels(c_labels, fontsize=8.5, rotation=12)
-    axes[1, 0].set_ylim(0, 1.15)
-    axes[1, 0].set_title("C. Dimensions 4 and 6 Clustering Separation and ARI Stability", fontsize=10.8, fontweight="bold", color=navy)
+    axes[1, 0].set_xticklabels(c_labels, fontsize=8.8)
+    axes[1, 0].set_ylim(0, 1.28)
+    axes[1, 0].set_ylabel("Adjusted Rand Index (0 to 1)")
+    sep_box = (
+        f"Internal Separation (Separate Scale, N=17, Core 6):\n"
+        f"Winner: {d4.get('clustering_winner_model', 'KMeans (k=4, StandardScaler)')}\n"
+        f"Silhouette = {d4.get('silhouette_score', 0):.3f} | DBI = {d4.get('davies_bouldin_index', 0):.3f} | CH = {d4.get('calinski_harabasz_score', 0):.2f}"
+    )
+    axes[1, 0].text(
+        0.50,
+        0.96,
+        sep_box,
+        transform=axes[1, 0].transAxes,
+        ha="center",
+        va="top",
+        fontsize=7.9,
+        color=navy,
+        bbox={"boxstyle": "round,pad=0.38", "facecolor": "#F8FAFC", "edgecolor": "#CBD5E1"},
+    )
+    axes[1, 0].set_title(
+        "C. Dimensions 4 & 6 Clustering ARI Stability\n(ARI Scale Only · Separation Metrics Reported Separately)",
+        fontsize=10.2,
+        fontweight="bold",
+        color=navy,
+    )
+    axes[1, 0].legend(loc="lower right", fontsize=7.9, frameon=True)
 
-    # Panel D Dimension 7 Neon storage budget and quarantine governance
+    # Panel D Dimension 7 genuine percentage metrics only plus non percentage telemetry callout box
     d7 = scorecard["dim7_cost_and_governance"]
+    dq_passed = int(scorecard.get("layer2_checks_passed", 9))
+    dq_total = max(int(scorecard.get("layer2_checks_total", 9)), 1)
+    dq_pct = round((dq_passed / float(dq_total)) * 100.0, 1)
+    air_fresh = min(int(d7["fresh_air_provinces"]), 17)
+    air_pct = round((air_fresh / 17.0) * 100.0, 1)
+    rag_pct = round((float(d7["rag_table_mb"]) / 512.0) * 100.0, 2)
+    neon_pct = float(d7["neon_quota_used_pct"])
+
     gov_items = [
-        f"Total Neon DB Used ({d7['total_neon_db_mb']} / 512 MB)",
-        f"RAG Vector Table ({d7['rag_table_mb']} MB)",
-        f"Fresh Air4Thai Provinces ({d7['fresh_air_provinces']} / 17)",
-        f"Quarantine Anomalies Caught ({d7['quarantined_records_caught']} rows)",
+        f"RAG Vector Share ({d7['rag_table_mb']} / 512 MB)",
+        f"Neon Quota Used ({d7['total_neon_db_mb']} / 512 MB)",
+        f"Fresh Air4Thai 3d ({air_fresh} / 17 Prov)",
+        f"Layer 2 Data Quality ({dq_passed} / {dq_total} Checks)",
     ]
-    gov_pcts = [
-        d7["neon_quota_used_pct"],
-        round((d7["rag_table_mb"] / 512.0) * 100.0, 2),
-        round((d7["fresh_air_provinces"] / 17.0) * 100.0, 1),
-        100.0,
-    ]
+    gov_pcts = [rag_pct, neon_pct, air_pct, dq_pct]
     gy = np.arange(len(gov_items))
-    axes[1, 1].barh(gy, gov_pcts, color=[teal, "#2563EB", navy, amber], height=0.55)
+    axes[1, 1].barh(gy, gov_pcts, color=["#2563EB", teal, amber if air_pct < 90.0 else teal, navy], height=0.52)
     for idx, v in enumerate(gov_pcts):
-        axes[1, 1].text(min(v + 1.5, 103.0), idx, f"{v:.1f}%", va="center", fontsize=8.8, fontweight="bold", color=navy)
+        axes[1, 1].text(min(v + 1.5, 102.5), idx, f"{v:.1f}%", va="center", fontsize=8.8, fontweight="bold", color=navy)
     axes[1, 1].set_yticks(gy)
-    axes[1, 1].set_yticklabels(gov_items, fontsize=9.0)
+    axes[1, 1].set_yticklabels(gov_items, fontsize=8.8)
     axes[1, 1].set_xlim(0, 115)
-    axes[1, 1].set_xlabel("Percentage (%)")
-    axes[1, 1].set_title("D. Dimension 7 Storage Efficiency and Medallion Governance", fontsize=10.8, fontweight="bold", color=navy)
+    axes[1, 1].set_ylim(-1.25, 3.65)
+    axes[1, 1].set_xlabel("Genuine Ratio / Quota Share (%)")
+    eval_date = str(scorecard.get("finished_at", ""))[:10]
+    gov_box = (
+        f"Non-Percentage Governance Counts (Live Neon Audit · {eval_date}):\n"
+        f"Quarantine Caught: {d7['quarantined_records_caught']} rows | "
+        f"Cumulative Cost: {d7['cumulative_estimated_cost_thb']:.4f} THB ({d7['cumulative_logged_tokens']:,} tok) | "
+        f"Spec v{scorecard.get('feature_spec_version', '2.0.0')}"
+    )
+    axes[1, 1].text(
+        0.50,
+        0.05,
+        gov_box,
+        transform=axes[1, 1].transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=7.6,
+        color=navy,
+        bbox={"boxstyle": "round,pad=0.35", "facecolor": "#FFFBEB", "edgecolor": "#F59E0B"},
+    )
+    axes[1, 1].set_title(
+        "D. Dimension 7 Storage Efficiency & Governance\n(True Percentages Only · Raw Counts Shown Separately)",
+        fontsize=10.2,
+        fontweight="bold",
+        color=navy,
+    )
 
     fig.suptitle(
-        "Step 9 Full 7 Dimension Evaluation Contract Scorecard (100% Real Official Data)",
+        f"Step 9 Full 7 Dimension Evaluation Scorecard (Feature Spec v{scorecard.get('feature_spec_version', '2.0.0')} · Live Data)",
         fontsize=13,
         fontweight="bold",
         color=navy,
@@ -546,6 +632,8 @@ def run_full_7d_evaluation(role: str = "baseline") -> dict[str, Any]:
         "dim6_stability": d6,
         "dim7_cost_and_governance": d7,
         "layer2_data_quality_status": dq_report["status"],
+        "layer2_checks_passed": int((dq_report.get("metrics") or {}).get("checks_passed", dq_report.get("passed_cases", 0))),
+        "layer2_checks_total": int((dq_report.get("metrics") or {}).get("checks_total", dq_report.get("sample_size", 9))),
         "evaluated_dimensions_passed": bool(evaluated_dims) and all(bool(d["passed"]) for d in evaluated_dims),
         "not_evaluated_dimensions": not_evaluated_dims,
         "all_dimensions_passed": False if not_evaluated_dims else all(bool(d["passed"]) for d in evaluated_dims),
@@ -589,11 +677,11 @@ def run_full_7d_evaluation(role: str = "baseline") -> dict[str, Any]:
                 "expected": ">= 85.0%",
             }
         )
-    if not d2.get("passed"):
+    if not d2.get("provenance_and_refusal_gates_passed"):
         rag_failures.append(
             {
                 "check": "citation_provenance_or_refusal",
-                "observed": f"cite={d2.get('citation_accuracy_pct')}%, refusal={d2.get('refusal_accuracy_pct')}%",
+                "observed": f"citation provenance={d2.get('citation_provenance_pct')}%, refusal={d2.get('refusal_accuracy_pct')}%",
                 "expected": "100% provenance & 100% refusal",
             }
         )
@@ -615,7 +703,7 @@ def run_full_7d_evaluation(role: str = "baseline") -> dict[str, Any]:
         "metrics": {
             "hit_rate_top5_pct": hyb.get("hit_rate_top5_pct"),
             "mrr": hyb.get("mrr"),
-            "citation_provenance_pct": d2.get("citation_accuracy_pct"),
+            "citation_provenance_pct": d2.get("citation_provenance_pct"),
             "refusal_accuracy_pct": d2.get("refusal_accuracy_pct"),
             "in_scope_answer_rate_pct": d2.get("in_scope_answer_rate_pct"),
             "in_scope_tested": d2.get("in_scope_tested"),

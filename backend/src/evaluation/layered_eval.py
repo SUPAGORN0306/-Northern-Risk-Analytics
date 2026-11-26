@@ -25,7 +25,7 @@ from src.config.feature_registry import (
 )
 from src.db.connection import bulk_execute, fetch_all
 
-EVALUATOR_VERSION = "2.0.0"
+EVALUATOR_VERSION = "2.1.0"
 
 LAYER_STALE_HOURS: dict[str, float] = {
     "code_tests": 168.0,
@@ -213,6 +213,20 @@ def run_layer2_data_quality(
         """
     )[0]
 
+    # Audit conflicting duplicate revisions on natural key (dataset, period, province, metric)
+    conflict_row = fetch_all(
+        """
+        SELECT count(*) AS conflicting_keys
+        FROM (
+            SELECT dataset_name, period_date, coalesce(province_raw, 'NATIONAL') AS prov_key, metric_name
+            FROM bronze.provincial_stats_raw
+            GROUP BY dataset_name, period_date, coalesce(province_raw, 'NATIONAL'), metric_name
+            HAVING count(DISTINCT metric_value) > 1
+        ) dup
+        """
+    )[0]
+    conflicting_keys = int(conflict_row["conflicting_keys"] or 0)
+
     # Check allowed range bounds on latest monthly panel features from feature_specs.yaml
     panel_bounds = fetch_all(
         """
@@ -269,6 +283,14 @@ def run_layer2_data_quality(
     _add_check("nso_finance_province_coverage", nso_p >= 17, "warn", nso_p, "17 provinces", "Some provinces lack latest NSO finance metrics and will be flagged insufficient_data")
     _add_check("air4thai_sensor_freshness_3d", air_fresh >= 14, "warn", f"{air_fresh}/17", ">= 14/17 provinces updated within 3 days")
     _add_check("rag_policy_corpus_populated", chunks > 0 and docs >= 4, "error", f"{docs} docs / {chunks} chunks", ">= 4 official docs indexed")
+    _add_check(
+        "bronze_revision_conflict_audit",
+        conflicting_keys == 0,
+        "warn",
+        conflicting_keys,
+        "0 conflicting natural keys (latest revision wins when > 0)",
+        "Conflicting values detected on same (dataset, period, province, metric); panel_builder resolves by latest fetched_at",
+    )
 
     # Verify spec declared bounds for pm25_mean and rainfall_sum_mm
     pm_spec = spec_map.get("pm25_mean", {}).get("allowed_range", [0.0, 500.0])
@@ -325,6 +347,7 @@ def run_layer2_data_quality(
             "air_fresh_provinces_3d": air_fresh,
             "nso_provinces_covered": nso_p,
             "quarantine_rows_caught": int(snap["quarantine_rows"] or 0),
+            "bronze_revision_conflicts": conflicting_keys,
         },
         "checks": checks,
         "failures": failures,
@@ -333,6 +356,65 @@ def run_layer2_data_quality(
     if persist:
         persist_layer_evaluation("data_quality", payload)
     return payload
+
+
+def run_drift_monitoring(persist: bool = True) -> dict[str, Any]:
+    """Descriptive six-month shift monitor; flags are review prompts, not significance tests."""
+    rows = fetch_all(
+        """
+        SELECT month_date,
+               avg((target_metrics->>'occupancy_rate')::double precision) AS occupancy_rate,
+               avg((selected_features->>'pm25_mean')::double precision) AS pm25_mean,
+               avg((selected_features->>'rainfall_sum_mm')::double precision) AS rainfall_sum_mm
+        FROM gold.province_monthly_panel
+        GROUP BY month_date ORDER BY month_date DESC LIMIT 12
+        """
+    )
+    ordered = list(reversed(rows))
+    indicators: dict[str, Any] = {}
+    for metric in ("occupancy_rate", "pm25_mean", "rainfall_sum_mm"):
+        prior = [float(row[metric]) for row in ordered[:6] if row.get(metric) is not None]
+        recent = [float(row[metric]) for row in ordered[6:] if row.get(metric) is not None]
+        if not prior or not recent:
+            indicators[metric] = {"status": "insufficient_history", "prior_n": len(prior), "recent_n": len(recent)}
+            continue
+        old_mean, new_mean = float(np.mean(prior)), float(np.mean(recent))
+        prior_var = float(np.var(prior, ddof=1)) if len(prior) > 1 else 0.0
+        recent_var = float(np.var(recent, ddof=1)) if len(recent) > 1 else 0.0
+        denom = len(prior) + len(recent) - 2
+        pooled_sd = float(np.sqrt(((len(prior) - 1) * prior_var + (len(recent) - 1) * recent_var) / denom)) if denom > 0 else 0.0
+        effect = (new_mean - old_mean) / pooled_sd if pooled_sd > 1e-12 else None
+        indicators[metric] = {
+            "status": "review_signal" if effect is not None and abs(effect) >= 0.5 else "no_large_shift_signal",
+            "prior_mean": round(old_mean, 4), "recent_mean": round(new_mean, 4),
+            "difference": round(new_mean - old_mean, 4),
+            "standardized_difference": round(effect, 4) if effect is not None else None,
+            "prior_n": len(prior), "recent_n": len(recent),
+        }
+    feedback_rows = fetch_all(
+        """SELECT date_trunc('month', created_at)::date AS month, rating, was_refused, count(*) AS n
+           FROM gold.chat_feedback WHERE created_at >= now() - interval '12 months'
+           GROUP BY 1, 2, 3 ORDER BY 1"""
+    )
+    indicators["chat_feedback"] = {
+        "status": "descriptive_opt_in_feedback_only",
+        "monthly_counts": [dict(row) for row in feedback_rows],
+        "caveat": "Self-selected feedback cannot estimate the rate of errors or refusals among all chat answers.",
+    }
+    result = {
+        "run_id": f"drift_{uuid.uuid4().hex[:10]}",
+        "method": "last_six_months_vs_previous_six_months_descriptive_effect_size",
+        "cutoff_month": str(ordered[-1]["month_date"]) if ordered else None,
+        "signals_are_not_significance_tests": True,
+        "metrics": indicators,
+    }
+    if persist:
+        bulk_execute(
+            """INSERT INTO gold.pipeline_eval_runs (run_type, metrics_json, token_count, estimated_cost_thb)
+               VALUES ('drift_monitoring', CAST(:metrics_json AS JSONB), 0, 0)""",
+            [{"metrics_json": json.dumps(result, ensure_ascii=False, default=str)}],
+        )
+    return result
 
 
 def build_layer3_statistical_payload(
@@ -783,7 +865,7 @@ def build_layered_evaluation_summary(eval_history_rows: list[dict[str, Any]]) ->
         d2 = legacy_7d.get("dim2_rag_qa") or {}
         hyb = d1.get("hybrid_rrf") or {}
         hit5 = hyb.get("hit_rate_top5_pct")
-        cite_acc = d2.get("citation_accuracy_pct")
+        cite_acc = d2.get("citation_provenance_pct", d2.get("citation_accuracy_pct"))
         refusal_acc = d2.get("refusal_accuracy_pct")
         in_scope_n = int(d2.get("in_scope_tested") or 0)
         warnings_l4: list[dict[str, Any]] = [

@@ -228,11 +228,22 @@ def _execute_batches_on_cursor(
     return total_affected
 
 
-def bulk_execute(sql: str, rows: Sequence[dict[str, Any]], batch_size: int = 250) -> int:
+def bulk_execute(
+    sql: str,
+    rows: Sequence[dict[str, Any]],
+    batch_size: int = 250,
+    connection: Any | None = None,
+) -> int:
     """Execute true multi row parameterized INSERT batches in O(N/B) network round trips."""
     if not rows:
         return 0
 
+    if connection is not None:
+        cur = connection.cursor()
+        try:
+            return _execute_batches_on_cursor(cur, sql, rows, batch_size=batch_size)
+        finally:
+            cur.close()
     with get_connection() as conn:
         cur = conn.cursor()
         try:
@@ -246,11 +257,19 @@ def atomic_replace_table(
     insert_sql: str,
     rows: Sequence[dict[str, Any]],
     batch_size: int = 250,
+    connection: Any | None = None,
 ) -> int:
     """Delete and repopulate a table inside a single atomic transaction so failed writes roll back cleanly."""
     if not rows:
         raise ValueError("Refusing to replace table with an empty row set")
 
+    if connection is not None:
+        cur = connection.cursor()
+        try:
+            cur.execute(delete_sql)
+            return _execute_batches_on_cursor(cur, insert_sql, rows, batch_size=batch_size)
+        finally:
+            cur.close()
     with get_connection() as conn:
         cur = conn.cursor()
         try:
