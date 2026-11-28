@@ -4,9 +4,9 @@
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "sync:catalog": "node ../scripts/sync-policy-catalog.mjs",
-    "predev": "node ../scripts/sync-policy-catalog.mjs",
-    "prebuild": "node ../scripts/sync-policy-catalog.mjs",
+    "sync:catalog": "node -e \"const fs=require('fs');if(fs.existsSync('../scripts/sync-policy-catalog.mjs'))require('child_process').execFileSync(process.execPath,['../scripts/sync-policy-catalog.mjs'],{stdio:'inherit'})\"",
+    "predev": "npm run sync:catalog",
+    "prebuild": "npm run sync:catalog",
     "dev": "next dev --turbo",
     "build": "next build",
     "start": "next start",

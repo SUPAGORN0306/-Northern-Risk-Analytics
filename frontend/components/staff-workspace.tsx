@@ -1020,7 +1020,7 @@ export function StaffWorkspace({
               <p className="mt-4 border-t border-border pt-3 text-[11px] leading-5 text-muted-foreground">
                 {lang === "th"
                   ? "แหล่งข้อมูล: กระทรวงการท่องเที่ยวและกีฬา, สำนักงานสถิติแห่งชาติ (สำรวจปี 2568), BIS, FRED, Open-Meteo, Air4Thai และเอกสาร ธปท. โดยแสดงประเภทและช่วงเวลาของข้อมูลประกอบเมื่อมีข้อมูล"
-                  : "Sources: MOTS, NSO (2025 survey), BIS, FRED, Open-Meteo, Air4Thai, and Bank of Thailand publications."
+                  : "Sources: MOTS, NSO (2025 survey), BIS, FRED, Open-Meteo, Air4Thai, and Bank of Thailand publications."}
               </p>
             </>
           ) : null}
